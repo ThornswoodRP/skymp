@@ -935,7 +935,8 @@ void ActionListener::OnCraftItem(const RawMessageData& rawMsgData,
 {
   craftService->OnCraftItem(rawMsgData, msg.data.craftInputObjects,
                             msg.data.workbench, msg.data.resultObjectId,
-                            msg.data.resultPotion);
+                            msg.data.resultPotion, msg.data.resultEnchantment,
+                            msg.data.resultMaxCharge);
 }
 
 void ActionListener::OnHostAttempt(const RawMessageData& rawMsgData,

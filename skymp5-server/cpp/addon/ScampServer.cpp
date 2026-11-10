@@ -866,9 +866,28 @@ Napi::Value ScampServer::CompareAndSetInventoryImpl(
           if (!madeOk && (!base || !espm::utils::IsItem(base->GetType()))) {
             throw std::runtime_error("Invalid inventory transaction base form");
           }
+          // Thornswood #4513: an enchantment made on a piece has no record
+          // either; it is kept by its contents under the id they give.
+          const bool madeEnchantmentOk = entry.madeEnchantment &&
+            !entry.madeEnchantment->effects.empty() &&
+            entry.enchantmentId ==
+              Inventory::MadeEnchantmentId(*entry.madeEnchantment) &&
+            std::all_of(entry.madeEnchantment->effects.begin(),
+                        entry.madeEnchantment->effects.end(),
+                        [&](const auto& effect) {
+                          const auto mgef =
+                            browser.LookupById(effect.effectId).rec;
+                          return mgef && mgef->GetType() == "MGEF";
+                        });
+          if (entry.madeEnchantment && !madeEnchantmentOk) {
+            throw std::runtime_error(
+              "Invalid inventory transaction made enchantment");
+          }
           for (const auto& field : { std::make_pair(entry.enchantmentId, "ENCH"),
                                     std::make_pair(entry.poisonId, "ALCH") }) {
-            if (field.first) {
+            if (field.first && !(madeEnchantmentOk &&
+                                 field.first == entry.enchantmentId &&
+                                 std::string(field.second) == "ENCH")) {
               const auto record = browser.LookupById(*field.first).rec;
               if (!record || record->GetType() != field.second) {
                 throw std::runtime_error("Invalid inventory transaction metadata form");

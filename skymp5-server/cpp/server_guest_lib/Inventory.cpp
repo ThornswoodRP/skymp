@@ -74,6 +74,40 @@ void Inventory::Entry::SetWorn(Inventory::Worn worn)
   }
 }
 
+namespace {
+// Shared by a made bottle and a made enchantment (Thornswood #1649, #4513).
+void RoundEffects(std::vector<Inventory::MadeEffect>& effects)
+{
+  for (auto& effect : effects) {
+    if (!std::isfinite(effect.magnitude)) {
+      effect.magnitude = 0.f;
+    }
+    effect.magnitude = std::round(effect.magnitude * 100.f) / 100.f;
+  }
+}
+
+std::string CanonicalEffects(const std::vector<Inventory::MadeEffect>& effects)
+{
+  std::string text;
+  for (const auto& effect : effects) {
+    text += fmt::format("|{:x}:{:.2f}:{}:{}", effect.effectId,
+                        effect.magnitude, effect.area, effect.duration);
+  }
+  return text;
+}
+
+// FNV-1a over the canonical text, in the made range.
+uint32_t MadeId(const std::string& canonical)
+{
+  uint32_t hash = 2166136261u;
+  for (unsigned char c : canonical) {
+    hash ^= c;
+    hash *= 16777619u;
+  }
+  return Inventory::kMadeIdFirst | (hash & (~Inventory::kMadeIdFirst));
+}
+}
+
 bool Inventory::Entry::EqualExceptCount(const Inventory::Entry& other) const
 {
   // GetWorn() instead of direct comparison because of possible false vs
@@ -81,22 +115,23 @@ bool Inventory::Entry::EqualExceptCount(const Inventory::Entry& other) const
   return std::make_tuple(baseId, health, enchantmentId, maxCharge,
                          removeEnchantmentOnUnequip, chargePercent, name, soul,
                          poisonId, poisonCount, GetWorn(), made,
-                         npcEquipment.value_or(false)) ==
+                         madeEnchantment, npcEquipment.value_or(false)) ==
     std::make_tuple(other.baseId, other.health, other.enchantmentId,
                     other.maxCharge, other.removeEnchantmentOnUnequip,
                     other.chargePercent, other.name, other.soul,
                     other.poisonId, other.poisonCount, other.GetWorn(),
-                    other.made, other.npcEquipment.value_or(false));
+                    other.made, other.madeEnchantment,
+                    other.npcEquipment.value_or(false));
 }
 
 void Inventory::Round(Made& made)
 {
-  for (auto& effect : made.effects) {
-    if (!std::isfinite(effect.magnitude)) {
-      effect.magnitude = 0.f;
-    }
-    effect.magnitude = std::round(effect.magnitude * 100.f) / 100.f;
-  }
+  RoundEffects(made.effects);
+}
+
+void Inventory::Round(MadeEnchantment& enchantment)
+{
+  RoundEffects(enchantment.effects);
 }
 
 std::string Inventory::Canonical(const Made& made)
@@ -105,21 +140,28 @@ std::string Inventory::Canonical(const Made& made)
   // round-trip text, so "12.3" stays "12.3" on every machine.
   std::string text = made.poison ? "poison|" : "potion|";
   text += made.name;
-  for (const auto& effect : made.effects) {
-    text += fmt::format("|{:x}:{:.2f}:{}:{}", effect.effectId,
-                        effect.magnitude, effect.area, effect.duration);
-  }
+  text += CanonicalEffects(made.effects);
+  return text;
+}
+
+std::string Inventory::Canonical(const MadeEnchantment& enchantment)
+{
+  // A bottle's text starts "potion|" or "poison|", so no enchantment's text
+  // is ever a bottle's.
+  std::string text = enchantment.weapon ? "weapon-enchantment|"
+                                        : "armour-enchantment|";
+  text += CanonicalEffects(enchantment.effects);
   return text;
 }
 
 uint32_t Inventory::MadeBaseId(const Made& made)
 {
-  uint32_t hash = 2166136261u;
-  for (unsigned char c : Canonical(made)) {
-    hash ^= c;
-    hash *= 16777619u;
-  }
-  return kMadeIdFirst | (hash & (~kMadeIdFirst));
+  return MadeId(Canonical(made));
+}
+
+uint32_t Inventory::MadeEnchantmentId(const MadeEnchantment& enchantment)
+{
+  return MadeId(Canonical(enchantment));
 }
 
 Inventory& Inventory::AddItem(uint32_t baseId, uint32_t count)

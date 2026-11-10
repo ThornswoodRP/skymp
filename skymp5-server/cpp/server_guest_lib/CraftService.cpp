@@ -180,8 +180,11 @@ CraftService::CraftService(PartOne& partOne_)
 void CraftService::OnCraftItem(
   const RawMessageData& rawMsgData, const Inventory& inputObjects,
   uint32_t workbenchId, uint32_t resultObjectId,
-  const std::optional<Inventory::Made>& resultPotion)
+  const std::optional<Inventory::Made>& resultPotion,
+  const std::optional<Inventory::MadeEnchantment>& resultEnchantment,
+  std::optional<float> resultMaxCharge)
 {
+  const Claimed claimed{ resultPotion, resultEnchantment, resultMaxCharge };
   spdlog::info("User {} tries to craft {:#x} on workbench {:#x}",
                rawMsgData.userId, resultObjectId, workbenchId);
 
@@ -281,7 +284,7 @@ void CraftService::OnCraftItem(
   try {
     std::vector<Inventory::Entry> takes;
     auto time = AskWorkTime(me, inputObjects, workbenchId, resultObjectId,
-                            resultPotion, takes);
+                            claimed, takes);
     if (time && time->count() > 0) {
       auto& orders = work[me->GetFormId()];
       Order order;
@@ -290,7 +293,7 @@ void CraftService::OnCraftItem(
       order.inputObjects = inputObjects;
       order.workbenchId = workbenchId;
       order.resultObjectId = resultObjectId;
-      order.resultPotion = resultPotion;
+      order.claimed = claimed;
       order.time = *time;
       order.takes = std::move(takes);
       orders.push_back(std::move(order));
@@ -305,7 +308,7 @@ void CraftService::OnCraftItem(
     }
     if (time) {
       crafted = CraftItem(me, inputObjects, workbenchId, resultObjectId,
-                          resultPotion, &made);
+                          claimed, &made);
     }
   } catch (const std::exception& e) {
     SendInventoryBack(me, workbenchId, resultObjectId, e.what());
@@ -321,11 +324,10 @@ void CraftService::OnCraftItem(
 
 std::optional<std::chrono::milliseconds> CraftService::AskWorkTime(
   MpActor* me, const Inventory& inputObjects, uint32_t workbenchId,
-  uint32_t resultObjectId, const std::optional<Inventory::Made>& resultPotion,
+  uint32_t resultObjectId, const Claimed& claimed,
   std::vector<Inventory::Entry>& takes)
 {
-  auto craft =
-    WorkOut(me, inputObjects, workbenchId, resultObjectId, resultPotion);
+  auto craft = WorkOut(me, inputObjects, workbenchId, resultObjectId, claimed);
   if (!craft) {
     return std::nullopt;
   }
@@ -403,7 +405,7 @@ void CraftService::FinishOrder(uint32_t actorId, uint64_t orderId)
       return;
     }
     crafted = CraftItem(me, order.inputObjects, order.workbenchId,
-                        order.resultObjectId, order.resultPotion, &made);
+                        order.resultObjectId, order.claimed, &made);
   } catch (const std::exception& e) {
     // A timer has nobody above it to throw to, so this is where the reason
     // is said; the inventory goes back as for any craft that failed.
@@ -470,6 +472,18 @@ void CraftService::SendMade(Networking::UserId userId, const Made& made)
     ar.Serialize("made", *made.contents);
     content["made"] = std::move(ar.j["made"]);
   }
+  if (made.enchantment) {
+    // Thornswood #4513: the piece goes back enchanted, the way an inventory
+    // entry carries it.
+    JsonOutputArchive ar;
+    auto enchantment = *made.enchantment;
+    ar.Serialize("madeEnchantment", enchantment);
+    content["madeEnchantment"] = std::move(ar.j["madeEnchantment"]);
+    content["enchantmentId"] = Inventory::MadeEnchantmentId(enchantment);
+    if (made.maxCharge) {
+      content["maxCharge"] = *made.maxCharge;
+    }
+  }
   partOne.SendCustomPacket(userId, content.dump());
 }
 
@@ -495,11 +509,9 @@ void CraftService::SendInventoryBack(MpActor* me, uint32_t workbenchId,
 
 bool CraftService::CraftItem(
   MpActor* me, const Inventory& inputObjects, uint32_t workbenchId,
-  uint32_t resultObjectId, const std::optional<Inventory::Made>& resultPotion,
-  Made* made)
+  uint32_t resultObjectId, const Claimed& claimed, Made* made)
 {
-  auto craft =
-    WorkOut(me, inputObjects, workbenchId, resultObjectId, resultPotion);
+  auto craft = WorkOut(me, inputObjects, workbenchId, resultObjectId, claimed);
   if (!craft) {
     return false;
   }
@@ -515,7 +527,8 @@ bool CraftService::CraftItem(
 
   CraftEvent craftEvent(me, craft->outputBaseId, craft->outputCount,
                         craft->recipeId, *taken, workbenchId, craft->effects,
-                        std::move(*stockDraws), craft->made);
+                        std::move(*stockDraws), craft->made,
+                        craft->enchantment, craft->maxCharge);
   if (!craftEvent.Fire(me->GetParent())) {
     // THORNSWOOD PATCH: WorkOut has already logged "crafted" for a recipe by
     // the time the gamemode answers, so the log says when the answer was no.
@@ -531,13 +544,16 @@ bool CraftService::CraftItem(
     made->baseId = craftEvent.GetOutputBaseId();
     made->count = craftEvent.GetOutputCount();
     made->contents = craftEvent.GetOutputMade();
+    made->enchantment = craftEvent.GetOutputEnchantment();
+    made->maxCharge =
+      made->enchantment ? craftEvent.GetOutputMaxCharge() : std::nullopt;
   }
   return true;
 }
 
 std::optional<CraftService::Craft> CraftService::WorkOut(
   MpActor* me, const Inventory& inputObjects, uint32_t workbenchId,
-  uint32_t resultObjectId, const std::optional<Inventory::Made>& resultPotion)
+  uint32_t resultObjectId, const Claimed& claimed)
 {
   auto& workbench =
     partOne.worldState.GetFormAt<MpObjectReference>(workbenchId);
@@ -643,7 +659,7 @@ std::optional<CraftService::Craft> CraftService::WorkOut(
     std::optional<Inventory::Made> made;
     uint32_t resultBaseId = resultObjectId;
     if (effects) {
-      made = MadePotion(br, inputObjects, *effects, resultPotion);
+      made = MadePotion(br, inputObjects, *effects, claimed.potion);
       if (!made) {
         spdlog::warn("CraftService - the brew of {} came without a "
                      "description of the bottle that matches its "
@@ -656,6 +672,36 @@ std::optional<CraftService::Craft> CraftService::WorkOut(
                    resultObjectId, resultBaseId, Inventory::Canonical(*made));
     }
 
+    /*
+      THORNSWOOD PATCH (Thornswood #4513). An enchanted piece is kept with
+      the enchantment that went on it, never with the id the enchanting game
+      gave that enchantment.
+
+      The enchantment is a runtime form (above 0xff000000) that only the
+      enchanting client's session has, and the craft used to come with
+      nothing but the piece's base id, so the piece went into the pack plain
+      and came back plain. Now the craft comes with what the client read off
+      the piece (resultEnchantment), MadeEnchantment checks it, and the piece
+      goes in carrying it, named by Inventory::MadeEnchantmentId. An
+      enchantment that is not believable is refused before the gamemode is
+      asked, as a brew without a believable bottle is. A craft that names no
+      enchantment is what it always was.
+    */
+    std::optional<Inventory::MadeEnchantment> enchantment;
+    if (!effects && claimed.enchantment) {
+      enchantment = MadeEnchantment(br, inputObjects, resultObjectId, claimed);
+      if (!enchantment) {
+        spdlog::warn("CraftService - the enchantment of {:#x} from {} is not "
+                     "one the game could have made, so it is refused",
+                     resultObjectId, inputObjects.ToJson().dump());
+        return std::nullopt;
+      }
+      spdlog::info("The enchantment on {:#x} is kept as {:#x}: {}",
+                   resultObjectId,
+                   Inventory::MadeEnchantmentId(*enchantment),
+                   Inventory::Canonical(*enchantment));
+    }
+
     Craft craft;
     craft.entries = inputObjects.entries;
     craft.outputBaseId = resultBaseId;
@@ -663,6 +709,10 @@ std::optional<CraftService::Craft> CraftService::WorkOut(
     craft.recipeId = 0;
     craft.effects = std::move(effects);
     craft.made = std::move(made);
+    if (enchantment) {
+      craft.maxCharge = enchantment->weapon ? claimed.maxCharge : std::nullopt;
+    }
+    craft.enchantment = std::move(enchantment);
     return craft;
   }
 
@@ -980,4 +1030,72 @@ bool CraftService::EvaluateCraftRecipeConditions(
     conditions, aggressor, target, callback);
 
   return evalRes_;
+}
+
+std::optional<Inventory::MadeEnchantment> CraftService::MadeEnchantment(
+  const espm::CombineBrowser& br, const Inventory& inputObjects,
+  uint32_t resultObjectId, const Claimed& claimed)
+{
+  if (!claimed.enchantment) {
+    return std::nullopt;
+  }
+  Inventory::MadeEnchantment enchantment = *claimed.enchantment;
+
+  // The piece: a weapon or armour record, of the kind the enchantment says,
+  // and one of the inputs.
+  const auto piece = br.LookupById(resultObjectId).rec;
+  if (!piece) {
+    return std::nullopt;
+  }
+  const bool weapon = piece->GetType() == "WEAP";
+  if ((!weapon && piece->GetType() != "ARMO") ||
+      enchantment.weapon != weapon) {
+    return std::nullopt;
+  }
+  bool pieceIn = false;
+  bool soulGemIn = false;
+  for (const auto& entry : inputObjects.entries) {
+    if (entry.baseId == resultObjectId && entry.count > 0) {
+      pieceIn = true;
+    }
+    const auto input = br.LookupById(entry.baseId).rec;
+    if (input && input->GetType() == "SLGM" && entry.count > 0) {
+      soulGemIn = true;
+    }
+  }
+  if (!pieceIn || !soulGemIn) {
+    return std::nullopt;
+  }
+
+  // One effect, or two with Twin Souls, each a magic effect named once.
+  if (enchantment.effects.empty() || enchantment.effects.size() > 2) {
+    return std::nullopt;
+  }
+  std::set<uint32_t> named;
+  for (const auto& effect : enchantment.effects) {
+    const auto mgef = br.LookupById(effect.effectId).rec;
+    if (!mgef || mgef->GetType() != "MGEF" ||
+        !named.insert(effect.effectId).second) {
+      return std::nullopt;
+    }
+    if (!std::isfinite(effect.magnitude) || effect.magnitude < 0.f ||
+        effect.magnitude > kEnchantMagnitudeLimit ||
+        effect.area > kEnchantDurationLimit ||
+        effect.duration > kEnchantDurationLimit) {
+      return std::nullopt;
+    }
+  }
+
+  // A weapon's charge, which armour has none of.
+  if (weapon) {
+    if (!claimed.maxCharge || !std::isfinite(*claimed.maxCharge) ||
+        *claimed.maxCharge <= 0.f || *claimed.maxCharge > kMaxChargeLimit) {
+      return std::nullopt;
+    }
+  } else if (claimed.maxCharge && *claimed.maxCharge != 0.f) {
+    return std::nullopt;
+  }
+
+  Inventory::Round(enchantment);
+  return enchantment;
 }

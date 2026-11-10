@@ -198,7 +198,8 @@ TEST_CASE("NPC equipment metadata does not change the inventory wire format",
     .Serialize("name", entry.name).Serialize("soul", entry.soul)
     .Serialize("poisonId", entry.poisonId).Serialize("poisonCount", entry.poisonCount)
     .Serialize("worn", entry.worn_).Serialize("wornLeft", entry.wornLeft)
-    .Serialize("made", entry.made);
+    .Serialize("made", entry.made)
+    .Serialize("madeEnchantment", entry.madeEnchantment);
   entry.Serialize(current);
   REQUIRE(actual.GetNumberOfBitsUsed() == expected.GetNumberOfBitsUsed());
   REQUIRE(std::memcmp(actual.GetData(), expected.GetData(),

@@ -22,7 +22,10 @@ public:
   void OnCraftItem(
     const RawMessageData& rawMsgData, const Inventory& inputObjects,
     uint32_t workbenchId, uint32_t resultObjectId,
-    const std::optional<Inventory::Made>& resultPotion = std::nullopt);
+    const std::optional<Inventory::Made>& resultPotion = std::nullopt,
+    const std::optional<Inventory::MadeEnchantment>& resultEnchantment =
+      std::nullopt,
+    std::optional<float> resultMaxCharge = std::nullopt);
 
   // THORNSWOOD PATCH (Thornswood #3161). The person left the bench: its
   // menu closed, which is getting up from it. Every craft still being worked
@@ -85,6 +88,40 @@ public:
     const std::vector<uint32_t>& effects,
     const std::optional<Inventory::Made>& claimed);
 
+  // THORNSWOOD PATCH (Thornswood #4513). What the client read off what a
+  // craft gave: a brewed bottle's contents (#1649), or the enchantment the
+  // game put on a piece and the charge the piece holds at most.
+  struct Claimed
+  {
+    std::optional<Inventory::Made> potion;
+    std::optional<Inventory::MadeEnchantment> enchantment;
+    std::optional<float> maxCharge;
+  };
+
+  // THORNSWOOD PATCH (Thornswood #4513). What the server keeps of an
+  // enchantment made on a piece, or nullopt when it is not believable and
+  // the craft is refused.
+  //
+  // There is no record to work the effects out from, as a brew's
+  // ingredients are for a bottle: which enchantments a person may put on a
+  // piece is the gamemode's list (docs/systems/enchantments.md). What is
+  // checked here is that it is an enchantment of that piece at all: the
+  // piece is a weapon or armour record and one of the inputs, a soul gem is
+  // another, the enchantment says the same kind of piece, it holds one or
+  // two effects (two with Twin Souls), each a magic effect record named
+  // once, and every number is one the game could give: finite, at most
+  // kEnchantMagnitudeLimit, an area and a duration whole and at most
+  // kEnchantDurationLimit, a weapon's charge at most kMaxChargeLimit (a
+  // grand or black soul is 3000) and armour's none. The result is rounded
+  // (Inventory::Round), so its id is stable.
+  // public for MadeEnchantmentTest.cpp
+  static constexpr float kEnchantMagnitudeLimit = 1000.f;
+  static constexpr uint32_t kEnchantDurationLimit = 3600;
+  static constexpr float kMaxChargeLimit = 3000.f;
+  std::optional<Inventory::MadeEnchantment> MadeEnchantment(
+    const espm::CombineBrowser& br, const Inventory& inputObjects,
+    uint32_t resultObjectId, const Claimed& claimed);
+
 private:
   // THORNSWOOD PATCH (Thornswood #3161). What a craft is, worked out from
   // what the client says went in and came out: the entries it takes, what
@@ -100,17 +137,24 @@ private:
     // Thornswood #1649. A brew's bottle by its contents (MadePotion), and
     // then outputBaseId is Inventory::MadeBaseId of it.
     std::optional<Inventory::Made> made;
+    // Thornswood #4513. An enchanted piece's enchantment by its contents
+    // (MadeEnchantment), and the charge the piece holds at most.
+    std::optional<Inventory::MadeEnchantment> enchantment;
+    std::optional<float> maxCharge;
   };
 
   // What a craft that went through gave, which the client is told so it can
   // put back the item it hid when the person pressed craft. Thornswood #1649:
   // a brewed bottle's contents go with it, since its base id is a made id the
-  // client has to build (ensureMadePotion) before it can add it.
+  // client has to build (ensureMadePotion) before it can add it. Thornswood
+  // #4513: so does a made enchantment, and the piece goes back with it.
   struct Made
   {
     uint32_t baseId = 0;
     uint32_t count = 0;
     std::optional<Inventory::Made> contents;
+    std::optional<Inventory::MadeEnchantment> enchantment;
+    std::optional<float> maxCharge;
   };
 
   // A craft that is being worked or waits its turn, oldest first.
@@ -121,9 +165,9 @@ private:
     Inventory inputObjects;
     uint32_t workbenchId = 0;
     uint32_t resultObjectId = 0;
-    // Thornswood #1649: what the client read off a brewed bottle, worked out
-    // again when the time is up, the same as the inputs.
-    std::optional<Inventory::Made> resultPotion;
+    // Thornswood #1649, #4513: what the client read off what the craft
+    // gave, worked out again when the time is up, the same as the inputs.
+    Claimed claimed;
     std::chrono::milliseconds time{ 0 };
     // What the craft will take, held back from every later order of the
     // same person so two orders cannot both count the same ingot.
@@ -132,11 +176,11 @@ private:
 
   // nullopt when this is no craft the server would carry out: not a bench,
   // a recipe that is not usable here, or a brew without a believable
-  // description of its bottle (Thornswood #1649). Logs why.
-  std::optional<Craft> WorkOut(
-    MpActor* me, const Inventory& inputObjects, uint32_t workbenchId,
-    uint32_t resultObjectId,
-    const std::optional<Inventory::Made>& resultPotion);
+  // description of its bottle (Thornswood #1649), or an enchantment that is
+  // not believable (Thornswood #4513). Logs why.
+  std::optional<Craft> WorkOut(MpActor* me, const Inventory& inputObjects,
+                               uint32_t workbenchId, uint32_t resultObjectId,
+                               const Claimed& claimed);
 
   // THORNSWOOD PATCH. The craft itself, split out of OnCraftItem so that
   // every way it can fail ends in the same place. True when it went through,
@@ -144,16 +188,14 @@ private:
   // what it gave, when it went through.
   bool CraftItem(MpActor* me, const Inventory& inputObjects,
                  uint32_t workbenchId, uint32_t resultObjectId,
-                 const std::optional<Inventory::Made>& resultPotion,
-                 Made* made = nullptr);
+                 const Claimed& claimed, Made* made = nullptr);
 
   // THORNSWOOD PATCH (Thornswood #3161). Asks onCraftWork how long the
   // craft takes. nullopt when it is refused before any time passes; the
   // reason is logged. `takes` is set to what the craft will take.
   std::optional<std::chrono::milliseconds> AskWorkTime(
     MpActor* me, const Inventory& inputObjects, uint32_t workbenchId,
-    uint32_t resultObjectId,
-    const std::optional<Inventory::Made>& resultPotion,
+    uint32_t resultObjectId, const Claimed& claimed,
     std::vector<Inventory::Entry>& takes);
 
   void StartNextOrder(uint32_t actorId);
