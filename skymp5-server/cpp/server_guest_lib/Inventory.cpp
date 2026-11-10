@@ -147,9 +147,9 @@ std::string Inventory::Canonical(const Made& made)
 std::string Inventory::Canonical(const MadeEnchantment& enchantment)
 {
   // A bottle's text starts "potion|" or "poison|", so no enchantment's text
-  // is ever a bottle's.
-  std::string text = enchantment.weapon ? "weapon-enchantment|"
-                                        : "armour-enchantment|";
+  // is ever a bottle's. CanonicalEffects puts the "|" before each effect.
+  std::string text =
+    enchantment.weapon ? "weapon-enchantment" : "armour-enchantment";
   text += CanonicalEffects(enchantment.effects);
   return text;
 }
