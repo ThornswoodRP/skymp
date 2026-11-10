@@ -93,9 +93,20 @@ export interface Browser {
 }
 export declare let browser: Browser
 
+// Thornswood #4523: the window that has the keyboard, or null when none has.
+// isGame and ourProcess are true when it belongs to the game's own process.
+export interface ForegroundWindow {
+  isGame: boolean
+  ourProcess: boolean
+  exe: string
+  title: string
+  className: string
+}
+
 export interface Win32 {
   loadUrl(url: string): void
   exitProcess(): void
+  foregroundWindow(): ForegroundWindow | null
 }
 export declare let win32: Win32
 
