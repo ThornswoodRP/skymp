@@ -24,6 +24,10 @@ declare module "skyrimPlatform" {
     // Thornswood #1649. Builds, under formId, the brewed potion the server
     // keeps by its contents. True when a potion has that id afterwards.
     function createMadePotion(formId: number, name: string, poison: boolean, effectIds: number[], magnitudes: number[], areas: number[], durations: number[]): boolean;
+    // Thornswood #4513. Builds, under formId, the enchantment the server
+    // keeps by its contents, for a weapon or for armour. True when an
+    // enchantment has that id afterwards.
+    function createMadeEnchantment(formId: number, weapon: boolean, effectIds: number[], magnitudes: number[], areas: number[], durations: number[]): boolean;
     function getExteriorCellCoordinates(cellId: number): number[] | undefined;
     function setTextsVisibility(visibility: 'inheritBrowser' | 'off' | 'on'): void;
     function getTextsVisibility(): 'inheritBrowser' | 'off' | 'on';
