@@ -81,16 +81,27 @@ const main = async () => {
 
   assert.throws(() => addon.createBotClient("127.0.0.1", 0), /port/);
 
-  const wrong = addon.createBotClient("127.0.0.1", port, password + "-not-it", 5000);
+  // ONE ADDRESS A BOT (Thornswood #5359). The engine turns on SLikeNet's
+  // limit on how often one address may connect (SetLimitIPConnectionFrequency
+  // in Networking.cpp): a connection is refused with "IP recently connected"
+  // while another from the same address, still open, connected less than
+  // 100 ms before (RakPeer::AssignSystemAddressToRemoteSystemList). It holds
+  // for 127.0.0.1. RakPeer leaves out only the server's own addresses
+  // (IsLoopbackAddress reads ipList), and GetMyIP fills that list skipping
+  // loopback adapters, on Windows and Linux alike (RakNetSocket2_Windows_Linux.cpp).
+  // Measured: in the load test (Thornswood run 41352899299), 2 of 5 bots that
+  // connected from 127.0.0.1 in the same second were refused. This test used
+  // to say loopback was left out and passed only because its second bot
+  // started after the first was refused, which was never measured to be
+  // 100 ms. So the two bots here are two people, each from a loopback
+  // address of its own, as the load test's are (scripts/bot/load-proxy.js in
+  // Thornswood), and neither waits on the other's timing.
+  const wrong = addon.createBotClient("127.0.0.1", port, password + "-not-it", 5000, "127.0.1.1");
   const denied = await until(wrong, (e) => e.type === "connectionDenied" && e, 15000, "refusal of a wrong password");
   assert.equal(denied.value.error, "Invalid password");
   wrong.destroy();
-  // A second connection from the same address straight after is allowed:
-  // SLikeNet's limit on how often one address may connect
-  // (SetLimitIPConnectionFrequency in Networking.cpp) leaves loopback out
-  // (RakPeer.cpp, IsLoopbackAddress), and every bot here is on 127.0.0.1.
 
-  const bot = addon.createBotClient("127.0.0.1", port, password, 15000);
+  const bot = addon.createBotClient("127.0.0.1", port, password, 15000, "127.0.1.2");
   await until(bot, (e) => e.type === "connectionAccepted", 15000, "connection");
   assert.equal(bot.isConnected(), true);
 

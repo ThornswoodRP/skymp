@@ -57,14 +57,15 @@ class Client : public Networking::IClient
 {
 public:
   Client(const char* ip_, unsigned short port_, int timeoutMs_,
-         const char* password_)
+         const char* password_, const char* localAddress_)
     : ip(ip_)
     , port(port_)
     , password(password_)
   {
 
     peer.reset(new RakPeer);
-    socket.reset(new SocketDescriptor(0, nullptr));
+    socket.reset(new SocketDescriptor(
+      0, localAddress_ && *localAddress_ ? localAddress_ : nullptr));
     const auto res = peer->Startup(1, &*socket, 1);
     if (res != StartupResult::RAKNET_STARTED) {
       throw std::runtime_error("Peer startup failed with code " +
@@ -318,9 +319,10 @@ private:
 
 std::shared_ptr<Networking::IClient> Networking::CreateClient(
   const char* serverIp, unsigned short serverPort, int timeoutMs,
-  const char* password)
+  const char* password, const char* localAddress)
 {
-  return std::make_shared<Client>(serverIp, serverPort, timeoutMs, password);
+  return std::make_shared<Client>(serverIp, serverPort, timeoutMs, password,
+                                  localAddress);
 }
 
 std::shared_ptr<Networking::IServer> Networking::CreateServer(
