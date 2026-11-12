@@ -9,12 +9,19 @@
 # check makes each fork pull request carry its line while its author still
 # knows what it changes, held to the same rules a release is held to.
 #
-# WHAT IT RUNS. Thornswood main's scripts/dev/Check-PrBody.ps1 with its
-# scripts/release/Note-Rules.ps1, the one copy of the rules, read from
-# Thornswood as it is now and never from the pull request, so a pull request
+# WHAT IT RUNS. Thornswood main's thornswood-notes (tools/ReleaseNotes, the
+# one copy of the rules, Thornswood #5179 and #5354), the same command
+# Thornswood's own Release note check runs, built from Thornswood as it is
+# now and its locked packages, never from the pull request, so a pull request
 # cannot change the check it is held to. Nothing of this repository is
-# checked out. The body reaches the script through the environment and a
+# checked out. The body reaches the command through the environment and a
 # file, never pasted into it. Read-only token, no secret, GitHub's own runner.
+#
+# Until Thornswood #5354 this ran Thornswood's scripts/dev/Check-PrBody.ps1
+# with scripts/release/Note-Rules.ps1. Check-PrBody.ps1 went with Thornswood
+# #5355 on 1 Nov 2026, when the rules moved to C#, and this kept asking for
+# it, so from then every fork pull request's check stopped on a script that
+# was not there.
 #
 # WHEN. A pull request into thornswood/engine-changes is opened, pushed to,
 # reopened, or its body is edited: fixing the body turns it green with no new
@@ -47,10 +54,17 @@ jobs:
           repository: ${{ github.repository_owner }}/Thornswood
           ref: main
           persist-credentials: false
-          sparse-checkout: |
-            scripts/dev/Check-PrBody.ps1
-            scripts/release/Note-Rules.ps1
-          sparse-checkout-cone-mode: false
+          sparse-checkout: tools/ReleaseNotes
+      - uses: actions/setup-dotnet@0f4a354dd5547a28c70b7853dbd95d5b67886e73 # v6.1.0
+        with:
+          dotnet-version: '10.0.x'
+      - name: Build the release note rules
+        env:
+          DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+          DOTNET_NOLOGO: '1'
+        run: |
+          dotnet restore tools/ReleaseNotes --locked-mode
+          dotnet build tools/ReleaseNotes -c Release --no-restore -o "$RUNNER_TEMP/notes"
       - name: Check the release note line
         shell: pwsh
         env:
@@ -58,6 +72,8 @@ jobs:
           PR_AUTHOR: ${{ github.event.pull_request.user.login }}
           GH_TOKEN: ${{ github.token }}
           HEAD_REF: ${{ github.ref_name }}
+          DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+          DOTNET_NOLOGO: '1'
         run: |
           $f = Join-Path $env:RUNNER_TEMP 'pr-body.md'
           $body = [string]$env:PR_BODY
@@ -74,4 +90,7 @@ jobs:
             Write-Host "pull request #$($prs[0].number), opened by $author"
           }
           [IO.File]::WriteAllText($f, $body)
-          ./scripts/dev/Check-PrBody.ps1 -BodyFile $f -Author $author
+          $with = @('pr', '--body-file', $f)
+          if ($author) { $with += @('--author', $author) }
+          dotnet (Join-Path $env:RUNNER_TEMP 'notes/thornswood-notes.dll') @with
+          exit $LASTEXITCODE
