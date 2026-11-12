@@ -186,7 +186,9 @@ concurrency:
 
 env:
   BUILD_TYPE: Release
-  VCPKG_BINARY_SOURCES: 'clear;nuget,GitHub,readwrite'
+  # Read only for every job here; the push build alone sets its own readwrite
+  # source (the header above build-pr, THE LIBRARY CACHE, Thornswood #2760).
+  VCPKG_BINARY_SOURCES: 'clear;nuget,GitHub,read'
   VCPKG_FEATURE_FLAGS: 'manifests'
 
 jobs:
@@ -266,6 +268,13 @@ jobs:
       - name: Every action is pinned by commit
         shell: pwsh
         run: .\misc\thornswood\Test-ActionPins.ps1
+      # The header above build-pr, THE LIBRARY CACHE: no job a pull request
+      # runs may write a package or the library cache (Thornswood #2760).
+      - name: No pull request job can write the library cache
+        shell: pwsh
+        run: |
+          node misc/thornswood/test-pull-request-writes.js
+          exit $LASTEXITCODE
 
       # The header, THE COMPILER CACHE. ccache from its own release, held to
       # the sha256 written here, so a changed download stops the build
@@ -508,8 +517,10 @@ jobs:
     if: github.event_name == 'push'
     runs-on: windows-2022
     timeout-minutes: 135
-    # The workflow's own VCPKG_BINARY_SOURCES, readwrite: the header above
-    # build-pr, THE LIBRARY CACHE.
+    # The one job that writes the library cache: the header above build-pr,
+    # THE LIBRARY CACHE. A push to thornswood/engine-changes only.
+    env:
+      VCPKG_BINARY_SOURCES: 'clear;nuget,GitHub,readwrite'
     permissions:
       contents: read
       packages: write
