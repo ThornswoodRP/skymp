@@ -14,6 +14,7 @@
 #include "HttpClient.h"
 #include "HttpClientApi.h"
 #include "InventoryApi.h"
+#include "BookTextApi.h"
 #include "LoadGameApi.h"
 #include "MagicApi.h"
 #include "MpClientPluginApi.h"
@@ -304,6 +305,7 @@ private:
       FileInfoApi::Register(env, e);
       TextApi::Register(env, e);
       InventoryApi::Register(env, e);
+      BookTextApi::Register(env, e);
       MagicApi::Register(env, e);
       ConstEnumApi::Register(env, e);
       CallNativeApi::Register(env, e, getNativeCallRequirements);

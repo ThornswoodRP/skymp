@@ -19,6 +19,8 @@ export declare function disableCtrlPrtScnHotkey(): void
 export declare function blockPapyrusEvents(block: boolean): void
 // Thornswood #1016: while blocked, the game's menu opener does not see keyboard key `code` (DirectX scan code) going down as `userEvent` (e.g. "Journal"), unless one of exceptMenus is open. Plugins still get the key in buttonEvent.
 export declare function setMenuOpenKeyBlocked(userEvent: string, code: number, blocked: boolean, exceptMenus?: string[]): void
+// Thornswood #4566: opens the game's own Book Menu on the book record `bookFormId`, showing `text` in place of the record's words. The words are kept until that menu closes. False, opening nothing, when it is not a book or the game is not ready.
+export declare function openBookWithText(bookFormId: number, text: string): boolean
 // Thornswood #1385: while ignored, the game does not hold form `formId` to its carry weight (Actor::IsOverEncumbered answers no), so being overloaded never makes it walk.
 export declare function setOverEncumberedIgnored(formId: number, ignored: boolean): void
 export declare function isOverEncumberedIgnored(formId: number): boolean
