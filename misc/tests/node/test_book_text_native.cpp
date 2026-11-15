@@ -8,6 +8,11 @@
 // words are held until the menu they were opened for has closed, and every
 // case below asks that they are still there, at the same address, for as
 // long as the game might read them.
+//
+// Every written book is the one record (kWritten), so the game opening that
+// same record itself, a copy read the normal way, is the open that matters:
+// only an entry whose own task has called OpenBookMenu (Issued) can be
+// claimed by an open.
 #include <cassert>
 #include <iostream>
 #include <string>
@@ -23,6 +28,7 @@ int main()
     BookTextHold<std::string> h;
     const std::string& words = h.Hold(kWritten, "The Ballad of Hroki");
     assert(h.Held() == 1);
+    h.Issued(words);
     h.Opened(kWritten);
     assert(h.Held() == 1 && words == "The Ballad of Hroki");
     h.Closed();
@@ -32,13 +38,27 @@ int main()
     // still finds them.
     BookTextHold<std::string> h;
     const std::string* at = &h.Hold(kWritten, "page one");
+    h.Issued(*at);
     h.Opened(kWritten);
     assert(at == &h.Front() && *at == "page one");
   }
-  { // A book of the game's own opening and closing while ours is still
-    // queued does not let ours go.
+  { // The same record opened and closed by the game itself while ours is
+    // still queued, its task not yet run: ours is untouched where it lies.
+    BookTextHold<std::string> h;
+    const std::string* at = &h.Hold(kWritten, "mine");
+    h.Opened(kWritten);
+    h.Closed();
+    assert(h.Held() == 1 && &h.Front() == at && *at == "mine");
+    h.Issued(*at);
+    h.Opened(kWritten);
+    h.Closed();
+    assert(h.Held() == 0);
+  }
+  { // A book of the game's own opening and closing while ours is issued
+    // does not let ours go.
     BookTextHold<std::string> h;
     const std::string& words = h.Hold(kWritten, "mine");
+    h.Issued(words);
     h.Opened(kVanilla);
     h.Closed();
     assert(h.Held() == 1 && words == "mine");
@@ -46,21 +66,27 @@ int main()
     h.Closed();
     assert(h.Held() == 0);
   }
-  { // Two of ours queued: the first close lets the first go, and the second
-    // is untouched where it lies.
+  { // Two of ours, the second not yet issued: the first close lets the first
+    // go, and the second is untouched where it lies and cannot be claimed
+    // until its own task runs.
     BookTextHold<std::string> h;
-    h.Hold(kWritten, "first");
+    const std::string& first = h.Hold(kWritten, "first");
     const std::string* second = &h.Hold(kWritten, "second");
+    h.Issued(first);
     h.Opened(kWritten);
     h.Closed();
     assert(h.Held() == 1 && *second == "second" && &h.Front() == second);
+    h.Opened(kWritten);
+    h.Closed();
+    assert(h.Held() == 1);
+    h.Issued(*second);
     h.Opened(kWritten);
     h.Closed();
     assert(h.Held() == 0);
   }
   { // A close with nothing of ours open lets nothing go.
     BookTextHold<std::string> h;
-    h.Hold(kWritten, "waiting");
+    h.Issued(h.Hold(kWritten, "waiting"));
     h.Closed();
     assert(h.Held() == 1);
   }
@@ -74,11 +100,22 @@ int main()
   }
   { // A menu whose book could not be read (0) is not ours.
     BookTextHold<std::string> h;
-    h.Hold(kWritten, "kept");
+    h.Issued(h.Hold(kWritten, "kept"));
     h.Opened(0);
     h.Closed();
     assert(h.Held() == 1);
   }
-  std::cout << "book text: 7 cases passed" << std::endl;
+  { // A task that never called OpenBookMenu (its book was gone) lets its
+    // own words go; one that did keeps them until its menu closes.
+    BookTextHold<std::string> h;
+    const std::string& never = h.Hold(kWritten, "never shown");
+    h.Dropped(never);
+    assert(h.Held() == 0);
+    const std::string& shown = h.Hold(kWritten, "shown");
+    h.Issued(shown);
+    h.Dropped(shown);
+    assert(h.Held() == 1);
+  }
+  std::cout << "book text: 9 cases passed" << std::endl;
   return 0;
 }
