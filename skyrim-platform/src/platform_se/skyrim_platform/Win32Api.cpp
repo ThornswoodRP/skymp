@@ -56,8 +56,18 @@ Napi::Value Win32Api::ForegroundWindow(const Napi::CallbackInfo& info)
   DWORD pid = 0;
   GetWindowThreadProcessId(window, &pid);
 
+  // InternalGetWindowText, never GetWindowTextW (Thornswood #6125).
+  // GetWindowTextW asks a window of this process for its title by sending
+  // WM_GETTEXT to the thread that owns it, and that waits until the thread
+  // answers. This runs on the JS thread and the window in front is nearly
+  // always the game's, whose thread is the game's main thread; on 15 Nov
+  // 2026 the main thread was waiting on the JS thread (SkyrimPlatformImpl,
+  // SleepConditionVariableSRW) while the JS thread sat in SendMessage from
+  // GetWindowTextW, and the game stopped at its first screen with no cursor.
+  // InternalGetWindowText reads the title Windows keeps for the window and
+  // sends nothing, so it cannot wait on any thread.
   wchar_t title[512] = {};
-  const int titleLength = GetWindowTextW(window, title, 512);
+  const int titleLength = InternalGetWindowText(window, title, 512);
   wchar_t className[256] = {};
   const int classLength = GetClassNameW(window, className, 256);
 
