@@ -210,6 +210,8 @@ jobs:
         run: node skymp5-client/test-disabled-stays.js
       - name: The browser is shown at start, focused only by a plugin
         run: node misc/tests/node/test_browser_start_focus.js
+      - name: The page's focus is a menu the game keeps the cursor for
+        run: node misc/tests/node/test_page_focus_menu.js
       - name: The update event's Papyrus call opens its way when it ends
         run: node misc/tests/node/test_papyrus_update_way_native.js
   save-directory-linux:
