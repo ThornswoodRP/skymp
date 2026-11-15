@@ -102,6 +102,13 @@ public:
     return ours_;
   }
 
+  // A show of ours queued and not yet answered by the Cursor Menu opening.
+  bool Waiting() const
+  {
+    std::lock_guard<std::mutex> l(m_);
+    return pending_ == Msg::Show;
+  }
+
 private:
   mutable std::mutex m_;
   Msg pending_ = Msg::None;

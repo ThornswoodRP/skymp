@@ -8,6 +8,22 @@
 
 namespace {
 
+// Thornswood #6200: what each focus change and each Cursor Menu event did,
+// in the platform log. On 15 Nov 2026 the first screen held the page's focus
+// with no cursor until Shift+Tab, and nothing recorded whether the Cursor
+// Menu was open, closed, or a show of ours was still on its way.
+const char* MsgName(CursorFocus::Msg msg)
+{
+  switch (msg) {
+    case CursorFocus::Msg::Show:
+      return "a show";
+    case CursorFocus::Msg::Hide:
+      return "a hide";
+    default:
+      return "nothing";
+  }
+}
+
 // Thornswood #2384: replaces g_cursorIsOpenByFocus, which was set when a show
 // was queued rather than when the menu opened, and was thread_local while the
 // Cursor Menu event arrives on the game's thread.
@@ -77,8 +93,14 @@ void SetFocusedImpl(bool newFocus)
     // Thornswood #2384: the show or hide is queued, not done, so what has
     // been asked for is kept until the game's Cursor Menu event says it
     // happened (CursorFocus.h).
-    Queue(g_cursorFocus.OnFocus(newFocus,
-                                ui->IsMenuOpen(RE::CursorMenu::MENU_NAME)));
+    const bool menuOpen = ui->IsMenuOpen(RE::CursorMenu::MENU_NAME);
+    const auto msg = g_cursorFocus.OnFocus(newFocus, menuOpen);
+    spdlog::info("browser: focus {}, the Cursor Menu {}, queued {}{}",
+                 newFocus ? "taken" : "let go",
+                 menuOpen ? "open" : "closed", MsgName(msg),
+                 g_cursorFocus.Waiting() ? ", a show still on its way"
+                                         : "");
+    Queue(msg);
   }
 }
 }
@@ -154,8 +176,12 @@ void BrowserApiTilted::OnCursorMenu(bool opening)
 {
   // Thornswood #2384: called from WatchMenus' sink, on the game's thread,
   // when the Cursor Menu itself opens or closes.
-  Queue(g_cursorFocus.OnCursorMenu(opening,
-                                   CEFUtils::DInputHook::ChromeFocus()));
+  const bool focus = CEFUtils::DInputHook::ChromeFocus();
+  const auto msg = g_cursorFocus.OnCursorMenu(opening, focus);
+  spdlog::info("browser: the Cursor Menu {}, page focus {}, queued {}",
+               opening ? "opened" : "closed", focus ? "held" : "not held",
+               MsgName(msg));
+  Queue(msg);
 }
 
 void BrowserApiTilted::OnLoadingMenu(bool opening)
