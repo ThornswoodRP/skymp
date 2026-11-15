@@ -4,16 +4,19 @@
 #include "ConsoleApi.h"
 #include "ExceptionPrinter.h"
 #include "NullPointerException.h"
+#include "PapyrusUpdateWay.h"
 
 #include <RE/B/BSPointerHandle.h>
 #include <RE/N/NiPoint3.h>
 #include <REL/Relocation.h>
 
+#include <atomic>
+#include <chrono>
+
 extern CallNativeApi::NativeCallRequirements g_nativeCallRequirements;
 
 namespace TESModPlatform {
 bool papyrusUpdateAllowed = false;
-bool vmCallAllowed = true;
 std::atomic<bool> moveRefrBlocked = false;
 std::function<void(IVM* vm, StackID stackId)> onPapyrusUpdate = nullptr;
 std::atomic<uint64_t> numPapyrusUpdates = 0;
@@ -64,41 +67,68 @@ public:
   }
 };
 
+// The way for the call behind the 'update' event: PapyrusUpdateWay.h says
+// how it opens and why (Thornswood #6201).
+static PapyrusUpdateWay updateWay;
+
+static int64_t NowMs()
+{
+  return std::chrono::duration_cast<std::chrono::milliseconds>(
+           std::chrono::steady_clock::now().time_since_epoch())
+    .count();
+}
+
+// The callback of one call to TESModPlatform.Add. The VM runs it when Add
+// returns and lets go of it when the call is over, run or thrown away; the
+// first of those ends the call and opens the way for the next.
 class StackCallbackFunctor : public RE::BSScript::IStackCallbackFunctor
 {
 public:
-  void operator()(Variable a_result) override { return; }
+  ~StackCallbackFunctor() override { End(); }
+
+  void operator()(Variable a_result) override
+  {
+    ran = true;
+    End();
+  }
+
   bool CanSave() const override { return false; }
+
   void SetObject(
     const RE::BSTSmartPointer<RE::BSScript::Object>& a_object) override
   {
     return;
   };
-};
 
-// This class has been added as an issue 52 workaround
-class LoadGameEvent : public RE::BSTEventSink<RE::TESLoadGameEvent>
-{
-public:
-  LoadGameEvent()
-  {
-    auto holder = RE::ScriptEventSourceHolder::GetSingleton();
-    if (!holder) {
-      throw NullPointerException("holder");
-    }
-
-    holder->AddEventSink(this);
-  }
+  // The call has reached the VM.
+  void Sent() { sent = true; }
 
 private:
-  RE::BSEventNotifyControl ProcessEvent(
-    const RE::TESLoadGameEvent* event_,
-    RE::BSTEventSource<RE::TESLoadGameEvent>* eventSource) override
+  void End()
   {
-    vmCallAllowed = true;
-    return RE::BSEventNotifyControl::kContinue;
+    const auto ended = updateWay.End(this, NowMs());
+    if (!ended.wasOnItsWay) {
+      return;
+    }
+    if (sent && !ran) {
+      spdlog::warn("TESModPlatform: the game threw away the Papyrus update "
+                   "call sent {} ms ago without running it; the next frame "
+                   "sends another",
+                   ended.waited);
+    } else if (ended.waitWasWritten) {
+      spdlog::info("TESModPlatform: the Papyrus update call ran {} ms after "
+                   "it was sent",
+                   ended.waited);
+    }
   }
+
+  std::atomic<bool> sent = false;
+  std::atomic<bool> ran = false;
 };
+
+// Set when TESModPlatform.pex or one it needs is missing: a call would crash
+// the game, so none is ever sent.
+std::atomic<bool> papyrusSourcesMissing = false;
 }
 
 int32_t TESModPlatform::Add(IVM* vm, StackID stackId, RE::StaticFunctionTag*,
@@ -122,8 +152,6 @@ int32_t TESModPlatform::Add(IVM* vm, StackID stackId, RE::StaticFunctionTag*,
       console->Print("Papyrus context exception: %s", e.what());
     }
   }
-
-  vmCallAllowed = true;
 
   return 0;
 }
@@ -964,12 +992,19 @@ public:
 
 void TESModPlatform::Update()
 {
-  if (!vmCallAllowed) {
+  if (papyrusSourcesMissing) {
     return;
   }
-  vmCallAllowed = false;
-
-  papyrusUpdateAllowed = true;
+  int64_t waited = -1;
+  if (!updateWay.Open(NowMs(), &waited)) {
+    if (waited >= 0) {
+      spdlog::warn("TESModPlatform: the Papyrus update call sent {} ms ago "
+                   "has not run yet, so no 'update' event comes until it "
+                   "does",
+                   waited);
+    }
+    return;
+  }
 
   auto console = RE::ConsoleLog::GetSingleton();
   if (!console) {
@@ -978,12 +1013,16 @@ void TESModPlatform::Update()
 
   auto vm = RE::SkyrimVM::GetSingleton();
   if (!vm || !vm->impl) {
-    return console->Print("VM was nullptr");
+    static std::once_flag noVm;
+    std::call_once(noVm, [&] { console->Print("VM was nullptr"); });
+    return;
   }
 
   FunctionArguments args;
-  RE::BSTSmartPointer<RE::BSScript::IStackCallbackFunctor> functor(
-    new StackCallbackFunctor);
+  auto call = new StackCallbackFunctor;
+  RE::BSTSmartPointer<RE::BSScript::IStackCallbackFunctor> functor(call);
+  updateWay.Send(call, NowMs());
+  papyrusUpdateAllowed = true;
 
   // Prevents calling DispatchStaticCall by throwing an exception if we know
   // it's going to crash
@@ -995,8 +1034,10 @@ void TESModPlatform::Update()
     FixedString className("TESModPlatform");
     FixedString funcName("Add");
     vm->impl->DispatchStaticCall(className, funcName, &args, functor);
+    call->Sent();
   } catch (std::exception& e) {
     // We are not interested in crashing the game thread, so just printing
+    papyrusSourcesMissing = true;
     static std::once_flag flag;
     std::call_once(flag, [&] { ExceptionPrinter::Print(e); });
   }
@@ -1175,8 +1216,6 @@ bool TESModPlatform::Register(IVM* vm)
     new RE::BSScript::NativeFunction<true, decltype(CloseMenu), void,
                                      RE::StaticFunctionTag*, std::string_view>(
       "CloseMenu", "TESModPlatform", CloseMenu));
-
-  static LoadGameEvent loadGameEvent;
 
   return true;
 }
