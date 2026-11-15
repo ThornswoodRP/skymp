@@ -101,8 +101,12 @@ Napi::Value BookTextApi::OpenBookWithText(const Napi::CallbackInfo& info)
     if (!book) {
       spdlog::warn("book text: book {:x} is gone before its menu opened",
                    bookId);
+      g_held.Dropped(*words);
       return;
     }
+    // On the game thread, where the Book Menu's events arrive, and just
+    // before the call: no open comes between the two (BookText.h).
+    g_held.Issued(*words);
     RE::BookMenu::OpenBookMenu(*words, nullptr, nullptr, book, RE::NiPoint3(),
                                RE::NiMatrix3(), 1.0f, true);
   });

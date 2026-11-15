@@ -18,12 +18,23 @@
 // so neither is assumed: each text is held from before the open is queued
 // until the Book Menu it was opened for has closed.
 //
-// Which menu is ours is told by the book record it shows (BookMenu's target
-// form). Any book of the game's own opens the same menu, so an open of
-// another record, or one whose record could not be read (0), is not ours,
-// and its close lets nothing go. Two opens of ours are matched first in,
-// first out, the order the game handles its UI queue. A text whose open the
-// game never makes stays held; nothing here guesses that it will not come.
+// WHICH OPEN IS OURS. Every written book is the one record, so the open that
+// sits next to ours is the game opening that same record itself (a copy read
+// the normal way), not some other book. A text is held from the moment
+// openBookWithText is called, but it can be claimed by a Book Menu open only
+// once its own task, on the game thread, has said it is about to call
+// OpenBookMenu (Issued). An open of the record before that is the game's,
+// and neither it nor its close can touch ours. Issued is said on the game
+// thread just before the call, where the menu's events also arrive, so no
+// open comes between the two; whether the game raises the open inside the
+// call or on a later UI pass, the entry is already claimable.
+//
+// Among issued entries, an open of their record claims the oldest, and its
+// close lets it go. An open of another record, or one whose record could not
+// be read (0), claims nothing, and its close lets nothing go. A task that
+// never calls OpenBookMenu (its book was gone) lets its own words go
+// (Dropped); one that did keeps them until its menu closes. A text the game
+// never opens after its call stays held; nothing here guesses it will not.
 //
 // Text is the string type the menu is given (RE::BSString in the game,
 // std::string in misc/tests/node/test_book_text_native.cpp). A std::list
@@ -33,12 +44,33 @@ class BookTextHold
 {
 public:
   // Holds `text` for an open of `bookId`. The reference stays valid until
-  // the Book Menu opened for it has closed.
+  // the Book Menu opened for it has closed, or its task drops it.
   const Text& Hold(uint32_t bookId, const std::string& text)
   {
     std::lock_guard<std::mutex> l(m_);
     held_.emplace_back(bookId, text);
     return held_.back().text;
+  }
+
+  // Its task is about to call OpenBookMenu with `text`: from now an open of
+  // its record may claim it.
+  void Issued(const Text& text)
+  {
+    std::lock_guard<std::mutex> l(m_);
+    auto it = Find(text);
+    if (it != held_.end()) {
+      it->issued = true;
+    }
+  }
+
+  // Its task did not call OpenBookMenu: nothing will read `text`.
+  void Dropped(const Text& text)
+  {
+    std::lock_guard<std::mutex> l(m_);
+    auto it = Find(text);
+    if (it != held_.end() && !it->issued) {
+      held_.erase(it);
+    }
   }
 
   // The Book Menu opened, showing `bookId`.
@@ -50,7 +82,7 @@ public:
       return;
     }
     for (auto it = held_.begin(); it != held_.end(); ++it) {
-      if (!it->opened && it->bookId == bookId) {
+      if (it->issued && !it->opened && it->bookId == bookId) {
         it->opened = true;
         open_ = it;
         return;
@@ -90,9 +122,20 @@ private:
     {
     }
     uint32_t bookId;
+    bool issued = false;
     bool opened = false;
     Text text;
   };
+
+  typename std::list<Entry>::iterator Find(const Text& text)
+  {
+    for (auto it = held_.begin(); it != held_.end(); ++it) {
+      if (&it->text == &text) {
+        return it;
+      }
+    }
+    return held_.end();
+  }
 
   mutable std::mutex m_;
   std::list<Entry> held_;
