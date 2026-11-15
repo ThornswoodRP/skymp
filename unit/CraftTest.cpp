@@ -959,8 +959,9 @@ TEST_CASE("onCraft's sixth argument names a brew's effects, and a brew off "
   }
 
   {
-    // An enchantment still has no effects named, so the gamemode is told
-    // null and decides as it did before.
+    // A craft that names no enchantment has no effects to name, so the
+    // gamemode is told null and decides as it did before (Thornswood #4579
+    // names a made enchantment's).
     auto gate = std::make_shared<MixturesListGate>();
     p.AddListener(gate);
     auto& ac = MakeCrafter(p, kForge);
