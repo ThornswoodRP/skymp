@@ -1,5 +1,6 @@
 'use strict';
-// Thornswood #4523. Skyrim Platform answers which window has the keyboard.
+// Thornswood #4523. Skyrim Platform answers which window has the keyboard,
+// without waiting on any thread for it (#6125).
 //
 // The start screen's guard asks win32.foregroundWindow() and ignores keys
 // while another program is in front. The engine shipped without it, so the
@@ -31,6 +32,16 @@ yes('it asks Windows which window is in front, and answers null for none',
     /GetForegroundWindow\(\)/.test(body) && /if \(!window\) \{\s*return env\.Null\(\);/.test(body));
 yes('it judges the window by its process against the game\'s own',
     /GetWindowThreadProcessId\(window, &pid\)/.test(body) && /GetCurrentProcessId\(\)/.test(body));
+// Thornswood #6125: this runs on the JS thread, and the window in front is
+// usually the game's, owned by the main thread. GetWindowTextW sends that
+// thread WM_GETTEXT and waits for it; with the main thread waiting on the JS
+// thread the game stopped for good. Nothing here may send a window message.
+yes('it reads the title without sending the window a message (InternalGetWindowText)',
+    /InternalGetWindowText\(window, title, 512\)/.test(body));
+yes('it never calls GetWindowText, which waits on the window\'s thread',
+    !/\bGetWindowText[AW]?\(/.test(body));
+yes('nor anything else that sends a window message and waits',
+    !/\bSendMessage[AW]?\(|\bSendMessageTimeout[AW]?\(|\bEnumWindows\(/.test(body));
 for (const field of ['isGame', 'ourProcess', 'exe', 'title', 'className']) {
   yes('the answer sets ' + field + ', which the client reads', body.indexOf('res.Set("' + field + '"') >= 0);
 }
