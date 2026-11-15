@@ -45,6 +45,16 @@ check('the first load says its client scripts, and the gamemode hears it is not 
 check('the same file again loads nothing and says nothing',()=>{
   const out=run();assert.deepEqual(out,[]);assert.equal(hooks.length,0);
 });
+check('the same text put in place again loads it again, as a deploy that changes only the tables does',()=>{
+  // Thornswood #6149: a new file with the same bytes, renamed over the old one.
+  const next=gm+'.next';fs.writeFileSync(next,fs.readFileSync(gm));fs.renameSync(next,gm);
+  const out=run();
+  assert.ok(out.some(l=>/, unchanged since the last load$/.test(l)),out.join('\n'));
+  assert.deepEqual(hooks.pop(),{script:'a',reload:true,clientScriptsChanged:false});
+});
+check('the other events about that same arrival load nothing',()=>{
+  const out=run();assert.deepEqual(out,[]);assert.equal(hooks.length,0);
+});
 check('a reload that keeps the scripts says unchanged',()=>{
   fs.appendFileSync(gm,'// a server-side change\n');const out=run();
   assert.ok(out.some(l=>/, unchanged since the last load$/.test(l)),out.join('\n'));
