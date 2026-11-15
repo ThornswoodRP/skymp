@@ -628,8 +628,9 @@ std::optional<CraftService::Craft> CraftService::WorkOut(
       not the client's to claim: they follow from the ingredients, which the
       check above has just found in the server's own inventory, by the game's
       rule. So they are worked out here and handed over as the sixth
-      argument. An enchantment has no ingredient in it and stays "not named"
-      until the client can say what went on the piece. The ingredients are
+      argument. An enchantment has no ingredient in it: its effects are the
+      ones the client read off the piece, named below once MadeEnchantment
+      has checked them (#4579). The ingredients are
       found in the server's inventory by CraftItem and AskWorkTime, before
       the gamemode hears of the brew.
     */
@@ -700,6 +701,18 @@ std::optional<CraftService::Craft> CraftService::WorkOut(
                    resultObjectId,
                    Inventory::MadeEnchantmentId(*enchantment),
                    Inventory::Canonical(*enchantment));
+      /*
+        THORNSWOOD PATCH (Thornswood #4579). And its effects are named to
+        the gamemode, as a brew's are, for the same reason: the gamemode's
+        enchantments list (docs/systems/enchantments.md, ENCHANTMENTS in
+        game/gamemode.js) refuses a craft that carries an effect off it,
+        and can only ask the list when it is told the effects. They are the
+        ones MadeEnchantment has just checked, in its order.
+      */
+      effects.emplace();
+      for (const auto& effect : enchantment->effects) {
+        effects->push_back(effect.effectId);
+      }
     }
 
     Craft craft;

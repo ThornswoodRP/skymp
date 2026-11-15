@@ -17,8 +17,11 @@
 #include "CraftItemMessage.h"
 #include "CraftService.h"
 #include "MpChangeForms.h"
+#include "PartOneListener.h"
+#include "gamemode_events/GameModeEvent.h"
 #include <cmath>
 #include <limits>
+#include <memory>
 #include <nlohmann/json.hpp>
 
 PartOne& GetPartOne();
@@ -286,6 +289,96 @@ TEST_CASE("An enchanted piece lands in the pack with its enchantment, and "
   // And it survives the save.
   const auto back = ThroughSave(ac.GetChangeForm());
   CHECK(back.inv == ac.GetInventory());
+
+  p.DestroyActor(0xff000000);
+  DoDisconnect(p, 0);
+}
+
+namespace {
+// Thornswood #4579. Stands in for the gamemode's enchantments list
+// (ENCHANTMENTS in game/gamemode.js, docs/systems/enchantments.md), which
+// reads onCraft's sixth argument, the effects, and refuses a craft that
+// carries one off the list. Only acts while armed: PartOne is shared and
+// keeps every listener.
+class EnchantmentsListGate : public PartOneListener
+{
+public:
+  void OnConnect(Networking::UserId) override {}
+  void OnDisconnect(Networking::UserId) override {}
+  void OnCustomPacket(Networking::UserId,
+                      const simdjson::dom::element&) override
+  {
+  }
+  bool OnMpApiEvent(const GameModeEvent& event) override
+  {
+    if (!armed || event.GetName() != std::string("onCraft")) {
+      return true;
+    }
+    auto args = nlohmann::json::parse(event.GetArgumentsJsonArray());
+    asked++;
+    effects = args.size() > 5 ? args.at(5) : nlohmann::json();
+    if (!effects.is_array()) {
+      return true;
+    }
+    for (auto& e : effects) {
+      if (e.get<uint32_t>() == offTheList) {
+        refused++;
+        return false;
+      }
+    }
+    return true;
+  }
+
+  bool armed = false;
+  uint32_t offTheList = 0;
+  int asked = 0;
+  int refused = 0;
+  nlohmann::json effects;
+};
+}
+
+TEST_CASE("onCraft names the effects of the enchantment that went on a "
+          "piece, so the gamemode's list can refuse one off it "
+          "(Thornswood #4579)",
+          "[MadeEnchantment][espm]")
+{
+  PartOne& p = GetPartOne();
+  auto gate = std::make_shared<EnchantmentsListGate>();
+  p.AddListener(gate);
+  auto& ac = MakeEnchanter(p);
+  ac.RemoveAllItems();
+  ac.AddItem(kIronDagger, 1);
+  ac.AddItem(kIronHelmet, 1);
+  ac.AddItem(kPettySoulGem, 2);
+
+  RawMessageData msgData;
+  msgData.userId = 0;
+
+  // Off the list: refused, with the piece and the gem kept.
+  gate->offTheList = kRestoreHealth;
+  const Inventory before = ac.GetInventory();
+  gate->armed = true;
+  p.GetActionListener().OnCraftItem(
+    msgData, Enchant(kIronDagger, OnDagger(), 250.f));
+  gate->armed = false;
+  REQUIRE(gate->asked == 1);
+  REQUIRE(gate->effects == nlohmann::json::array({ kRestoreHealth }));
+  CHECK(gate->refused == 1);
+  CHECK(ac.GetInventory() == before);
+  CHECK(!Enchanted(ac.GetInventory(), kIronDagger));
+
+  // On the list: the piece goes in enchanted, as before.
+  gate->armed = true;
+  p.GetActionListener().OnCraftItem(msgData,
+                                    Enchant(kIronHelmet, OnHelmet(), {}));
+  gate->armed = false;
+  REQUIRE(gate->asked == 2);
+  REQUIRE(gate->effects == nlohmann::json::array({ kFortifyHealth }));
+  CHECK(gate->refused == 1);
+  const auto* piece = Enchanted(ac.GetInventory(), kIronHelmet);
+  REQUIRE(piece);
+  CHECK(*piece->madeEnchantment == OnHelmet());
+  CHECK(ac.GetInventory().GetItemCount(kPettySoulGem) == 1);
 
   p.DestroyActor(0xff000000);
   DoDisconnect(p, 0);
