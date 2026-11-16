@@ -482,8 +482,14 @@ void MpActor::EquipBestWeapon()
   UpdateEquipmentMessage msg;
   msg.data = newEq;
   msg.idx = GetIdx();
+  // Once to each person near it (Thornswood #6252). A plain loop, not
+  // SendMessageToActorListeners: this runs from Init (EquipBestWeapon), before
+  // the form is in the world, where that one's lookup of the form would load
+  // it again and come back here.
   for (auto listener : GetActorListeners()) {
-    listener->GetActorToSendTo().SendToUser(msg, true);
+    if (listener->GetUserId() != Networking::InvalidUserId) {
+      listener->SendToUser(msg, true);
+    }
   }
 }
 
@@ -495,8 +501,14 @@ void MpActor::ReplaceEquipment(Equipment newEquipment)
   UpdateEquipmentMessage msg;
   msg.data = newEquipment;
   msg.idx = GetIdx();
+  // Once to each person near it (Thornswood #6252). A plain loop, not
+  // SendMessageToActorListeners: this runs from Init (EquipBestWeapon), before
+  // the form is in the world, where that one's lookup of the form would load
+  // it again and come back here.
   for (auto listener : GetActorListeners()) {
-    listener->GetActorToSendTo().SendToUser(msg, true);
+    if (listener->GetUserId() != Networking::InvalidUserId) {
+      listener->SendToUser(msg, true);
+    }
   }
 }
 
