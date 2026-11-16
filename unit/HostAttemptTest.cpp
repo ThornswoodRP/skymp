@@ -635,7 +635,13 @@ TEST_CASE("An NPC changes hosts on events, not when its moves go quiet",
   DoConnect(p, 0);
   p.CreateActor(0xff000000, { 0, 0, 0 }, 0, 0x3c);
   p.SetUserActor(0, 0xff000000);
-  p.CreateActor(0xff000001, { 0, 0, 0 }, 0, 0x3c);
+  // An NPC (a creature base, not a character), so it is shown to everybody
+  // near it; a character with no face is shown to nobody else.
+  p.worldState.AddForm(
+    std::make_unique<MpActor>(
+      LocationalData{ { 0, 0, 0 }, {}, FormDesc::Tamriel() },
+      p.CreateFormCallbacks(), 0x1e7a4),
+    0xff000001);
   auto& remote = p.worldState.GetFormAt<MpActor>(0xff000001);
   DoConnect(p, 1);
   p.CreateActor(0xff000002, { 0, 0, 0 }, 0, 0x3c);
