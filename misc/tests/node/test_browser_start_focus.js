@@ -48,8 +48,13 @@ check('NirnLab start does not focus it', !!ctor && !/wantedIsFocused\s*=\s*true/
 const watch = body(tilted, 'void BrowserApiTilted::WatchMenus()');
 check('WatchMenus adds a sink of its own to the UI', !!watch && /AddEventSink\(&g_menuSink\)/.test(code(watch)));
 const sink = body(tilted, 'class MenuSink');
+// It may log where the cursor is when the Cursor Menu opens or closes
+// (#6200), and nothing more: no show, hide or focus from its events.
+const cursorBranch = sink && (code(sink).match(/CursorMenu::MENU_NAME\)\s*\{([^}]*)\}/) || [])[1];
 check('its sink answers nothing of the Cursor Menu, which is the game\'s (#6215)',
-      !!sink && !/CursorMenu/.test(code(sink)));
+      !!sink && (!/CursorMenu/.test(code(sink)) ||
+        (!!cursorBranch && /^\s*LogCursor\([^;]*\);\s*$/.test(cursorBranch))) &&
+      !/AddMessage|QueueFocusMenu|SetFocused|ChromeFocus/.test(code(sink)));
 check('its sink hands the Loading Menu to OnLoadingMenu',
       !!sink && /LoadingMenu::MENU_NAME\)\s*\{\s*BrowserApiTilted::OnLoadingMenu\(event->opening\)/.test(code(sink)));
 

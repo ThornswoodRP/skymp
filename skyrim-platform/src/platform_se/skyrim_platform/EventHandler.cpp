@@ -3,6 +3,7 @@
 #include "CastDurationsGame.h"
 #include "EventManager.h"
 #include "EventsApi.h"
+#include "FavoritesMenuUnpaused.h"
 #include "JsUtils.h"
 #include "SkyrimPlatform.h"
 #include "TickHandler.h"
@@ -73,6 +74,8 @@ void EventHandler::HandleSKSEMessage(SKSE::MessagingInterface::Message* msg)
       // Before any plugin runs, so the page's focus menu is registered
       // before the first focus a plugin asks for (Thornswood #6215).
       BrowserApiTilted::WatchMenus();
+      // Before anybody can press Q (Thornswood #6408).
+      FavoritesMenuUnpaused::Install();
       TickHandler::GetSingleton()->Update();
 
       EventManager::Init();

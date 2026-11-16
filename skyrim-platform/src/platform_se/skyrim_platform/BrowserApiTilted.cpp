@@ -29,6 +29,33 @@ void QueueFocusMenu(bool open)
 // at kDataLoaded). Focus asked for before that is queued once it is.
 std::atomic<bool> g_focusMenuRegistered = false;
 
+// Thornswood #6200: where the cursor comes up when the page takes focus. On
+// 16 Nov 2026 the page's first mouse move was at 3429,0 of a 3440x1440
+// window, 0.7 s after the focus was taken, and on 15 Nov at 3399,0: the top
+// edge, a few pixels from the right corner. The cursor is drawn at the game's
+// own menu cursor (MenuScreenData::mousePos, main.cpp), so this says where
+// that is, whether the Cursor Menu is up, and where the Windows pointer is,
+// at the moments that decide it. Measurement only: nothing here moves either.
+void LogCursor(const char* when)
+{
+  auto ui = RE::UI::GetSingleton();
+  const bool cursorMenu = ui && ui->IsMenuOpen(RE::CursorMenu::MENU_NAME);
+  auto data = RE::MenuScreenData::GetSingleton();
+  const float x = data ? data->mousePos.x : -1.f;
+  const float y = data ? data->mousePos.y : -1.f;
+  POINT p{};
+  HWND front = GetForegroundWindow();
+  const bool pointer = GetCursorPos(&p) && front && ScreenToClient(front, &p);
+  RECT r{};
+  const bool size = front && GetClientRect(front, &r);
+  spdlog::info("cursor, {}: the game's menu cursor at {:.0f},{:.0f}, Cursor "
+               "Menu {}, the Windows pointer at {},{} of the window in "
+               "front{} ({}x{})",
+               when, x, y, cursorMenu ? "open" : "closed", pointer ? p.x : -1,
+               pointer ? p.y : -1, pointer ? "" : " (unknown)",
+               size ? r.right - r.left : -1, size ? r.bottom - r.top : -1);
+}
+
 inline CEFUtils::MyChromiumApp& GetApp()
 {
   auto overlayService = OverlayService::GetInstance();
@@ -77,6 +104,9 @@ void SetFocusedImpl(bool newFocus)
   if (g_focusMenuRegistered) {
     QueueFocusMenu(newFocus);
   }
+  if (newFocus) {
+    LogCursor("focus taken");
+  }
 }
 }
 
@@ -104,7 +134,8 @@ namespace {
 // data has loaded, whether or not a plugin listens for menuOpen or
 // menuClose. EventHandler's own MenuOpenCloseEvent sink is only added once a
 // plugin subscribes to one of them. The Cursor Menu is the game's to show and
-// hide (PageFocusMenu.h, Thornswood #6215); nothing here answers its events.
+// hide (PageFocusMenu.h, Thornswood #6215); nothing here answers its events,
+// they are only logged with where the cursor is (Thornswood #6200).
 class MenuSink : public RE::BSTEventSink<RE::MenuOpenCloseEvent>
 {
 public:
@@ -117,6 +148,9 @@ public:
     }
     if (event->menuName == RE::LoadingMenu::MENU_NAME) {
       BrowserApiTilted::OnLoadingMenu(event->opening);
+    } else if (event->menuName == RE::CursorMenu::MENU_NAME) {
+      LogCursor(event->opening ? "Cursor Menu opening"
+                               : "Cursor Menu closing");
     }
     return RE::BSEventNotifyControl::kContinue;
   }
@@ -151,6 +185,7 @@ void BrowserApiTilted::WatchMenus()
   if (focus) {
     QueueFocusMenu(true);
   }
+  LogCursor("game data loaded");
 }
 
 void BrowserApiTilted::OnLoadingMenu(bool opening)
