@@ -570,9 +570,9 @@ private:
         stats.batches += tasks.size();
         stats.forms += numChangeForms;
         stats.totalMs += elapsed.count();
-        stats.slowestMs = std::max(stats.slowestMs, elapsed.count());
+        stats.slowestMs = (std::max)(stats.slowestMs, elapsed.count());
         // Every batch taken here waited while the write before it ran.
-        stats.waiting = std::max(stats.waiting, tasks.size());
+        stats.waiting = (std::max)(stats.waiting, tasks.size());
         auto now = std::chrono::steady_clock::now();
         if (now - stats.since >= std::chrono::seconds(60)) {
           if (pImpl->logger) {
