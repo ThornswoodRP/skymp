@@ -1,5 +1,6 @@
 #include "FileDatabase.h"
 #include "SaveDirectory.h"
+#include <atomic>
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
@@ -136,6 +137,7 @@ struct FileDatabase::Impl
 {
   const std::filesystem::path changeFormsDirectory;
   const std::shared_ptr<spdlog::logger> logger;
+  std::atomic<size_t> unreadFilesOnLastIterate{ 0 };
 
   std::filesystem::path JournalPath() const
   {
@@ -265,9 +267,15 @@ std::vector<std::optional<MpChangeForm>>&& FileDatabase::UpsertImpl(
   }
 }
 
+size_t FileDatabase::GetUnreadFilesOnLastIterate() const noexcept
+{
+  return pImpl->unreadFilesOnLastIterate;
+}
+
 void FileDatabase::Iterate(const IterateCallback& iterateCallback,
                            std::optional<std::vector<FormDesc>> filter)
 {
+  pImpl->unreadFilesOnLastIterate = 0;
   try {
     pImpl->Recover();
     auto p = pImpl->changeFormsDirectory;
@@ -308,6 +316,7 @@ void FileDatabase::Iterate(const IterateCallback& iterateCallback,
 
         iterateCallback(changeForm);
       } catch (std::exception& e) {
+        ++pImpl->unreadFilesOnLastIterate;
         pImpl->logger->error("Parsing of {} failed with {}",
                              entry.path().string(), e.what());
       }
