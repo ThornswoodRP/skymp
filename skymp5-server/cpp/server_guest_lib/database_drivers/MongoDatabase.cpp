@@ -4,45 +4,83 @@
 #include <save_storages/AsyncSaveStorage.h>
 
 #ifndef NO_MONGO
-#  include <bsoncxx/builder/stream/document.hpp>
-#  include <bsoncxx/document/element.hpp>
-#  include <bsoncxx/document/value.hpp>
-#  include <bsoncxx/document/view.hpp>
-#  include <bsoncxx/document/view_or_value.hpp>
+#  include <bsoncxx/builder/basic/document.hpp>
+#  include <bsoncxx/builder/basic/kvp.hpp>
 #  include <bsoncxx/json.hpp>
+#  include <mongocxx/bulk_write.hpp>
 #  include <mongocxx/client.hpp>
+#  include <mongocxx/exception/exception.hpp>
+#  include <mongocxx/hint.hpp>
 #  include <mongocxx/instance.hpp>
+#  include <mongocxx/model/replace_one.hpp>
+#  include <mongocxx/options/bulk_write.hpp>
+#  include <mongocxx/options/find.hpp>
+#  include <mongocxx/options/index.hpp>
 #  include <mongocxx/pool.hpp>
 #  include <mongocxx/uri.hpp>
+#  include <mongocxx/write_concern.hpp>
 #endif
 
-#include <atomic>
 #include <map>
-#include <mutex>
 #include <sodium.h>
 #include <spdlog/spdlog.h>
-#include <thread>
 #include <vector>
 
-struct MongoDatabase::Impl
-{
-#ifndef NO_MONGO
-  const std::string uri;
-  const std::string name;
-
-  const char* const collectionName = "changeForms";
-
-  std::shared_ptr<mongocxx::pool> pool;
-
-  std::unique_ptr<JsonSanitizer> jsonSanitizer;
-#endif
-};
+// Thornswood #6237: the saves leave the file driver for MongoDB, so this is
+// the driver every world is kept in. What changed from upstream, and why:
+//
+// INDEXES. Upstream made none. Every save is an upsert keyed on formDesc,
+// and without an index on it MongoDB finds each one by reading the whole
+// collection, so a batch of k forms against a world of n costs k * n reads
+// and grows with every form the world keeps. The driver now makes, at every
+// start and before the first read:
+//   formDesc_unique  {formDesc: 1}, unique. The key every save and every
+//                    filtered load looks a form up by. Unique, so one form can
+//                    never be kept twice; a collection that already holds a
+//                    form twice refuses to start and names it, instead of one
+//                    copy being picked at random.
+//   profileId        {profileId: 1}. A person's characters (profileId above 0)
+//                    and the NPCs (below 0), which is how every staff and box
+//                    tool asks (Delete-Person, Reset-Character, the NPC reset,
+//                    the bot pass, the backups' character count). A
+//                    character's inventory, equipment and quest record are
+//                    fields of its own document, so this is also the index
+//                    that finds a character's inventory.
+// No other index: the engine loads the whole world into memory at start and
+// never asks the database anything else, and an index nobody reads only
+// makes every save slower.
+//
+// WHOLE-DOCUMENT WRITES. Upstream wrote each form with $set of its fields,
+// which never removes a field. A form whose optional field went away (a
+// display name, a node scale, pickup extra data) kept the old value in the
+// database and got it back at the next start. The file driver rewrites the
+// whole file, so this is a replace, the same as a file.
+//
+// JOURNALED WRITES. A save is acknowledged only once it is in MongoDB's
+// journal on disk (j: true), and a batch whose acknowledged count is not
+// the number of forms in it fails. So a successful Upsert is durable, and
+// SupportsDurableUpsert says so.
+//
+// ONE ORDERED LOAD THAT STOPS ON AN ERROR. Upstream split the load over up to
+// 100 threads with skip and limit and no sort. MongoDB keeps no order
+// between separate queries without a sort, so two parts could share a form
+// and miss another, and the count check at the end passes when the two
+// cancel out. And a part that failed was retried in a loop with no end, so a
+// database that stayed down held the server at start for ever, saying only
+// "Retrying". Now one cursor walks the collection in formDesc order over the
+// unique index; a form seen twice, a count that does not match, or any error
+// stops the load with what went wrong.
 
 #ifdef NO_MONGO
-MongoDatabase::MongoDatabase(std::string uri_, std::string name_)
+struct MongoDatabase::Impl
+{
+};
+
+MongoDatabase::MongoDatabase(const std::string&, const std::string&)
 {
   throw std::runtime_error("MongoDB is not supported in this build");
 }
+
 std::vector<std::optional<MpChangeForm>>&& MongoDatabase::UpsertImpl(
   std::vector<std::optional<MpChangeForm>>&& changeForms,
   size_t& outNumUpserted)
@@ -56,12 +94,106 @@ void MongoDatabase::Iterate(const IterateCallback&,
 {
 }
 
+bool MongoDatabase::SupportsDurableUpsert() const noexcept
+{
+  return false;
+}
+
+std::vector<MongoDatabase::IndexInfo> MongoDatabase::ListIndexes()
+{
+  return {};
+}
 #endif
 
 #ifndef NO_MONGO
+namespace {
+using bsoncxx::builder::basic::kvp;
+using bsoncxx::builder::basic::make_document;
+
+constexpr const char* kCollectionName = "changeForms";
+
+std::string BytesToHexString(const uint8_t* bytes, size_t length)
+{
+  static constexpr auto kHexDigits = "0123456789abcdef";
+
+  std::string hexStr(length * 2, ' ');
+  for (size_t i = 0; i < length; ++i) {
+    hexStr[2 * i] = kHexDigits[(bytes[i] >> 4) & 0xF];
+    hexStr[2 * i + 1] = kHexDigits[bytes[i] & 0xF];
+  }
+
+  return hexStr;
+}
+
+std::string Sha256(const std::string& str)
+{
+  unsigned char hash[crypto_hash_sha256_BYTES];
+  crypto_hash_sha256(hash, reinterpret_cast<const unsigned char*>(str.data()),
+                     str.size());
+  return BytesToHexString(hash, crypto_hash_sha256_BYTES);
+}
+
+mongocxx::write_concern JournaledWriteConcern()
+{
+  mongocxx::write_concern concern;
+  concern.acknowledge_level(mongocxx::write_concern::level::k_acknowledged);
+  concern.journal(true);
+  return concern;
+}
+}
+
+struct MongoDatabase::Impl
+{
+  const std::string uri;
+  const std::string name;
+
+  std::shared_ptr<mongocxx::pool> pool;
+
+  std::unique_ptr<JsonSanitizer> jsonSanitizer;
+
+  void EnsureIndexes()
+  {
+    auto entry = pool->acquire();
+    auto collection = entry->database(name).collection(kCollectionName);
+
+    mongocxx::options::index formDescOptions;
+    formDescOptions.name("formDesc_unique");
+    formDescOptions.unique(true);
+
+    mongocxx::options::index profileIdOptions;
+    profileIdOptions.name("profileId");
+
+    try {
+      collection.create_index(make_document(kvp("formDesc", 1)),
+                              formDescOptions);
+    } catch (const mongocxx::exception& e) {
+      // 11000 is a duplicate key: the collection already keeps one form in
+      // two documents, so which one is the form is not known here.
+      throw std::runtime_error(
+        fmt::format("MongoDB: the formDesc index could not be made on '{}.{}' "
+                    "({}). If it names a duplicate key, that form is kept "
+                    "twice; nothing was changed, and the server does not "
+                    "start until only one copy is left",
+                    name, kCollectionName, e.what()));
+    }
+
+    try {
+      collection.create_index(make_document(kvp("profileId", 1)),
+                              profileIdOptions);
+    } catch (const mongocxx::exception& e) {
+      throw std::runtime_error(
+        fmt::format("MongoDB: the profileId index could not be made on "
+                    "'{}.{}' ({})",
+                    name, kCollectionName, e.what()));
+    }
+  }
+};
+
 MongoDatabase::MongoDatabase(const std::string& uri_, const std::string& name_)
 {
-  static mongocxx::instance g_instance;
+  // One driver instance per process, shared with anything else that
+  // talks to MongoDB here (the tests do).
+  mongocxx::instance::current();
 
   // Since MongoDB 5.0, '$' and '.' are OK
   // Might be de-hardcoded in the future, for DocumentDB or something
@@ -71,44 +203,95 @@ MongoDatabase::MongoDatabase(const std::string& uri_, const std::string& name_)
   pImpl->pool.reset(new mongocxx::pool(mongocxx::uri(pImpl->uri.data())));
   pImpl->jsonSanitizer.reset(
     new JsonSanitizer(kBannedCharactersMongo5,
-                      [this](const std::string& str) { return Sha256(str); }));
+                      [](const std::string& str) { return Sha256(str); }));
+
+  pImpl->EnsureIndexes();
+}
+
+bool MongoDatabase::SupportsDurableUpsert() const noexcept
+{
+  return true;
+}
+
+std::vector<MongoDatabase::IndexInfo> MongoDatabase::ListIndexes()
+{
+  auto entry = pImpl->pool->acquire();
+  auto collection = entry->database(pImpl->name).collection(kCollectionName);
+  std::vector<IndexInfo> res;
+  for (auto&& index : collection.list_indexes()) {
+    IndexInfo info;
+    info.name = std::string(index["name"].get_string().value);
+    info.keyJson = bsoncxx::to_json(index["key"].get_document().value);
+    auto unique = index["unique"];
+    info.unique = unique && unique.get_bool().value;
+    res.push_back(std::move(info));
+  }
+  return res;
 }
 
 std::vector<std::optional<MpChangeForm>>&& MongoDatabase::UpsertImpl(
   std::vector<std::optional<MpChangeForm>>&& changeForms,
   size_t& outNumUpserted)
 {
+  outNumUpserted = 0;
   try {
-    mongocxx::v_noabi::pool::entry poolEntry = pImpl->pool->acquire();
-
-    mongocxx::v_noabi::collection collection =
-      poolEntry->database(pImpl->name).collection(pImpl->collectionName);
-
-    auto bulk = collection.create_bulk_write();
-    for (auto& changeForm : changeForms) {
-      if (changeForm == std::nullopt) {
-        continue;
+    // One write per form: a batch may name a form twice, and the last copy
+    // is the one kept, the same as the file driver.
+    std::map<std::string, size_t> lastPosition;
+    for (size_t i = 0; i < changeForms.size(); ++i) {
+      if (changeForms[i]) {
+        lastPosition[changeForms[i]->formDesc.ToString()] = i;
       }
-
-      auto jChangeForm = MpChangeForm::ToJson(*changeForm);
-
-      auto filter = nlohmann::json::object();
-      filter["formDesc"] = changeForm->formDesc.ToString();
-
-      auto upd = nlohmann::json::object();
-      upd["$set"] = pImpl->jsonSanitizer->SanitizeJsonRecursive(jChangeForm);
-
-      bulk.append(mongocxx::model::update_one(
-                    { std::move(bsoncxx::from_json(filter.dump())),
-                      std::move(bsoncxx::from_json(upd.dump())) })
-                    .upsert(true));
+    }
+    if (lastPosition.empty()) {
+      return std::move(changeForms);
     }
 
-    (void)bulk.execute();
+    auto poolEntry = pImpl->pool->acquire();
+    auto collection =
+      poolEntry->database(pImpl->name).collection(kCollectionName);
 
-    // TODO: Should take data from bulk.execute result instead?
-    outNumUpserted = changeForms.size();
+    mongocxx::options::bulk_write options;
+    options.ordered(true);
+    options.write_concern(JournaledWriteConcern());
+    auto bulk = collection.create_bulk_write(options);
 
+    size_t submitted = 0;
+    for (const auto& [formDesc, position] : lastPosition) {
+      const auto& changeForm = *changeForms[position];
+      auto document = pImpl->jsonSanitizer->SanitizeJsonRecursive(
+        MpChangeForm::ToJson(changeForm));
+      mongocxx::model::replace_one replace(
+        make_document(kvp("formDesc", formDesc)),
+        bsoncxx::from_json(document.dump()));
+      replace.upsert(true);
+      bulk.append(replace);
+      ++submitted;
+    }
+
+    auto result = bulk.execute();
+    if (!result) {
+      throw std::runtime_error("MongoDB did not acknowledge the save batch");
+    }
+    const auto written = static_cast<size_t>(result->matched_count()) +
+      static_cast<size_t>(result->upserted_count());
+    if (written != submitted) {
+      throw std::runtime_error(fmt::format(
+        "MongoDB acknowledged {} of the {} forms in the save batch "
+        "({} matched, {} inserted)",
+        written, submitted, result->matched_count(),
+        result->upserted_count()));
+    }
+
+    // Counted as the file driver counts: every form submitted, a form named
+    // twice in the batch included.
+    size_t numForms = 0;
+    for (const auto& changeForm : changeForms) {
+      if (changeForm) {
+        ++numForms;
+      }
+    }
+    outNumUpserted = numForms;
     return std::move(changeForms);
   } catch (std::exception& e) {
     throw Viet::AsyncSaveStorage<
@@ -122,10 +305,6 @@ void MongoDatabase::Iterate(const IterateCallback& iterateCallback,
                             std::optional<std::vector<FormDesc>> filter)
 {
   try {
-    constexpr int kBatchSize = 1001;
-    mongocxx::options::find findOptions;
-    findOptions.batch_size(kBatchSize);
-
     nlohmann::json filterJson = nlohmann::json::object();
     if (filter) {
       auto filterArr = nlohmann::json::array();
@@ -133,231 +312,79 @@ void MongoDatabase::Iterate(const IterateCallback& iterateCallback,
         filterArr.push_back(desc.ToString());
       }
       filterJson["formDesc"] = { { "$in", std::move(filterArr) } };
-      spdlog::info("Filtering Iterate with {} formDescs", filter->size());
+      spdlog::info("MongoDB: loading {} named forms", filter->size());
     } else {
-      spdlog::info("No filtering for Iterate");
+      spdlog::info("MongoDB: loading every form");
     }
-    const std::string filterJsonStr = filterJson.dump();
+    const auto filterBson = bsoncxx::from_json(filterJson.dump());
 
-    int totalDocuments = GetDocumentCount(filterJsonStr);
+    auto poolEntry = pImpl->pool->acquire();
+    auto collection =
+      poolEntry->database(pImpl->name).collection(kCollectionName);
 
-    int numParts = std::min(totalDocuments, 100);
+    const auto expected =
+      static_cast<size_t>(collection.count_documents(filterBson.view()));
 
-    std::atomic<int> totalDocumentsProcessed = 0;
+    mongocxx::options::find options;
+    options.batch_size(1000);
+    options.sort(make_document(kvp("formDesc", 1)));
+    options.hint(mongocxx::hint("formDesc_unique"));
 
+    simdjson::dom::parser parser;
+    simdjson::dom::parser restoredParser;
     std::string hash;
-    std::vector<std::shared_ptr<std::thread>> threads;
-    std::vector<std::optional<std::string>> threadsErrors;
-    std::vector<uint8_t> threadsSuccess;
-    std::vector<std::string> threadsDocumentsJsonArray;
+    std::string previous;
+    size_t processed = 0;
 
-    threadsDocumentsJsonArray.resize(numParts);
-    threadsErrors.resize(numParts);
-    threadsSuccess.resize(numParts, 0);
+    auto cursor = collection.find(filterBson.view(), options);
+    for (auto&& documentView : cursor) {
+      const std::string documentJson = bsoncxx::to_json(documentView);
+      auto document = parser.parse(documentJson).value();
 
-    bool allFinished = false;
-    int numAttempts = 0;
+      bool restored = false;
+      nlohmann::json restoredDocument =
+        pImpl->jsonSanitizer->RestoreSanitizedJsonRecursive(document,
+                                                            restored);
 
-    while (!allFinished) {
-      numAttempts++;
-
-      int numThreadsToRun = 0;
-      for (int i = 0; i < numParts; i++) {
-        if (threadsSuccess[i] == 1) {
-          continue;
-        }
-        numThreadsToRun++;
-      }
-
-      if (numAttempts > 1) {
-        spdlog::info("Spawning {} threads to load remaining ChangeForms",
-                     numThreadsToRun);
+      MpChangeFormREFR changeForm;
+      if (restored) {
+        std::string restoredDump = restoredDocument.dump();
+        auto restoredElement = restoredParser.parse(restoredDump).value();
+        changeForm = MpChangeForm::JsonToChangeForm(restoredElement);
       } else {
-        spdlog::info("Spawning {} threads to load ChangeForms",
-                     numThreadsToRun);
+        changeForm = MpChangeForm::JsonToChangeForm(document);
       }
 
-      for (int i = 0; i < numParts; i++) {
-        if (threadsSuccess[i] == 1) {
-          continue;
-        }
-
-        // space is to be replaced with ] in case of empty array
-        threadsDocumentsJsonArray[i] = "[ ";
-
-        int partSize = totalDocuments / numParts;
-        auto skip = i * partSize;
-        auto limit = (i == numParts - 1) ? totalDocuments - skip : partSize;
-
-        auto f = [i, skip, limit, &totalDocumentsProcessed, &iterateCallback,
-                  &threadsSuccess, &threadsErrors, &threadsDocumentsJsonArray,
-                  findOptions, filterJsonStr, this] {
-          try {
-            simdjson::dom::parser p;
-
-            mongocxx::v_noabi::pool::entry poolEntry = pImpl->pool->acquire();
-
-            mongocxx::v_noabi::collection collection =
-              poolEntry->database(pImpl->name)
-                .collection(pImpl->collectionName);
-
-            mongocxx::options::find options = findOptions;
-            options.skip(skip);
-            options.limit(limit);
-
-            auto cursor =
-              collection.find(bsoncxx::from_json(filterJsonStr), options);
-
-            for (auto& documentView : cursor) {
-              threadsDocumentsJsonArray[i] +=
-                bsoncxx::to_json(documentView) + ",";
-            }
-            threadsErrors[i] = std::nullopt;
-            threadsSuccess[i] = 1;
-          } catch (std::exception& e) {
-            threadsErrors[i] = e.what();
-            threadsSuccess[i] = 0;
-          }
-        };
-
-        threads.push_back(std::make_shared<std::thread>(f));
+      auto desc = changeForm.formDesc.ToString();
+      if (processed > 0 && !(previous < desc)) {
+        throw std::runtime_error(fmt::format(
+          "MongoDB returned form '{}' after '{}', out of formDesc order or "
+          "twice",
+          desc, previous));
       }
+      previous = desc;
 
-      for (auto& thread : threads) {
-        thread->join();
-      }
-      threads.clear();
+      iterateCallback(changeForm);
 
-      auto errorOrNull = GetCombinedErrorOrNull(threadsErrors);
-
-      if (errorOrNull == std::nullopt) {
-        spdlog::info(
-          "All documents fetched from the database. Num attempts: {}",
-          numAttempts);
-        allFinished = true;
-      } else {
-        spdlog::warn("Error: {}", *errorOrNull);
-        spdlog::info("Retrying failed threads. Num attempts: {}", numAttempts);
-      }
+      ++processed;
+      hash = Sha256(hash + desc);
     }
 
-    for (int i = 0; i < numParts; i++) {
-      threadsDocumentsJsonArray[i].back() = ']';
+    // The same each time for the same world: the order is formDesc's.
+    spdlog::info("MongoDB: hash of the form order {}", hash);
 
-      auto documentsJsonArray = threadsDocumentsJsonArray[i];
-
-      simdjson::dom::parser p, p2;
-      auto allDocs = p.parse(documentsJsonArray).value();
-
-      auto documentAsArray = allDocs.get_array();
-
-      for (auto document : documentAsArray) {
-        bool restored = false;
-        nlohmann::json restoredDocument =
-          pImpl->jsonSanitizer->RestoreSanitizedJsonRecursive(document,
-                                                              restored);
-
-        MpChangeFormREFR changeForm;
-
-        if (restored) {
-          std::string restoredDocumentDump = restoredDocument.dump();
-          auto restoredDocumentSimdjson =
-            p2.parse(restoredDocumentDump).value();
-          changeForm =
-            MpChangeForm::JsonToChangeForm(restoredDocumentSimdjson);
-        } else {
-          changeForm = MpChangeForm::JsonToChangeForm(document);
-        }
-
-        iterateCallback(changeForm);
-
-        totalDocumentsProcessed++;
-        hash = Sha256(hash + changeForm.formDesc.ToString());
-      }
-    }
-
-    // If it's the same iech time, it means that the order of the changeforms
-    // load is the same. Which is good for testing potential startup bugs.
-    spdlog::info("Hash: {}", hash);
-
-    if (totalDocumentsProcessed.load() == totalDocuments) {
-      spdlog::info("All documents processed: {}", totalDocuments);
-    } else {
+    if (processed != expected) {
       throw std::runtime_error(
-        fmt::format("Not all documents processed: {} / {}",
-                    totalDocumentsProcessed.load(), totalDocuments));
+        fmt::format("MongoDB: loaded {} forms where the collection counted {}",
+                    processed, expected));
     }
-
+    spdlog::info("MongoDB: loaded {} forms", processed);
   } catch (std::exception& e) {
     throw Viet::AsyncSaveStorage<
       MpChangeForm, FormDesc,
       std::vector<FormDesc>>::IterateFailedException(std::move(filter),
                                                      e.what());
   }
-}
-
-int MongoDatabase::GetDocumentCount(const std::string& filterJson)
-{
-  mongocxx::v_noabi::pool::entry poolEntry = pImpl->pool->acquire();
-  mongocxx::v_noabi::collection collection =
-    poolEntry->database(pImpl->name).collection(pImpl->collectionName);
-
-  return collection.count_documents(bsoncxx::from_json(filterJson));
-}
-
-std::optional<std::string> MongoDatabase::GetCombinedErrorOrNull(
-  const std::vector<std::optional<std::string>>& errorList)
-{
-  const int kMaxDisplayErrors = 5;
-
-  std::vector<std::string> errorListNonNull;
-  errorListNonNull.reserve(errorList.size());
-  for (auto& error : errorList) {
-    if (error != std::nullopt) {
-      errorListNonNull.push_back(*error);
-    }
-  }
-
-  if (!errorListNonNull.empty()) {
-    std::string errorMessage;
-    int displayCount =
-      std::min(kMaxDisplayErrors, static_cast<int>(errorListNonNull.size()));
-
-    for (int i = 0; i < displayCount; ++i) {
-      errorMessage += fmt::format("Error #{}: {}\n", i, errorListNonNull[i]);
-    }
-
-    if (errorListNonNull.size() > kMaxDisplayErrors) {
-      errorMessage += fmt::format("... ({} errors remaining)\n",
-                                  errorListNonNull.size() - kMaxDisplayErrors);
-    }
-
-    return errorMessage;
-  }
-
-  return std::nullopt;
-}
-
-std::string MongoDatabase::BytesToHexString(const uint8_t* bytes,
-                                            size_t length)
-{
-  static constexpr auto kHexDigits = "0123456789abcdef";
-
-  std::string hexStr(length * 2, ' ');
-  for (size_t i = 0; i < length; ++i) {
-    hexStr[2 * i] = kHexDigits[(bytes[i] >> 4) & 0xF];
-    hexStr[2 * i + 1] = kHexDigits[bytes[i] & 0xF];
-  }
-
-  return hexStr;
-}
-
-std::string MongoDatabase::Sha256(const std::string& str)
-{
-  unsigned char hash[crypto_hash_sha256_BYTES];
-  crypto_hash_sha256(hash, reinterpret_cast<const unsigned char*>(str.data()),
-                     str.size());
-  return BytesToHexString(hash, crypto_hash_sha256_BYTES);
 }
 
 #endif // #ifndef NO_MONGO

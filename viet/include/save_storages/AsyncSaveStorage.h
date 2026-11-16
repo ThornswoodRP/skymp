@@ -2,6 +2,7 @@
 #include "ISaveStorage.h"
 #include "SettlementObservation.h"
 #include "database_drivers/IDatabase.h"
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <exception>
@@ -392,6 +393,21 @@ private:
     std::shared_ptr<spdlog::logger> logger;
     std::string name;
 
+    // What the saver thread did since its last summary line (Thornswood
+    // #6237): how long saves take is what says whether a database keeps up
+    // with a crowd, and the per-batch line is trace, which no server logs.
+    // Only the saver thread touches these.
+    struct
+    {
+      std::chrono::steady_clock::time_point since =
+        std::chrono::steady_clock::now();
+      size_t batches = 0;
+      size_t forms = 0;
+      size_t waiting = 0;
+      double totalMs = 0;
+      double slowestMs = 0;
+    } saveStats;
+
     struct
     {
       std::shared_ptr<IDatabase<T, FormDescType, FilterType>> dbImpl;
@@ -546,6 +562,33 @@ private:
         std::chrono::duration<double, std::milli> elapsed = end - start;
         pImpl->logger->trace("Saved {} ChangeForms in {} ms", numChangeForms,
                              elapsed.count());
+      }
+      if (!tasks.empty()) {
+        auto end = std::chrono::high_resolution_clock::now();
+        std::chrono::duration<double, std::milli> elapsed = end - start;
+        auto& stats = pImpl->saveStats;
+        stats.batches += tasks.size();
+        stats.forms += numChangeForms;
+        stats.totalMs += elapsed.count();
+        stats.slowestMs = std::max(stats.slowestMs, elapsed.count());
+        // Every batch taken here waited while the write before it ran.
+        stats.waiting = std::max(stats.waiting, tasks.size());
+        auto now = std::chrono::steady_clock::now();
+        if (now - stats.since >= std::chrono::seconds(60)) {
+          if (pImpl->logger) {
+            auto seconds =
+              std::chrono::duration_cast<std::chrono::seconds>(now -
+                                                               stats.since)
+                .count();
+            pImpl->logger->info(
+              "Saves in the last {} s: {} batch(es), {} form(s), {:.1f} ms "
+              "writing, slowest batch {:.1f} ms, most batches waiting {}",
+              seconds, stats.batches, stats.forms, stats.totalMs,
+              stats.slowestMs, stats.waiting);
+          }
+          stats = {};
+          stats.since = now;
+        }
       }
     }
 
