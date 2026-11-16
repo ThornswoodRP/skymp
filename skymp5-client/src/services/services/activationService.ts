@@ -8,11 +8,44 @@ import { localIdToRemoteId } from "../../view/worldViewMisc";
 
 import { LastInvService } from "./lastInvService";
 import { logError, logTrace } from "../../logging";
+import { ConnectionMessage } from "../events/connectionMessage";
+import { CustomPacketMessage } from "../messages/customPacketMessage";
+import { ObjectReferenceEx } from "../../extensions/objectReferenceEx";
 
 export class ActivationService extends ClientListener {
     constructor(private sp: Sp, private controller: CombinedController) {
         super();
         this.controller.on("activate", (e) => this.onActivate(e));
+        this.controller.emitter.on("customPacketMessage", (e) => this.onCustomPacketMessage(e));
+    }
+
+    /*
+      THORNSWOOD PATCH (Thornswood #4598). The server names the bases whose
+      presses it answers before Skyrim may act on them, as
+      { customPacketType: "serverFirstBases", bases: [runtime form ids] }.
+      Each list replaces the last. See ObjectReferenceEx.setServerFirstBases.
+    */
+    private onCustomPacketMessage(event: ConnectionMessage<CustomPacketMessage>) {
+        let content: Record<string, unknown> = {};
+        try {
+            content = JSON.parse(event.message.contentJsonDump);
+        } catch (e) {
+            if (e instanceof SyntaxError) {
+                logError(this, "onCustomPacketMessage failed to parse JSON", e.message, "json:", event.message.contentJsonDump);
+                return;
+            }
+            throw e;
+        }
+        if (content["customPacketType"] !== "serverFirstBases") {
+            return;
+        }
+        const bases = content["bases"];
+        if (!Array.isArray(bases) || !bases.every((b) => typeof b === "number" && Number.isInteger(b) && b > 0)) {
+            logError(this, "serverFirstBases expected a list of form ids, got", JSON.stringify(bases));
+            return;
+        }
+        ObjectReferenceEx.setServerFirstBases(bases as number[]);
+        logTrace(this, "The server answers presses on", bases.length, "bases first");
     }
 
     private onActivate(e: ActivateEvent) {
