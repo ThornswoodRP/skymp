@@ -632,8 +632,13 @@ TEST_CASE("An NPC changes hosts on events, not when its moves go quiet",
 {
   PartOne p;
   p.AttachEspm(&GetEspmLoader());
+  // Characters with a face, as in the game: one with none is shown to
+  // nobody else, so it would never be seen leaving the NPC behind.
+  auto face = jAppearance["data"];
+  face["raceId"] = 0x13746; // NordRace, Skyrim.esm
   DoConnect(p, 0);
   p.CreateActor(0xff000000, { 0, 0, 0 }, 0, 0x3c);
+  GiveStoredAppearance(p.worldState.GetFormAt<MpActor>(0xff000000), face);
   p.SetUserActor(0, 0xff000000);
   // An NPC (a creature base, not a character), so it is shown to everybody
   // near it; a character with no face is shown to nobody else.
@@ -648,6 +653,7 @@ TEST_CASE("An NPC changes hosts on events, not when its moves go quiet",
   remote.ForceSubscriptionsUpdate();
   DoConnect(p, 1);
   p.CreateActor(0xff000002, { 0, 0, 0 }, 0, 0x3c);
+  GiveStoredAppearance(p.worldState.GetFormAt<MpActor>(0xff000002), face);
   p.SetUserActor(1, 0xff000002);
 
   RawMessageData raw;
