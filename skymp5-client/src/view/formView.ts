@@ -480,21 +480,21 @@ export class FormView {
       Actor.from(refr)?.clearKeepOffsetFromActor();
     }
 
+    // THORNSWOOD (Thornswood #6247). Each time the server says who hosts
+    // this, this game may ask once more (tryHostIfNeed).
+    const hostNews = model.numHostedByOtherChanges || 0;
+    if (hostNews !== this.movState.hostNews) {
+      this.movState.hostNews = hostNews;
+      this.movState.askedToHost = false;
+    }
+
     if (model.movement) {
       let ac = Actor.from(refr);
-      if (
-        this.movState.lastApply &&
-        Date.now() - this.movState.lastApply > 1500
-      ) {
-        if (Date.now() - this.movState.lastRehost > 1000) {
-          this.movState.lastRehost = Date.now();
-          const remoteId = this.remoteRefrId;
-          if (ac && ac.is3DLoaded()) {
-            this.tryHostIfNeed(ac, remoteId as number);
-            printConsole("tryHostIfNeed - reason: not seeing movement for long time");
-          }
-        }
-      }
+      // THORNSWOOD (Thornswood #6247). This asked to host an actor whenever
+      // 1.5 s passed without a move for it, which made every game send every
+      // still actor's place every 130 ms only to stay out of this. Moves now
+      // come only on change, and the server says when nobody hosts an NPC
+      // (isHostedByOther false), which is when the branch below asks.
 
       if (
         +(model.numMovementChanges as number) !==
@@ -726,7 +726,15 @@ export class FormView {
     return { lastNumChanges: 0, useAnimOverrides: true };
   };
 
+  // THORNSWOOD (Thornswood #6247). Asks once each time the server says the
+  // actor is free (FormModel.numHostedByOtherChanges), reliably: an NPC whose
+  // hoster is still there and can see it is not taken from it, and the server
+  // tells an asker that came too late who has it. Until then it asked again
+  // every second for as long as nobody it knew of hosted the actor.
   private tryHostIfNeed(ac: Actor, remoteId: number) {
+    if (this.movState.askedToHost) {
+      return false;
+    }
     const last = lastTryHost[remoteId];
     if (!last || Date.now() - last >= 1000) {
       lastTryHost[remoteId] = Date.now();
@@ -735,6 +743,7 @@ export class FormView {
         getMovement(ac).worldOrCell ===
         getMovement(Game.getPlayer() as Actor).worldOrCell
       ) {
+        this.movState.askedToHost = true;
         tryHost(remoteId);
         return true;
       }
@@ -757,8 +766,9 @@ export class FormView {
   private movState = {
     lastNumChanges: 0,
     lastApply: 0,
-    lastRehost: 0,
     everApplied: false,
+    hostNews: 0,
+    askedToHost: false,
   };
   private appearanceState = this.getDefaultAppearanceState();
   private eqState = this.getDefaultEquipState();

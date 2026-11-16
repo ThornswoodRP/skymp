@@ -116,6 +116,16 @@ private:
   // The checks SendToNeighbours makes; returns the target actor or nullptr.
   MpActor* NeighboursTarget(uint32_t idx, Networking::UserId userId);
 
+  // THORNSWOOD (Thornswood #6247). Passes a move on to everybody who sees
+  // the actor, numbered by the server, reliably when it is the client's last
+  // until something changes.
+  void RelayMove(MpActor& actor, const UpdateMovementMessage& msg,
+                 Networking::UserId senderUserId);
+
+  // THORNSWOOD (Thornswood #6247). Whether hosterId is a person in the
+  // world who can still see remote, so still able to run it.
+  bool IsHosting(uint32_t hosterId, MpObjectReference& remote);
+
   PartOne& partOne;
 
   // TODO: inverse dependency

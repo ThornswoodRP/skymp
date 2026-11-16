@@ -4,8 +4,11 @@
 #include "formulas/TES5DamageFormula.h"
 #include "HostMessage.h"
 #include "HostStartMessage.h"
+#include "HostStopMessage.h"
+#include "UpdatePropertyMessage.h"
 #include "HitMessage.h"
 #include "TestUtils.hpp"
+#include <algorithm>
 
 PartOne& GetPartOne();
 extern espm::Loader& GetEspmLoader();
@@ -586,7 +589,45 @@ TEST_CASE("Server attack animation stops after stamina publication replaces a pa
     REQUIRE(npc.GetLastAnimEvent().has_value() == (change == "none"));
 }
 
-TEST_CASE("Hosting an actor before its first movement records the timestamp",
+namespace {
+// What one user was told about one actor's hoster, in order: "start",
+// "stop", "hosted" (isHostedByOther true) or "free" (isHostedByOther false).
+std::vector<std::string> HostNews(PartOne& p, Networking::UserId userId,
+                                  MpActor& remote)
+{
+  std::vector<std::string> res;
+  for (const auto& sent : p.Messages()) {
+    if (sent.userId != userId) {
+      continue;
+    }
+    const auto msg = sent.message.get();
+    if (auto start = dynamic_cast<HostStartMessage*>(msg)) {
+      if (start->target == remote.GetFormId()) res.push_back("start");
+    } else if (auto stop = dynamic_cast<HostStopMessage*>(msg)) {
+      if (stop->target == remote.GetFormId()) res.push_back("stop");
+    } else if (auto prop = dynamic_cast<UpdatePropertyMessage*>(msg)) {
+      if (prop->idx == remote.GetIdx() && prop->propName == "isHostedByOther")
+        res.push_back(prop->dataDump == "true" ? "hosted" : "free");
+    }
+  }
+  return res;
+}
+
+bool Has(const std::vector<std::string>& news, const char* what)
+{
+  return std::find(news.begin(), news.end(), what) != news.end();
+}
+
+std::string Last(const std::vector<std::string>& news)
+{
+  return news.empty() ? "" : news.back();
+}
+}
+
+// Thornswood #6247. A hoster keeps an NPC until its session ends or it can
+// no longer see the NPC, however long the NPC stands still; until then it
+// changed hands whenever 2 s passed without a move for it.
+TEST_CASE("An NPC changes hosts on events, not when its moves go quiet",
           "[HostAttempt][PartOne]")
 {
   auto& p = GetPartOne();
@@ -595,75 +636,71 @@ TEST_CASE("Hosting an actor before its first movement records the timestamp",
   p.SetUserActor(0, 0xff000000);
   p.CreateActor(0xff000001, { 0, 0, 0 }, 0, 0x3c);
   auto& remote = p.worldState.GetFormAt<MpActor>(0xff000001);
-  auto remoteIdx = remote.GetIdx();
+  DoConnect(p, 1);
+  p.CreateActor(0xff000002, { 0, 0, 0 }, 0, 0x3c);
+  p.SetUserActor(1, 0xff000002);
 
-  SECTION("No actor has sent movement yet")
-  {
-    REQUIRE(p.worldState.lastMovUpdateByIdx.empty());
-  }
-  SECTION("Only an earlier actor has sent movement")
-  {
-    REQUIRE(remoteIdx > 0);
-    p.worldState.lastMovUpdateByIdx.resize(remoteIdx);
-    p.worldState.lastMovUpdateByIdx[0] =
-      std::chrono::system_clock::now() - std::chrono::seconds(10);
-  }
-  SECTION("The remote already has an allocated timestamp slot")
-  {
-    p.worldState.lastMovUpdateByIdx.resize(remoteIdx + 1);
-  }
-
-  const auto timestampsBefore = p.worldState.lastMovUpdateByIdx;
-  const auto beforeHosting = std::chrono::system_clock::now();
-  RawMessageData rawMsgData;
-  rawMsgData.userId = 0;
+  RawMessageData raw;
   HostMessage msg;
   msg.remoteId = remote.GetFormId();
   ActionListener listener(p);
+
   const auto identityBefore = remote.GetRuntimeIdentity();
   const auto bodyBefore = remote.GetRuntimeLifeIdentity();
-
-  listener.OnHostAttempt(rawMsgData, msg);
-
+  p.Messages().clear();
+  raw.userId = 0;
+  listener.OnHostAttempt(raw, msg);
+  REQUIRE(p.worldState.hosters.at(remote.GetFormId()) == 0xff000000);
   REQUIRE(remote.GetRuntimeIdentity() != identityBefore);
   REQUIRE(remote.GetRuntimeLifeIdentity() != bodyBefore);
+  REQUIRE(Has(HostNews(p, 0, remote), "start"));
+  REQUIRE(Last(HostNews(p, 1, remote)) == "hosted");
 
-  REQUIRE(p.worldState.lastMovUpdateByIdx.size() > remoteIdx);
-  REQUIRE(p.worldState.lastMovUpdateByIdx[remoteIdx].has_value());
-  REQUIRE(*p.worldState.lastMovUpdateByIdx[remoteIdx] >= beforeHosting);
-  REQUIRE(p.worldState.hosters.at(remote.GetFormId()) == 0xff000000);
-  for (size_t i = 0; i < remoteIdx && i < timestampsBefore.size(); ++i) {
-    REQUIRE(p.worldState.lastMovUpdateByIdx[i] == timestampsBefore[i]);
-  }
-  bool hostStarted = false;
-  for (const auto& sent : p.Messages()) {
-    if (auto start = dynamic_cast<HostStartMessage*>(sent.message.get())) {
-      hostStarted = hostStarted || start->target == remote.GetFormId();
-    }
-  }
-  REQUIRE(hostStarted);
-
-  const auto timestamp = p.worldState.lastMovUpdateByIdx[remoteIdx];
-  const auto messageCount = p.Messages().size();
+  // Asking again for one it holds changes nothing and sends nothing.
   const auto sameOwner = remote.GetRuntimeIdentity();
-  listener.OnHostAttempt(rawMsgData, msg);
-  REQUIRE(p.worldState.lastMovUpdateByIdx[remoteIdx] == timestamp);
-  REQUIRE(p.Messages().size() == messageCount);
+  p.Messages().clear();
+  listener.OnHostAttempt(raw, msg);
+  REQUIRE(p.Messages().empty());
   REQUIRE(remote.GetRuntimeIdentity() == sameOwner);
-  p.worldState.lastMovUpdateByIdx[remoteIdx] =
-    std::chrono::system_clock::now() - std::chrono::seconds(3);
-  listener.OnHostAttempt(rawMsgData, msg);
-  REQUIRE(remote.GetRuntimeIdentity() == sameOwner);
-  const auto sameBody = remote.GetRuntimeLifeIdentity();
 
-  DoConnect(p, 1);
-  p.CreateActor(0xff000002, {0, 0, 0}, 0, 0x3c);
-  p.SetUserActor(1, 0xff000002);
-  p.worldState.lastMovUpdateByIdx[remoteIdx] =
-    std::chrono::system_clock::now() - std::chrono::seconds(3);
-  rawMsgData.userId = 1;
-  listener.OnHostAttempt(rawMsgData, msg);
-  REQUIRE(p.worldState.hosters.at(remote.GetFormId()) == 0xff000002);
-  REQUIRE(remote.GetRuntimeIdentity() != sameOwner);
-  REQUIRE(remote.GetRuntimeLifeIdentity() != sameBody);
+  SECTION("another game asking while the hoster still sees it is told who has it")
+  {
+    p.Messages().clear();
+    raw.userId = 1;
+    listener.OnHostAttempt(raw, msg);
+    REQUIRE(p.worldState.hosters.at(remote.GetFormId()) == 0xff000000);
+    REQUIRE(remote.GetRuntimeIdentity() == sameOwner);
+    REQUIRE(HostNews(p, 1, remote) == std::vector<std::string>{ "hosted" });
+    REQUIRE_FALSE(Has(HostNews(p, 0, remote), "stop"));
+  }
+
+  SECTION("the hoster leaving hands it to whoever asks next")
+  {
+    p.Messages().clear();
+    DoDisconnect(p, 0);
+    REQUIRE(p.worldState.hosters.count(remote.GetFormId()) == 0);
+    REQUIRE(Last(HostNews(p, 1, remote)) == "free");
+
+    p.Messages().clear();
+    raw.userId = 1;
+    listener.OnHostAttempt(raw, msg);
+    REQUIRE(p.worldState.hosters.at(remote.GetFormId()) == 0xff000002);
+    REQUIRE(remote.GetRuntimeIdentity() != sameOwner);
+    REQUIRE(Has(HostNews(p, 1, remote), "start"));
+  }
+
+  SECTION("the hoster going out of sight ends its hosting at once")
+  {
+    p.Messages().clear();
+    p.worldState.GetFormAt<MpActor>(0xff000000).SetPos({ 100000, 0, 0 });
+    REQUIRE(p.worldState.hosters.count(remote.GetFormId()) == 0);
+    REQUIRE(Has(HostNews(p, 0, remote), "stop"));
+    REQUIRE(Last(HostNews(p, 1, remote)) == "free");
+
+    p.Messages().clear();
+    raw.userId = 1;
+    listener.OnHostAttempt(raw, msg);
+    REQUIRE(p.worldState.hosters.at(remote.GetFormId()) == 0xff000002);
+    REQUIRE(Has(HostNews(p, 1, remote), "start"));
+  }
 }

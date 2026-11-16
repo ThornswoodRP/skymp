@@ -29,6 +29,8 @@
 #include "CustomPacketMessage.h"
 #include "HostStartMessage.h"
 #include "HostStopMessage.h"
+#include "MessageSerializerFactory.h"
+#include <slikenet/BitStream.h>
 #include "SpSnippet.h"
 #include "UpdateAnimVariablesMessage.h"
 #include "UpdateEquipmentMessage.h"
@@ -182,7 +184,16 @@ void ActionListener::OnUpdateMovement(const RawMessageData& rawMsgData,
     return;
   }
 
-  auto actor = SendToNeighbours(msg.idx, rawMsgData);
+  // THORNSWOOD (Thornswood #6247). Moves come when they change, not every
+  // 130 ms, so a move that was overtaken on the way must not land after the
+  // newer one: nothing would come after it to put the actor right.
+  auto actor = NeighboursTarget(msg.idx, rawMsgData.userId);
+  if (actor && !actor->TakeClientMove(rawMsgData.userId, msg.data.moveSeq)) {
+    return;
+  }
+  if (actor) {
+    RelayMove(*actor, msg, rawMsgData.userId);
+  }
   if (actor) {
     bool teleportFlag = actor->GetTeleportFlag();
     actor->SetTeleportFlag(false);
@@ -239,13 +250,41 @@ void ActionListener::OnUpdateMovement(const RawMessageData& rawMsgData,
     if (msg.data.runMode != "Standing") {
       actor->SetLastAnimEvent(std::nullopt);
     }
+  }
+}
 
-    if (partOne.worldState.lastMovUpdateByIdx.size() <= msg.idx) {
-      auto newSize = static_cast<size_t>(msg.idx) + 1;
-      partOne.worldState.lastMovUpdateByIdx.resize(newSize);
+void ActionListener::RelayMove(MpActor& actor,
+                               const UpdateMovementMessage& msg,
+                               Networking::UserId senderUserId)
+{
+  // Passed on numbered by the server (MpActor::NumberRelayedMove), so every
+  // reader can drop an overtaken one without knowing who sent it: the
+  // person, or whichever game hosts the NPC at the time. The teleport number
+  // is between the client and the server, so it is not passed on.
+  UpdateMovementMessage forwarded = msg;
+  forwarded.data.moveSeq = actor.NumberRelayedMove();
+  forwarded.data.teleportSeq = std::nullopt;
+
+  // A move the client says is the last until something changes goes
+  // reliably, because nothing replaces it; the ones before it are replaced
+  // 130 ms later, so they go unreliably.
+  const bool reliable = forwarded.data.settled.value_or(false);
+
+  SLNet::BitStream stream;
+  PartOne::GetMessageSerializerInstance().Serialize(forwarded, stream);
+  const auto data =
+    reinterpret_cast<Networking::PacketData>(stream.GetData());
+  const auto length = stream.GetNumberOfBytesUsed();
+
+  // Never back to the game that sent it (Thornswood #6251): it knows where
+  // its own character and its own NPCs are, and every move it sent came back
+  // to it once.
+  for (auto listener : actor.GetActorListeners()) {
+    auto targetUserId = partOne.serverState.UserByActor(listener);
+    if (targetUserId != Networking::InvalidUserId &&
+        targetUserId != senderUserId) {
+      partOne.GetSendTarget().Send(targetUserId, data, length, reliable);
     }
-    partOne.worldState.lastMovUpdateByIdx[msg.idx] =
-      std::chrono::system_clock::now();
   }
 }
 
@@ -964,18 +1003,21 @@ void ActionListener::OnHostAttempt(const RawMessageData& rawMsgData,
   auto& hoster = partOne.worldState.hosters[remoteId];
   const uint32_t prevHoster = hoster;
 
-  auto remoteIdx = remote.GetIdx();
-
-  std::optional<std::chrono::system_clock::time_point> lastRemoteUpdate;
-  if (partOne.worldState.lastMovUpdateByIdx.size() > remoteIdx) {
-    lastRemoteUpdate = partOne.worldState.lastMovUpdateByIdx[remoteIdx];
+  // THORNSWOOD (Thornswood #6247). Who hosts an NPC changes on events, not
+  // when its moves go quiet. A hoster keeps it until its session ends
+  // (MpActor::HandOffHostedActors) or it can no longer see the NPC
+  // (MpObjectReference::Unsubscribe); either tells everybody near the NPC
+  // that nobody hosts it, and one of them asks. Until 16 Nov 2026 a hoster
+  // lost an NPC whenever 2 s passed without a move for it, which made every
+  // game send every NPC's place every 130 ms, still or not, only to keep it.
+  if (hoster != 0 && hoster != me->GetFormId() &&
+      IsHosting(hoster, remote)) {
+    // The asker missed that somebody hosts it: say so, to the asker only.
+    remote.SendIsHostedByOther(*me, true);
+    return;
   }
 
-  const auto hostResetTimeout = std::chrono::seconds(2);
-
-  if (hoster == 0 || !lastRemoteUpdate ||
-      std::chrono::system_clock::now() - *lastRemoteUpdate >
-        hostResetTimeout) {
+  if (hoster != me->GetFormId()) {
     // Which actor, the hoster it had and the one it has now (Thornswood
     // #1270). This said "from {0:x} to {0:x}" and printed the old hoster
     // twice, so every line before the 29 September crashes read "from 0 to
@@ -990,17 +1032,11 @@ void ActionListener::OnHostAttempt(const RawMessageData& rawMsgData,
     hoster = me->GetFormId();
     remote.UpdateHoster(hoster);
 
-    // Hosting can start before the first movement creates this actor's slot.
-    if (partOne.worldState.lastMovUpdateByIdx.size() <= remoteIdx) {
-      partOne.worldState.lastMovUpdateByIdx.resize(
-        static_cast<size_t>(remoteIdx) + 1);
-    }
-
-    // Prevents too fast host switch
-    partOne.worldState.lastMovUpdateByIdx[remoteIdx] =
-      std::chrono::system_clock::now();
-
     auto remoteAsActor = remote.AsActor();
+    if (remoteAsActor) {
+      // The new hoster counts its moves from 1.
+      remoteAsActor->ForgetClientMoves();
+    }
     if (remoteAsActor) {
       remoteAsActor->EquipBestWeapon();
     }
@@ -1044,6 +1080,21 @@ void ActionListener::OnHostAttempt(const RawMessageData& rawMsgData,
       }
     }
   }
+}
+
+bool ActionListener::IsHosting(uint32_t hosterId,
+                               MpObjectReference& remote)
+{
+  auto& form = partOne.worldState.LookupFormByIdNoLoad(hosterId);
+  auto hosterActor = form ? form->AsActor() : nullptr;
+  if (!hosterActor ||
+      partOne.serverState.UserByActor(hosterActor) ==
+        Networking::InvalidUserId) {
+    return false;
+  }
+  const auto& listeners = remote.GetActorListeners();
+  return std::find(listeners.begin(), listeners.end(), hosterActor) !=
+    listeners.end();
 }
 
 void ActionListener::OnCustomEvent(const RawMessageData& rawMsgData,

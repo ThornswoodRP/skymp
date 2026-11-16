@@ -93,6 +93,10 @@ struct MpActor::Impl
 
   // THORNSWOOD. See NumberTeleportForOwnClient. 0: nothing outstanding.
   uint32_t newestTeleportSeq = 0;
+  // THORNSWOOD (#6247). See TakeClientMove and NumberRelayedMove.
+  Networking::UserId lastMoveUser = Networking::InvalidUserId;
+  uint32_t lastMoveSeq = 0;
+  uint32_t lastRelayedMoveSeq = 0;
   uint64_t runtimeIdentity = 0;
   uint64_t runtimeLifeIdentity = 0;
   bool hostedAuthorityReleased = false;
@@ -200,11 +204,30 @@ void MpActor::ReleaseHostedActors() noexcept
       it = world->hosters.erase(it);
       const auto& form = world->LookupFormByIdNoLoad(remoteId);
       if (form && form->AsActor()) {
-        // Do not rearm a dead creature until a new host accepts authority.
-        auto actor = form->AsActor();
-        actor->pImpl->hostedAuthorityReleased = true;
-        actor->InvalidateRuntimeIdentity();
+        form->AsActor()->MarkHostAuthorityReleased();
       }
+    }
+  }
+}
+
+void MpActor::HandOffHostedActors()
+{
+  auto world = GetParent();
+  if (!world) {
+    ReleaseHostedActors();
+    return;
+  }
+  std::vector<uint32_t> held;
+  for (const auto& [remoteId, hosterId] : world->hosters) {
+    if (hosterId == GetFormId()) {
+      held.push_back(remoteId);
+    }
+  }
+  ReleaseHostedActors();
+  for (auto remoteId : held) {
+    const auto& form = world->LookupFormByIdNoLoad(remoteId);
+    if (auto refr = dynamic_cast<MpObjectReference*>(form.get())) {
+      refr->UpdateHoster(0);
     }
   }
 }
@@ -243,6 +266,13 @@ bool MpActor::CompareAndSetActorProperty(int32_t expectedProfileId,
   if (!world || !world->RequestPreparedSave(*this, std::move(snapshot))) return false;
   CommitPreparedDynamicFields(std::move(nextFields));
   return true;
+}
+
+void MpActor::MarkHostAuthorityReleased() noexcept
+{
+  // Do not rearm a dead creature until a new host accepts authority.
+  pImpl->hostedAuthorityReleased = true;
+  InvalidateRuntimeIdentity();
 }
 
 void MpActor::AcceptClientHost()
@@ -2220,6 +2250,33 @@ bool MpActor::IsSentBeforeNewestTeleport(
 void MpActor::ForgetTeleportsForOwnClient()
 {
   pImpl->newestTeleportSeq = 0;
+}
+
+bool MpActor::TakeClientMove(Networking::UserId userId,
+                             std::optional<uint32_t> moveSeq)
+{
+  if (!moveSeq.has_value()) {
+    return true;
+  }
+  if (userId == pImpl->lastMoveUser && *moveSeq <= pImpl->lastMoveSeq) {
+    return false;
+  }
+  pImpl->lastMoveUser = userId;
+  pImpl->lastMoveSeq = *moveSeq;
+  return true;
+}
+
+void MpActor::ForgetClientMoves()
+{
+  pImpl->lastMoveUser = Networking::InvalidUserId;
+  pImpl->lastMoveSeq = 0;
+}
+
+uint32_t MpActor::NumberRelayedMove()
+{
+  // At most one a client tick for one actor: 130 ms apart while it changes,
+  // so this does not wrap in a server run.
+  return ++pImpl->lastRelayedMoveSeq;
 }
 
 void MpActor::SetSpawnPoint(const LocationalData& position)

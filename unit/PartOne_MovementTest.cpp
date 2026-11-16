@@ -30,8 +30,9 @@ TEST_CASE("Hypothesis: UpdateMovement may send nothing when actor without "
   partOne.Messages().clear();
 
   DoUpdateMovement(partOne, 0xffffffff, 0);
-  REQUIRE(partOne.Messages().size() ==
-          11); // Me and 10 other users created in loop
+  // The 10 other users created in the loop; never back to the sender
+  // (Thornswood #6251).
+  REQUIRE(partOne.Messages().size() == 10);
 }
 
 TEST_CASE("UpdateMovement when neighbour has been disconnected", "[PartOne]")
@@ -56,13 +57,22 @@ TEST_CASE("UpdateMovement when neighbour has been disconnected", "[PartOne]")
 
   partOne.Messages().clear();
   DoMessage(partOne, 0, jMovement);
-  REQUIRE(partOne.Messages().size() == 1);
+  // Nobody left to tell: a move never goes back to its sender (#6251).
+  REQUIRE(partOne.Messages().empty());
 }
 
 TEST_CASE("UpdateMovement", "[PartOne]")
 {
 
   PartOne partOne;
+
+  // Passed on numbered by the server, one more for each move of this actor
+  // (Thornswood #6247).
+  auto relayed = [](uint32_t moveSeq) {
+    auto j = jMovement;
+    j["data"]["moveSeq"] = moveSeq;
+    return j;
+  };
 
   auto doMovement = [&] { DoMessage(partOne, 0, jMovement); };
 
@@ -76,8 +86,9 @@ TEST_CASE("UpdateMovement", "[PartOne]")
   partOne.SetUserActor(0, 0xff000ABC);
   partOne.Messages().clear();
   doMovement();
-  REQUIRE(partOne.Messages().size() == 1);
-  REQUIRE(partOne.Messages().at(0).j == jMovement);
+  // Nobody else sees it yet, and a move never goes back to its sender
+  // (Thornswood #6251).
+  REQUIRE(partOne.Messages().empty());
 
   // UpdateMovement actually changes position and rotation
   REQUIRE(
@@ -114,9 +125,9 @@ TEST_CASE("UpdateMovement", "[PartOne]")
 
   partOne.Messages().clear();
   doMovement();
-  REQUIRE(partOne.Messages().size() == 2);
-  REQUIRE(partOne.Messages().at(0).j == jMovement);
-  REQUIRE(partOne.Messages().at(1).j == jMovement);
+  REQUIRE(partOne.Messages().size() == 1);
+  REQUIRE(partOne.Messages().at(0).userId == 1);
+  REQUIRE(partOne.Messages().at(0).j == relayed(2));
 
   // Another player is being moved away and now doesn't see our movement
   auto acAbcd = dynamic_cast<MpActor*>(
@@ -134,4 +145,85 @@ TEST_CASE("UpdateMovement", "[PartOne]")
                          return m.j["t"] == MsgType::DestroyActor &&
                            m.j["idx"] == 0 && m.reliable && m.userId == 1;
                        }) != partOne.Messages().end());
+}
+
+// Thornswood #6247. Moves are sent when they change, so the newest one has
+// to stick: one overtaken on the way is dropped, and the one a client sends
+// once nothing changes any more goes on reliably.
+TEST_CASE("A move overtaken on the way is neither applied nor passed on",
+          "[PartOne]")
+{
+  PartOne partOne;
+  DoConnect(partOne, 0);
+  partOne.CreateActor(0xff000ABC, { 1.f, 2.f, 3.f }, 180.f, 0x3c);
+  GiveStoredAppearance(partOne.worldState.GetFormAt<MpActor>(0xff000ABC));
+  partOne.SetUserActor(0, 0xff000ABC);
+  auto& actor = partOne.worldState.GetFormAt<MpActor>(0xff000ABC);
+  // Somebody standing beside them, who is told their moves.
+  DoConnect(partOne, 1);
+  partOne.CreateActor(0xff00ABCD, { 1.f, 2.f, 3.f }, 180.f, 0x3c);
+  GiveStoredAppearance(partOne.worldState.GetFormAt<MpActor>(0xff00ABCD));
+  partOne.SetUserActor(1, 0xff00ABCD);
+
+  auto move = [&](uint32_t seq, NiPoint3 pos, bool settled) {
+    auto j = jMovement;
+    j["data"]["moveSeq"] = seq;
+    j["data"]["pos"] = { pos.x, pos.y, pos.z };
+    if (settled) {
+      j["data"]["settled"] = true;
+    }
+    partOne.Messages().clear();
+    DoMessage(partOne, 0, j);
+  };
+
+  move(5, { 1, -1, 1 }, false);
+  REQUIRE(partOne.Messages().size() == 1);
+  REQUIRE_FALSE(partOne.Messages()[0].reliable);
+  REQUIRE(partOne.Messages()[0].j["data"]["moveSeq"] == 1);
+  REQUIRE(actor.GetPos() == NiPoint3{ 1, -1, 1 });
+
+  move(4, { 5, 5, 5 }, false);
+  REQUIRE(partOne.Messages().empty());
+  REQUIRE(actor.GetPos() == NiPoint3{ 1, -1, 1 });
+
+  move(5, { 5, 5, 5 }, true);
+  REQUIRE(partOne.Messages().empty());
+
+  move(6, { 2, 2, 2 }, true);
+  REQUIRE(partOne.Messages().size() == 1);
+  REQUIRE(partOne.Messages()[0].reliable);
+  REQUIRE(partOne.Messages()[0].j["data"]["moveSeq"] == 2);
+  REQUIRE(partOne.Messages()[0].j["data"]["settled"] == true);
+  REQUIRE(actor.GetPos() == NiPoint3{ 2, 2, 2 });
+
+  // A new connection to the same character counts from 1 again.
+  partOne.SetUserActor(0, 0xff000ABC);
+  move(1, { 3, 3, 3 }, false);
+  REQUIRE(partOne.Messages().size() == 1);
+  REQUIRE(partOne.Messages()[0].userId == 1);
+  REQUIRE(partOne.Messages()[0].j["data"]["moveSeq"] == 3);
+  REQUIRE(actor.GetPos() == NiPoint3{ 3, 3, 3 });
+}
+
+TEST_CASE("A property set to the value it holds tells nobody", "[PartOne]")
+{
+  PartOne partOne;
+  DoConnect(partOne, 0);
+  partOne.CreateActor(0xff000ABC, { 1.f, 2.f, 3.f }, 180.f, 0x3c);
+  GiveStoredAppearance(partOne.worldState.GetFormAt<MpActor>(0xff000ABC));
+  partOne.SetUserActor(0, 0xff000ABC);
+  auto& actor = partOne.worldState.GetFormAt<MpActor>(0xff000ABC);
+
+  partOne.Messages().clear();
+  actor.SetPropertyValueDump("thornswoodTest", "{\"a\":1}", true, true);
+  REQUIRE(partOne.Messages().size() == 1);
+
+  partOne.Messages().clear();
+  actor.SetPropertyValueDump("thornswoodTest", "{\"a\":1}", true, true);
+  REQUIRE(partOne.Messages().empty());
+
+  actor.SetPropertyValueDump("thornswoodTest", "{\"a\":2}", true, true);
+  REQUIRE(partOne.Messages().size() == 1);
+  REQUIRE(actor.GetDynamicFields().GetValueDump("thornswoodTest") ==
+          "{\"a\":2}");
 }
