@@ -15,7 +15,9 @@ CraftEvent::CraftEvent(MpActor* actor_, uint32_t craftedItemBaseId_,
                        uint32_t workbenchId_,
                        std::optional<std::vector<uint32_t>> effects_,
                        std::vector<StockDraw> stockDraws_,
-                       std::optional<Inventory::Made> made_)
+                       std::optional<Inventory::Made> made_,
+                       std::optional<Inventory::MadeEnchantment> enchantment_,
+                       std::optional<float> maxCharge_)
   : actor(actor_)
   , craftedItemBaseId(craftedItemBaseId_)
   , count(count_)
@@ -23,6 +25,8 @@ CraftEvent::CraftEvent(MpActor* actor_, uint32_t craftedItemBaseId_,
   , workbenchId(workbenchId_)
   , effects(std::move(effects_))
   , made(std::move(made_))
+  , enchantment(std::move(enchantment_))
+  , maxCharge(maxCharge_)
   , entries(entries_)
   , stockDraws(std::move(stockDraws_))
   , outputBaseId(craftedItemBaseId_)
@@ -190,6 +194,23 @@ std::optional<Inventory::Made> CraftEvent::GetOutputMade() const
   return std::nullopt;
 }
 
+std::optional<Inventory::MadeEnchantment> CraftEvent::GetOutputEnchantment()
+  const
+{
+  if (enchantment && outputBaseId == craftedItemBaseId) {
+    return enchantment;
+  }
+  return std::nullopt;
+}
+
+std::optional<float> CraftEvent::GetOutputMaxCharge() const
+{
+  if (GetOutputEnchantment()) {
+    return maxCharge;
+  }
+  return std::nullopt;
+}
+
 void CraftEvent::SetOutputName(std::optional<std::string> name)
 {
   if (name && name->empty()) {
@@ -208,6 +229,14 @@ void CraftEvent::OnFireSuccess(WorldState*)
   // names another record (#2906) gets that record, which has contents of its
   // own, and a double batch is the same bottle twice.
   extraData.made = GetOutputMade();
+  // Thornswood #4513: an enchanted piece goes in with its enchantment, see
+  // CraftService::MadeEnchantment, under the same rule.
+  extraData.madeEnchantment = GetOutputEnchantment();
+  if (extraData.madeEnchantment) {
+    extraData.enchantmentId =
+      Inventory::MadeEnchantmentId(*extraData.madeEnchantment);
+    extraData.maxCharge = GetOutputMaxCharge();
+  }
 
   /*
     THORNSWOOD PATCH (Thornswood #3159). The pack gives every input but what

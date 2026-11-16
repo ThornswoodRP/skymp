@@ -6,5 +6,7 @@ export interface UpdateMovementMessage {
     idx: number;
     // THORNSWOOD. teleportSeq: own character only, see
     // RemoteServer.getCarriedOutTeleportSeq.
-    data: Movement & { teleportSeq?: number };
+    // THORNSWOOD (Thornswood #6247). moveSeq and settled: moves are sent on
+    // change, see SendInputsService.sendMovement.
+    data: Movement & { teleportSeq?: number; moveSeq?: number; settled?: boolean };
 }

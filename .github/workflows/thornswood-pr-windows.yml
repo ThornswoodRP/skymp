@@ -186,7 +186,9 @@ concurrency:
 
 env:
   BUILD_TYPE: Release
-  VCPKG_BINARY_SOURCES: 'clear;nuget,GitHub,readwrite'
+  # Read only for every job here; the push build alone sets its own readwrite
+  # source (the header above build-pr, THE LIBRARY CACHE, Thornswood #2760).
+  VCPKG_BINARY_SOURCES: 'clear;nuget,GitHub,read'
   VCPKG_FEATURE_FLAGS: 'manifests'
 
 jobs:
@@ -208,6 +210,10 @@ jobs:
         run: node skymp5-client/test-disabled-stays.js
       - name: The browser is shown at start, focused only by a plugin
         run: node misc/tests/node/test_browser_start_focus.js
+      - name: The page's focus is a menu the game keeps the cursor for
+        run: node misc/tests/node/test_page_focus_menu.js
+      - name: The update event's Papyrus call opens its way when it ends
+        run: node misc/tests/node/test_papyrus_update_way_native.js
   save-directory-linux:
     runs-on: ubuntu-24.04
     timeout-minutes: 10
@@ -266,6 +272,13 @@ jobs:
       - name: Every action is pinned by commit
         shell: pwsh
         run: .\misc\thornswood\Test-ActionPins.ps1
+      # The header above build-pr, THE LIBRARY CACHE: no job a pull request
+      # runs may write a package or the library cache (Thornswood #2760).
+      - name: No pull request job can write the library cache
+        shell: pwsh
+        run: |
+          node misc/thornswood/test-pull-request-writes.js
+          exit $LASTEXITCODE
 
       # The header, THE COMPILER CACHE. ccache from its own release, held to
       # the sha256 written here, so a changed download stops the build
@@ -308,7 +321,7 @@ jobs:
           )
           Write-Host "ccache $($env:CCACHE_VERSION) at $exe, sha256 $sum, store $store"
       - name: Restore the compiled objects
-        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ runner.temp }}/ccache
           key: ccache-windows-2022-${{ github.sha }}
@@ -322,7 +335,7 @@ jobs:
       # never an exact hit and the newest saved folder is taken.
       - name: Restore the installed libraries
         id: vcpkg-installed
-        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ github.workspace }}/build/vcpkg_installed
           key: vcpkg-installed-windows-2022-abis-none
@@ -355,7 +368,7 @@ jobs:
       # A push's build only: the store the shipped engine's next build reads.
       - name: Keep the compiled objects
         if: github.event_name == 'push'
-        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ runner.temp }}/ccache
           key: ccache-windows-2022-${{ github.sha }}
@@ -383,7 +396,7 @@ jobs:
           Add-Content -LiteralPath $env:GITHUB_OUTPUT -Value @("key=$key", "save=$(if ($env:RESTORED_KEY -eq $key) { 'false' } else { 'true' })")
       - name: Keep the installed libraries
         if: github.event_name == 'push' && steps.vcpkg-abis.outputs.save == 'true'
-        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ github.workspace }}/build/vcpkg_installed
           key: ${{ steps.vcpkg-abis.outputs.key }}
@@ -508,8 +521,10 @@ jobs:
     if: github.event_name == 'push'
     runs-on: windows-2022
     timeout-minutes: 135
-    # The workflow's own VCPKG_BINARY_SOURCES, readwrite: the header above
-    # build-pr, THE LIBRARY CACHE.
+    # The one job that writes the library cache: the header above build-pr,
+    # THE LIBRARY CACHE. A push to thornswood/engine-changes only.
+    env:
+      VCPKG_BINARY_SOURCES: 'clear;nuget,GitHub,readwrite'
     permissions:
       contents: read
       packages: write

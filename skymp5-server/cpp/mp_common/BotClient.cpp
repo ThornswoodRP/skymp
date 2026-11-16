@@ -8,11 +8,13 @@
 #include <tuple>
 
 BotClient::BotClient(const std::string& host, uint16_t port,
-                     const std::string& serverPassword, int timeoutMs)
+                     const std::string& serverPassword, int timeoutMs,
+                     const std::string& localAddress)
   : serializer(MessageSerializerFactory::CreateMessageSerializer())
 {
   const std::string password = PasswordFor(serverPassword);
-  cl = Networking::CreateClient(host.data(), port, timeoutMs, password.data());
+  cl = Networking::CreateClient(host.data(), port, timeoutMs, password.data(),
+                                localAddress.data());
 }
 
 BotClient::~BotClient() = default;

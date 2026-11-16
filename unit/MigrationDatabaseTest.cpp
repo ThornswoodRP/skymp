@@ -52,7 +52,7 @@ TEST_CASE("Successful Migration", "[MigrationDatabase]")
   REQUIRE(exited == true); // Check if the custom terminate was called
 }
 
-TEST_CASE("Migration Termination on Non-Empty New Database",
+TEST_CASE("Migration Refused on Non-Empty New Database",
           "[MigrationDatabase]")
 {
   std::atomic<bool> exited{ false };
@@ -64,18 +64,20 @@ TEST_CASE("Migration Termination on Non-Empty New Database",
   auto newDatabase = MakeDatabase("unit/data/new");
   newDatabase->Upsert({ CreateChangeForm_("3") });
 
-  auto db =
-    std::make_shared<MigrationDatabase>(newDatabase, oldDatabase, customExit);
+  // Refused with an error, not an exit that reads as a move (#6237)
+  REQUIRE_THROWS_WITH(
+    std::make_shared<MigrationDatabase>(newDatabase, oldDatabase, customExit),
+    Catch::Matchers::ContainsSubstring("already holds 1 change forms"));
 
   // Nothing changed
   REQUIRE(GetAllChangeForms(oldDatabase) ==
           std::set<MpChangeForm>{ CreateChangeForm_("1") });
   REQUIRE(GetAllChangeForms(newDatabase) ==
           std::set<MpChangeForm>{ CreateChangeForm_("3") });
-  REQUIRE(exited == true); // Check if the custom terminate was called
+  REQUIRE(exited == false);
 }
 
-TEST_CASE("Migration Termination on Empty Old Database", "[MigrationDatabase]")
+TEST_CASE("Migration Refused on Empty Old Database", "[MigrationDatabase]")
 {
   std::atomic<bool> exited{ false };
   auto customExit = [&exited]() { exited = true; };
@@ -86,11 +88,13 @@ TEST_CASE("Migration Termination on Empty Old Database", "[MigrationDatabase]")
   auto newDatabase = MakeDatabase("unit/data/new");
   newDatabase->Upsert({});
 
-  auto db =
-    std::make_shared<MigrationDatabase>(newDatabase, oldDatabase, customExit);
+  // Refused with an error, not an exit that reads as a move (#6237)
+  REQUIRE_THROWS_WITH(
+    std::make_shared<MigrationDatabase>(newDatabase, oldDatabase, customExit),
+    Catch::Matchers::ContainsSubstring("holds no change forms"));
 
   // Nothing changed
   REQUIRE(GetAllChangeForms(oldDatabase) == std::set<MpChangeForm>{});
   REQUIRE(GetAllChangeForms(newDatabase) == std::set<MpChangeForm>{});
-  REQUIRE(exited == true); // Check if the custom terminate was called
+  REQUIRE(exited == false);
 }

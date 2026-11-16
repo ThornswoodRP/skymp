@@ -24,6 +24,8 @@ import {
   renameInventoryItems,
   removeInventoryItems,
   createMadePotion,
+  createMadeEnchantment,
+  Weapon,
 } from "skyrimPlatform";
 
 /*
@@ -52,8 +54,25 @@ export interface Made {
   effects: MadeEffect[];
 }
 
+/*
+  THORNSWOOD PATCH (Thornswood #4513). A made enchantment, kept as what it is.
+
+  An enchantment put on a piece at an arcane enchanter is a form the
+  enchanting game made while it ran, like a brewed bottle, so its id means
+  nothing to the next session. The server keeps it by its contents
+  (Inventory::MadeEnchantment) and names it in the entry's enchantmentId by an
+  id worked out from them, in the same made range. ensureMadeEnchantment
+  builds an enchantment with exactly that id here (createMadeEnchantment)
+  before the piece is added with it.
+*/
+export interface MadeEnchantment {
+  weapon: boolean;
+  effects: MadeEffect[];
+}
+
 export interface Extra {
   made?: Made;
+  madeEnchantment?: MadeEnchantment;
   health?: number;
   enchantmentId?: number;
   maxCharge?: number;
@@ -179,9 +198,13 @@ const namesEqual = (a: Entry, b: Entry): boolean => {
 const madeEqual = (a?: Made, b?: Made): boolean =>
   (!a && !b) || (!!a && !!b && JSON.stringify(a) === JSON.stringify(b));
 
+const madeEnchantmentEqual = (a?: MadeEnchantment, b?: MadeEnchantment): boolean =>
+  (!a && !b) || (!!a && !!b && JSON.stringify(a) === JSON.stringify(b));
+
 const extrasEqual = (a: Entry, b: Entry, ignoreWorn = false) => {
   return (
     madeEqual(a.made, b.made) &&
+    madeEnchantmentEqual(a.madeEnchantment, b.madeEnchantment) &&
     healthOf(a) === healthOf(b) &&
     a.enchantmentId === b.enchantmentId &&
     a.maxCharge === b.maxCharge &&
@@ -293,6 +316,115 @@ export const ensureMadePotion = (id: number, made: Made): boolean => {
   return true;
 };
 
+// What this session built under which id (Thornswood #4513), as
+// madePotions keeps bottles.
+const madeEnchantments = (): Map<number, MadeEnchantment> => {
+  if (!storage) {
+    return new Map<number, MadeEnchantment>();
+  }
+  if (!(storage["thornswoodMadeEnchantments"] instanceof Map)) {
+    storage["thornswoodMadeEnchantments"] = new Map<number, MadeEnchantment>();
+  }
+  return storage["thornswoodMadeEnchantments"] as Map<number, MadeEnchantment>;
+};
+
+export interface ReadEnchantment {
+  enchantment: MadeEnchantment;
+  maxCharge: number;
+}
+
+// Thornswood #4513. The enchantment the game put on a piece of baseId in
+// refr's pack this session, read off the enchantment's form, for the craft
+// message (craftService.ts), with the charge the piece holds at most.
+// Nothing when no unit of the piece carries an enchantment this session made
+// (one above 0xff000000 that was not built from the server's description),
+// or when one of its effects cannot be read.
+export const readMadeEnchantment = (refr: ObjectReference, baseId: number): ReadEnchantment | undefined => {
+  const weapon = !!Weapon.from(Game.getFormEx(baseId));
+  const built = madeEnchantments();
+  let found: ReadEnchantment | undefined;
+  (getExtraContainerChanges(refr.getFormID()) || []).forEach((changesEntry) => {
+    if (found || changesEntry.baseId !== baseId) {
+      return;
+    }
+    (changesEntry.extendDataList || []).forEach((extraList) => {
+      if (found || !extraList) {
+        return;
+      }
+      const e: Entry = { baseId, count: 1 };
+      extractExtraData(refr, extraList, e);
+      const id = e.enchantmentId;
+      if (!id || id < kRuntimeFirst || built.has(id)) {
+        return;
+      }
+      const enchantment = Enchantment.from(Game.getFormEx(id));
+      if (!enchantment) {
+        return;
+      }
+      const effects: MadeEffect[] = [];
+      const n = enchantment.getNumEffects();
+      for (let i = 0; i < n; ++i) {
+        const mgef = enchantment.getNthEffectMagicEffect(i);
+        if (!mgef) {
+          return;
+        }
+        effects.push({
+          effectId: mgef.getFormID(),
+          magnitude: Math.round(enchantment.getNthEffectMagnitude(i) * 100) / 100,
+          area: Math.round(enchantment.getNthEffectArea(i)),
+          duration: Math.round(enchantment.getNthEffectDuration(i)),
+        });
+      }
+      if (effects.length) {
+        found = { enchantment: { weapon, effects }, maxCharge: e.maxCharge || 0 };
+      }
+    });
+  });
+  return found;
+};
+
+// Thornswood #4513. Makes sure this session has the server's enchantment
+// `id`, building it from `enchantment` the first time it is seen. False when
+// it cannot, for the reasons ensureMadePotion gives.
+export const ensureMadeEnchantment = (id: number, enchantment: MadeEnchantment): boolean => {
+  const built = madeEnchantments();
+  const had = built.get(id);
+  if (had) {
+    if (!madeEnchantmentEqual(had, enchantment)) {
+      printConsole(`Made enchantment ${id.toString(16)} is already another enchantment in this session`);
+      return false;
+    }
+    return true;
+  }
+  if (id < kMadeIdFirst || typeof createMadeEnchantment !== "function") {
+    printConsole(`Unable to build made enchantment ${id.toString(16)}`);
+    return false;
+  }
+  const ok = createMadeEnchantment(
+    id,
+    !!enchantment.weapon,
+    enchantment.effects.map((e) => e.effectId),
+    enchantment.effects.map((e) => e.magnitude),
+    enchantment.effects.map((e) => e.area),
+    enchantment.effects.map((e) => e.duration),
+  );
+  if (!ok) {
+    printConsole(`createMadeEnchantment failed for ${id.toString(16)}`);
+    return false;
+  }
+  built.set(id, JSON.parse(JSON.stringify(enchantment)));
+  return true;
+};
+
+// Thornswood #4513: a unit enchanted with an enchantment built from the
+// server's description carries that description, the way the server holds it.
+const addMadeEnchantment = (e: Entry): void => {
+  const enchantment = e.enchantmentId ? madeEnchantments().get(e.enchantmentId) : undefined;
+  if (enchantment) {
+    e.madeEnchantment = JSON.parse(JSON.stringify(enchantment));
+  }
+};
+
 const extractExtraData = (
   refr: ObjectReference,
   extraList: BaseExtraList | null,
@@ -399,6 +531,7 @@ const getExtraContainerChangesAsInventory = (
       }
     });
   }
+  entries.forEach(addMadeEnchantment);
 
   let res: Inventory = { entries };
   res = squash(res);
@@ -561,6 +694,7 @@ const getInventoryLists = (refr: ObjectReference, baseId: number): InventoryList
       if (made) {
         e.made = JSON.parse(JSON.stringify(made));
       }
+      addMadeEnchantment(e);
       lists.push(e);
       plain -= e.count;
     });
@@ -647,6 +781,11 @@ export const applyInventory = (
   newInventory.entries.forEach((e) => {
     if (e.made) {
       ensureMadePotion(e.baseId, e.made);
+    }
+    // Thornswood #4513: and every enchantment made on a piece, under the
+    // server's id, before the piece is added with it.
+    if (e.madeEnchantment && e.enchantmentId) {
+      ensureMadeEnchantment(e.enchantmentId, e.madeEnchantment);
     }
   });
   const actual = getInventory(refr);

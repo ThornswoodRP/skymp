@@ -39,9 +39,13 @@ public:
 
   // serverPassword is the server's "password" setting, empty when it has
   // none; the protocol version is put in front of it here, as the server and
-  // MpClientPlugin do.
+  // MpClientPlugin do. localAddress is the address the bot's own socket is
+  // bound to, any when empty: bots on one machine that should look like
+  // different people to the server each take a loopback address of their
+  // own, 127.0.1.1 and on (Thornswood #5359).
   BotClient(const std::string& host, uint16_t port,
-            const std::string& serverPassword, int timeoutMs);
+            const std::string& serverPassword, int timeoutMs,
+            const std::string& localAddress = "");
   ~BotClient();
 
   // Everything that arrived since the last call, in order.

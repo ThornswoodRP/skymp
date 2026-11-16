@@ -1,112 +1,134 @@
 #include "MigrationDatabase.h"
+#include "FileDatabase.h"
 #include <algorithm>
 #include <iterator>
+#include <map>
 #include <set>
 #include <spdlog/spdlog.h>
 
+// Thornswood #6237: the move of a world from the file driver to MongoDB.
+//
+// It copies every change form of databaseOld into databaseNew, then reads
+// databaseNew back and compares it with what it read from databaseOld, form
+// by form, as the engine writes them (MpChangeForm::ToJson). It succeeds, and
+// the server exits with 0, only when the two hold the same forms with the
+// same content. Everything else throws, so the server exits with an error and
+// says why, and the tool that runs it keeps the file world:
+//   - databaseNew already holds forms (a second run must not mix two worlds);
+//   - databaseOld holds none (a wrong name or folder is not an empty world);
+//   - a file of the old world could not be read as a change form (the file
+//     driver logs those and goes on, which here would drop that form);
+//   - the old world names one form twice;
+//   - the new world, read back, lacks a form, has one more, or has one whose
+//     content differs.
+// Upstream exited with 0 on the first two as well, so a tool could not tell
+// a move from a skip.
+
 namespace {
-size_t CountChangeForms(
-  std::shared_ptr<
-    Viet::IDatabase<MpChangeForm, FormDesc, std::vector<FormDesc>>>
-    database)
+using Database =
+  Viet::IDatabase<MpChangeForm, FormDesc, std::vector<FormDesc>>;
+
+size_t CountChangeForms(const std::shared_ptr<Database>& database)
 {
   size_t n = 0;
   database->Iterate([&](const MpChangeForm&) { ++n; }, std::nullopt);
   return n;
 }
+
+std::string Dump(const MpChangeForm& changeForm)
+{
+  return MpChangeForm::ToJson(changeForm).dump();
+}
+
+std::string FirstFew(const std::vector<std::string>& names)
+{
+  std::string res;
+  for (size_t i = 0; i < names.size() && i < 5; ++i) {
+    res += (i ? ", " : "") + names[i];
+  }
+  if (names.size() > 5) {
+    res += fmt::format(" and {} more", names.size() - 5);
+  }
+  return res;
+}
 }
 
 struct MigrationDatabase::Impl
 {
-  std::shared_ptr<
-    Viet::IDatabase<MpChangeForm, FormDesc, std::vector<FormDesc>>>
-    newDatabase;
-  std::shared_ptr<
-    Viet::IDatabase<MpChangeForm, FormDesc, std::vector<FormDesc>>>
-    oldDatabase;
+  std::shared_ptr<Database> newDatabase;
+  std::shared_ptr<Database> oldDatabase;
   std::function<void()> exit;
   std::function<void()> terminate;
 };
 
-MigrationDatabase::MigrationDatabase(
-  std::shared_ptr<
-    Viet::IDatabase<MpChangeForm, FormDesc, std::vector<FormDesc>>>
-    newDatabase,
-  std::shared_ptr<
-    Viet::IDatabase<MpChangeForm, FormDesc, std::vector<FormDesc>>>
-    oldDatabase,
-  std::function<void()> exit, std::function<void()> terminate)
+MigrationDatabase::MigrationDatabase(std::shared_ptr<Database> newDatabase,
+                                     std::shared_ptr<Database> oldDatabase,
+                                     std::function<void()> exit,
+                                     std::function<void()> terminate)
 {
-  pImpl.reset(new Impl{ newDatabase, oldDatabase, exit });
+  pImpl.reset(new Impl{ newDatabase, oldDatabase, exit, terminate });
 
   spdlog::info("MigrationDatabase: verifying newDatabase emptiness");
 
-  size_t newDatabaseCount = CountChangeForms(newDatabase);
-
-  if (newDatabaseCount > 0) {
-    spdlog::error(
-      "MigrationDatabase: newDatabase is not empty, skipping migration");
-    spdlog::info("The server will exit");
-    pImpl->exit();
-    return;
+  if (size_t n = CountChangeForms(newDatabase); n > 0) {
+    throw std::runtime_error(fmt::format(
+      "MigrationDatabase: databaseNew already holds {} change forms, so "
+      "nothing was moved",
+      n));
   }
 
-  spdlog::info("MigrationDatabase: verifying oldDatabase non-emptiness");
+  spdlog::info("MigrationDatabase: reading oldDatabase");
 
-  if (CountChangeForms(oldDatabase) == 0) {
-    spdlog::error(
-      "MigrationDatabase: oldDatabase is empty, skipping migration");
-    spdlog::info("The server will exit");
-    pImpl->exit();
-    return;
-  }
-
-  spdlog::info("MigrationDatabase: preparing changeforms to migrate");
-
+  std::map<std::string, std::string> oldForms;
   std::vector<MpChangeForm> changeForms;
-
-  uint32_t counter = 0;
+  std::vector<std::string> twice;
 
   oldDatabase->Iterate(
     [&](const MpChangeForm& changeForm) {
+      auto desc = changeForm.formDesc.ToString();
+      if (!oldForms.emplace(desc, Dump(changeForm)).second) {
+        twice.push_back(desc);
+        return;
+      }
       changeForms.push_back(changeForm);
-      ++counter;
-      if (counter <= 100) {
-        if (counter % 10 == 0) {
-          spdlog::info("MigrationDatabase: prepared {} changeforms", counter);
-        }
-      } else if (counter <= 1000) {
-        if (counter % 100 == 0) {
-          spdlog::info("MigrationDatabase: prepared {} changeforms", counter);
-        }
-      } else {
-        if (counter % 1000 == 0) {
-          spdlog::info("MigrationDatabase: prepared {} changeforms", counter);
-        }
+      if (changeForms.size() % 1000 == 0) {
+        spdlog::info("MigrationDatabase: read {} changeforms",
+                     changeForms.size());
       }
     },
     std::nullopt);
 
+  if (auto file = std::dynamic_pointer_cast<FileDatabase>(oldDatabase)) {
+    if (size_t unread = file->GetUnreadFilesOnLastIterate(); unread > 0) {
+      throw std::runtime_error(fmt::format(
+        "MigrationDatabase: {} file(s) of the old world could not be read as "
+        "change forms (each is named above), so nothing was moved",
+        unread));
+    }
+  }
+  if (!twice.empty()) {
+    throw std::runtime_error(fmt::format(
+      "MigrationDatabase: the old world names {} form(s) twice: {}",
+      twice.size(), FirstFew(twice)));
+  }
+  if (changeForms.empty()) {
+    throw std::runtime_error(
+      "MigrationDatabase: databaseOld holds no change forms, so nothing was "
+      "moved; check its databaseName");
+  }
+
   spdlog::info("MigrationDatabase: upserting {} changeforms into the new "
-               "database, this may take time",
+               "database",
                changeForms.size());
 
-  // Instead of upserting all changeForms at once, split them into chunks of 1k
-  // and upsert each chunk
-  size_t chunkSize = 1000;
+  const size_t chunkSize = 1000;
   size_t totalUpserted = 0;
-
   for (size_t i = 0; i < changeForms.size(); i += chunkSize) {
     std::vector<std::optional<MpChangeForm>> chunk;
-
-    // Calculate the end of the current chunk
     size_t end = std::min(i + chunkSize, changeForms.size());
-
-    // Copy the elements for the current chunk
     std::copy(changeForms.begin() + i, changeForms.begin() + end,
               std::back_inserter(chunk));
 
-    // Upsert the current chunk
     size_t numUpserted = newDatabase->Upsert(std::move(chunk));
     totalUpserted += numUpserted;
 
@@ -115,8 +137,44 @@ MigrationDatabase::MigrationDatabase(
                  (changeForms.size() + chunkSize - 1) / chunkSize,
                  numUpserted);
   }
+  if (totalUpserted != changeForms.size()) {
+    throw std::runtime_error(
+      fmt::format("MigrationDatabase: databaseNew took {} of {} change forms",
+                  totalUpserted, changeForms.size()));
+  }
 
-  spdlog::info("MigrationDatabase: {} total changeForms migrated successfully",
+  spdlog::info("MigrationDatabase: reading databaseNew back to compare");
+
+  std::vector<std::string> missing, extra, differ;
+  std::set<std::string> seen;
+  newDatabase->Iterate(
+    [&](const MpChangeForm& changeForm) {
+      auto desc = changeForm.formDesc.ToString();
+      seen.insert(desc);
+      auto it = oldForms.find(desc);
+      if (it == oldForms.end()) {
+        extra.push_back(desc);
+      } else if (it->second != Dump(changeForm)) {
+        differ.push_back(desc);
+      }
+    },
+    std::nullopt);
+  for (const auto& [desc, dump] : oldForms) {
+    if (!seen.count(desc)) {
+      missing.push_back(desc);
+    }
+  }
+
+  if (!missing.empty() || !extra.empty() || !differ.empty()) {
+    throw std::runtime_error(fmt::format(
+      "MigrationDatabase: databaseNew does not match the old world: {} "
+      "missing ({}), {} extra ({}), {} different ({})",
+      missing.size(), FirstFew(missing), extra.size(), FirstFew(extra),
+      differ.size(), FirstFew(differ)));
+  }
+
+  spdlog::info("MigrationDatabase: {} changeForms moved, and each read back "
+               "the same from databaseNew",
                totalUpserted);
 
   spdlog::info("The server will exit");

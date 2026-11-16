@@ -110,6 +110,53 @@ public:
   static void Round(Made& made);
   static std::string Canonical(const Made& made);
 
+  /*
+    THORNSWOOD PATCH (Thornswood #4513). A made enchantment, kept as what it
+    is.
+
+    An enchantment put on a piece at an arcane enchanter is a form the
+    enchanting game made while it ran (above 0xff000000), the same as a
+    brewed bottle (#1649), so its id means nothing to the next session or to
+    any other client. The server keeps it by its contents instead: whether
+    it goes on a weapon or on armour, and each effect's magic effect record
+    (MGEF), magnitude, area and duration. The entry carrying it names the
+    enchantment by MadeEnchantmentId(it) in enchantmentId, so the same
+    contents always get the same id, and the client builds an enchantment
+    from this under that id when the entry arrives
+    (createMadeEnchantment). The piece itself keeps its own record.
+  */
+  struct MadeEnchantment
+  {
+    template <class Archive>
+    void Serialize(Archive& archive)
+    {
+      archive.Serialize("weapon", weapon).Serialize("effects", effects);
+    }
+
+    bool weapon = false;
+    std::vector<MadeEffect> effects;
+
+    friend bool operator==(const MadeEnchantment& lhs,
+                           const MadeEnchantment& rhs)
+    {
+      return std::tie(lhs.weapon, lhs.effects) ==
+        std::tie(rhs.weapon, rhs.effects);
+    }
+    friend bool operator!=(const MadeEnchantment& lhs,
+                           const MadeEnchantment& rhs)
+    {
+      return !(lhs == rhs);
+    }
+  };
+
+  // The enchantment id an entry carrying madeEnchantment has, in the same
+  // made range as MadeBaseId and hashed the same way, over its own canonical
+  // text ("weapon-enchantment|..." or "armour-enchantment|..."), which no
+  // bottle's text can be.
+  static uint32_t MadeEnchantmentId(const MadeEnchantment& enchantment);
+  static void Round(MadeEnchantment& enchantment);
+  static std::string Canonical(const MadeEnchantment& enchantment);
+
   class ExtraData
   {
   public:
@@ -127,7 +174,8 @@ public:
         .Serialize("poisonCount", poisonCount)
         .Serialize("worn", worn_)
         .Serialize("wornLeft", wornLeft)
-        .Serialize("made", made);
+        .Serialize("made", made)
+        .Serialize("madeEnchantment", madeEnchantment);
       // Provenance stays on the server and in JSON saves. It is not part of
       // the client protocol: ordinary entries keep their existing wire layout.
       if constexpr (!std::is_same_v<Archive, BitStreamInputArchive> &&
@@ -148,6 +196,9 @@ public:
     std::optional<bool> worn_;
     std::optional<bool> wornLeft;
     std::optional<Made> made; // Thornswood #1649, see Made above
+    // Thornswood #4513, see MadeEnchantment above. enchantmentId is then
+    // MadeEnchantmentId of it.
+    std::optional<MadeEnchantment> madeEnchantment;
     // Inherited NPC gear is owned for combat and appearance, never body loot.
     // Ordinary script assignments have no marker and remain separate stacks.
     std::optional<bool> npcEquipment;

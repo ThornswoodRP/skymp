@@ -1,33 +1,33 @@
 #include <NirnLabUIPlatformAPI/API.h>
 
 #include "BrowserApiTilted.h"
-#include "CursorFocus.h"
 #include "NullPointerException.h"
+#include "PageFocusMenu.h"
 #include "TPOverlayService.h"
 #include <ui/LoadingScreen.h>
 
 namespace {
 
-// Thornswood #2384: replaces g_cursorIsOpenByFocus, which was set when a show
-// was queued rather than when the menu opened, and was thread_local while the
-// Cursor Menu event arrives on the game's thread.
-CursorFocus g_cursorFocus;
-
-void Queue(CursorFocus::Msg msg)
+// Thornswood #6215: the page's focus is PageFocusMenu, open while the page
+// holds focus, and the game's own cursor rule follows it (PageFocusMenu.h).
+// Queued, not done: the game opens or closes it on its next UI pass, in the
+// order asked, so a raise and a lower in one frame end where the last one
+// left them.
+void QueueFocusMenu(bool open)
 {
-  if (msg == CursorFocus::Msg::None) {
-    return;
-  }
   auto msgQ = RE::UIMessageQueue::GetSingleton();
   if (!msgQ) {
+    spdlog::error("browser: no UI message queue for the page's focus menu");
     return;
   }
-  msgQ->AddMessage(RE::CursorMenu::MENU_NAME,
-                   msg == CursorFocus::Msg::Show
-                     ? RE::UI_MESSAGE_TYPE::kShow
-                     : RE::UI_MESSAGE_TYPE::kHide,
-                   NULL);
+  msgQ->AddMessage(
+    PageFocusMenu::MENU_NAME,
+    open ? RE::UI_MESSAGE_TYPE::kShow : RE::UI_MESSAGE_TYPE::kHide, nullptr);
 }
+
+// Whether the focus menu is registered with the game's UI yet (WatchMenus,
+// at kDataLoaded). Focus asked for before that is queued once it is.
+std::atomic<bool> g_focusMenuRegistered = false;
 
 inline CEFUtils::MyChromiumApp& GetApp()
 {
@@ -66,19 +66,16 @@ namespace {
 void SetFocusedImpl(bool newFocus)
 {
   bool& v = CEFUtils::DInputHook::ChromeFocus();
-  if (v != newFocus) {
-    v = newFocus;
-
-    auto ui = RE::UI::GetSingleton();
-    if (!ui) {
-      return;
-    }
-
-    // Thornswood #2384: the show or hide is queued, not done, so what has
-    // been asked for is kept until the game's Cursor Menu event says it
-    // happened (CursorFocus.h).
-    Queue(g_cursorFocus.OnFocus(newFocus,
-                                ui->IsMenuOpen(RE::CursorMenu::MENU_NAME)));
+  if (v == newFocus) {
+    return;
+  }
+  v = newFocus;
+  spdlog::info("browser: focus {}{}", newFocus ? "taken" : "let go",
+               g_focusMenuRegistered ? ""
+                                     : ", the focus menu follows once the "
+                                       "game's data has loaded");
+  if (g_focusMenuRegistered) {
+    QueueFocusMenu(newFocus);
   }
 }
 }
@@ -103,12 +100,11 @@ void BrowserApiTilted::ShowAtStart()
 }
 
 namespace {
-// Thornswood: the Cursor Menu and the Loading Menu reach CursorFocus and the
-// page from the moment the game's data has loaded, whether or not a plugin
-// listens for menuOpen or menuClose. EventHandler's own MenuOpenCloseEvent
-// sink is only added once a plugin subscribes to one of them, so before this
-// a show or hide of the cursor could land with CursorFocus never hearing of
-// it, and a show it was waiting for stayed "on its way" for good.
+// Thornswood: the Loading Menu reaches the page from the moment the game's
+// data has loaded, whether or not a plugin listens for menuOpen or
+// menuClose. EventHandler's own MenuOpenCloseEvent sink is only added once a
+// plugin subscribes to one of them. The Cursor Menu is the game's to show and
+// hide (PageFocusMenu.h, Thornswood #6215); nothing here answers its events.
 class MenuSink : public RE::BSTEventSink<RE::MenuOpenCloseEvent>
 {
 public:
@@ -118,9 +114,6 @@ public:
   {
     if (!event) {
       return RE::BSEventNotifyControl::kContinue;
-    }
-    if (event->menuName == RE::CursorMenu::MENU_NAME) {
-      BrowserApiTilted::OnCursorMenu(event->opening);
     }
     if (event->menuName == RE::LoadingMenu::MENU_NAME) {
       BrowserApiTilted::OnLoadingMenu(event->opening);
@@ -140,29 +133,32 @@ void BrowserApiTilted::WatchMenus()
   }
   auto ui = RE::UI::GetSingleton();
   if (!ui) {
-    spdlog::error("browser: no UI to watch the Cursor and Loading Menus on");
+    spdlog::error("browser: no UI to watch the Loading Menu on or to give "
+                  "the page's focus menu to");
     return;
   }
   // The same source EventHandler's sink is added to (EventUtils.h).
   RE::BSTEventSource<RE::MenuOpenCloseEvent>* source = ui;
   source->AddEventSink(&g_menuSink);
   g_watchingMenus = true;
-  spdlog::info("browser: watching the Cursor and Loading Menus");
-}
 
-void BrowserApiTilted::OnCursorMenu(bool opening)
-{
-  // Thornswood #2384: called from WatchMenus' sink, on the game's thread,
-  // when the Cursor Menu itself opens or closes.
-  Queue(g_cursorFocus.OnCursorMenu(opening,
-                                   CEFUtils::DInputHook::ChromeFocus()));
+  ui->Register(PageFocusMenu::MENU_NAME, PageFocusMenu::Create);
+  g_focusMenuRegistered = true;
+  const bool focus = CEFUtils::DInputHook::ChromeFocus();
+  spdlog::info("browser: watching the Loading Menu; the page's focus menu "
+               "is registered{}",
+               focus ? " and opened for the focus already taken" : "");
+  if (focus) {
+    QueueFocusMenu(true);
+  }
 }
 
 void BrowserApiTilted::OnLoadingMenu(bool opening)
 {
   // Thornswood #3130: called from WatchMenus' sink, on the game's thread, as
   // the Loading Menu itself opens or closes, which is before and after the
-  // load. The plugins hear of it only after the load (LoadingScreen.h). The page is drawn while it is open, and told.
+  // load. The plugins hear of it only after the load (LoadingScreen.h). The
+  // page is drawn while it is open, and told.
   CEFUtils::DX11RenderHandler::Loading() = opening;
   spdlog::info(opening ? "Loading Menu opened, the page is drawn over it"
                        : "Loading Menu closed");

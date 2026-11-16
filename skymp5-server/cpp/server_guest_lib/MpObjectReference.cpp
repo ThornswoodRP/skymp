@@ -7,6 +7,7 @@
 #include "LeveledListUtils.h"
 #include "MathUtils.h"
 #include "MessageBase.h"
+#include "HostStopMessage.h"
 #include "MpActor.h"
 #include "MpChangeForms.h"
 #include "MsgType.h"
@@ -772,6 +773,14 @@ void MpObjectReference::UpdateHoster(uint32_t newHosterId)
   }
 }
 
+void MpObjectReference::SendIsHostedByOther(MpActor& listener,
+                                            bool hostedByOther)
+{
+  auto msg = CreatePropertyMessage_(this, "isHostedByOther",
+                                    hostedByOther ? "true" : "false");
+  listener.GetActorToSendTo().SendToUser(msg, true);
+}
+
 void MpObjectReference::SetPropertyValueDump(const std::string& propertyName,
                                              const std::string& valueDump,
                                              bool isVisibleByOwner,
@@ -779,6 +788,13 @@ void MpObjectReference::SetPropertyValueDump(const std::string& propertyName,
 {
   if (propertyName == kInventoryReceiptProperty) {
     throw std::runtime_error("Inventory receipts require an atomic transaction");
+  }
+  pImpl->setPropertyCalled = true;
+  // THORNSWOOD (Thornswood #6247). A value set to what it already holds
+  // changes nothing, so nothing is saved and nobody is told: before this,
+  // each such set was a reliable message to everybody near and a save.
+  if (GetDynamicFields().GetValueDump(propertyName) == valueDump) {
+    return;
   }
   auto msg = CreatePropertyMessage_(this, propertyName.c_str(), valueDump);
   EditChangeForm([&](MpChangeFormREFR& changeForm) {
@@ -791,7 +807,6 @@ void MpObjectReference::SetPropertyValueDump(const std::string& propertyName,
       ac->GetActorToSendTo().SendToUser(msg, true);
     }
   }
-  pImpl->setPropertyCalled = true;
 }
 
 void MpObjectReference::SetTeleportFlag(bool value)
@@ -1234,6 +1249,32 @@ void MpObjectReference::Unsubscribe(MpObjectReference* emitter,
 
   if (listener->emittersWithPrimitives && hasPrimitive) {
     listener->emittersWithPrimitives->erase(emitter);
+  }
+
+  // THORNSWOOD (Thornswood #6247). A hoster that can no longer see the NPC
+  // it hosts can no longer run it: hosting ends here, the hoster is told,
+  // and everybody still near the NPC hears that nobody hosts it, so one of
+  // them asks (ActionListener::OnHostAttempt). This used to wait for the
+  // NPC's moves to go quiet for 2 s, which is why every game sent every
+  // NPC's place every 130 ms whether it moved or not.
+  if (actorEmitter && actorListener && numElementsErased > 0) {
+    if (auto world = emitter->GetParent()) {
+      auto it = world->hosters.find(emitter->GetFormId());
+      if (it != world->hosters.end() &&
+          it->second == listener->GetFormId()) {
+        world->hosters.erase(it);
+        actorEmitter->MarkHostAuthorityReleased();
+        if (actorListener->GetUserId() != Networking::InvalidUserId) {
+          HostStopMessage stop;
+          stop.target = emitter->GetFormId();
+          if (stop.target < 0xff000000) {
+            stop.target += 0x100000000;
+          }
+          actorListener->SendToUser(stop, true);
+        }
+        emitter->UpdateHoster(0);
+      }
+    }
   }
 }
 

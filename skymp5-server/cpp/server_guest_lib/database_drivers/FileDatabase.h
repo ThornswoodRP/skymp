@@ -13,6 +13,10 @@ public:
   void Iterate(const IterateCallback& iterateCallback,
                std::optional<std::vector<FormDesc>> filter) override;
 
+  // How many .json files the last Iterate could not read as a change form.
+  // Iterate logs each one and goes on; a migration must not (#6237).
+  size_t GetUnreadFilesOnLastIterate() const noexcept;
+
 private:
   std::vector<std::optional<MpChangeForm>>&& UpsertImpl(
     std::vector<std::optional<MpChangeForm>>&& changeForms,

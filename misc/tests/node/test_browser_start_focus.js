@@ -1,6 +1,7 @@
 'use strict';
-// Thornswood: the browser is shown at start, never focused at start, and the
-// Cursor Menu reaches CursorFocus from the moment the game's data has loaded.
+// Thornswood: the browser is shown at start, never focused at start, and from
+// the moment the game's data has loaded the Loading Menu reaches the page and
+// the page's focus menu is registered (#6215 replaced CursorFocus with it).
 //
 // 31 Oct 2026, dev 20261031-143003-dev: [Browser] ShowAtStart focused the page
 // at 14:59:44, fifteen seconds before the game's data loaded and twenty-five
@@ -47,8 +48,8 @@ check('NirnLab start does not focus it', !!ctor && !/wantedIsFocused\s*=\s*true/
 const watch = body(tilted, 'void BrowserApiTilted::WatchMenus()');
 check('WatchMenus adds a sink of its own to the UI', !!watch && /AddEventSink\(&g_menuSink\)/.test(code(watch)));
 const sink = body(tilted, 'class MenuSink');
-check('its sink hands the Cursor Menu to OnCursorMenu',
-      !!sink && /CursorMenu::MENU_NAME\)\s*\{\s*BrowserApiTilted::OnCursorMenu\(event->opening\)/.test(code(sink)));
+check('its sink answers nothing of the Cursor Menu, which is the game\'s (#6215)',
+      !!sink && !/CursorMenu/.test(code(sink)));
 check('its sink hands the Loading Menu to OnLoadingMenu',
       !!sink && /LoadingMenu::MENU_NAME\)\s*\{\s*BrowserApiTilted::OnLoadingMenu\(event->opening\)/.test(code(sink)));
 
@@ -59,6 +60,6 @@ const t = loaded.indexOf('TickHandler::GetSingleton()->Update()');
 check('kDataLoaded starts WatchMenus before the first tick runs a plugin', w >= 0 && t >= 0 && w < t);
 const menuEvent = body(handler, 'EventHandler::ProcessEvent(\n  const RE::MenuOpenCloseEvent*');
 check("the plugins' lazy menu sink no longer calls the browser itself (no double calls)",
-      !!menuEvent && !/OnCursorMenu|OnLoadingMenu/.test(menuEvent));
+      !!menuEvent && !/OnCursorMenu|OnLoadingMenu|QueueFocusMenu/.test(menuEvent));
 
 if (failed) { console.log(failed + ' check(s) failed'); process.exitCode = 1; }

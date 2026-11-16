@@ -32,7 +32,13 @@
 //   9. a brew sends what is in the bottle the game made (Thornswood #1649);
 //  10. craftMade for a brew builds the bottle under the server's made id
 //      (ensureMadePotion) with the contents it names, before it goes in;
-//  11. a brewed bottle that cannot be built is not put in.
+//  11. a brewed bottle that cannot be built is not put in;
+//  12. an enchanting craft sends the enchantment the game made on the piece
+//      and a weapon's charge (Thornswood #4513);
+//  13. a craft of anything else sends no enchantment;
+//  14. craftMade for an enchanted piece builds the enchantment under the
+//      server's id (ensureMadeEnchantment) and puts the piece back with it;
+//  15. an enchantment that cannot be built leaves the piece out.
 //
 // Against the code before the change (CRAFT=<that copy>), 2, 4, 6 and 7 fail:
 // the item stays in the pack, and nothing is put back or told to the server.
@@ -99,7 +105,7 @@ const calls = [];
 
 function fire(name, e) { (handlers[name] || []).forEach(function (h) { h(e); }); }
 function run() { while (queue.length) { const ev = queue.shift(); fire('containerChanged', ev); } }
-function form(id) { return { getFormID: function () { return id; } }; }
+function form(id) { return { getFormID: function () { return id; }, getName: function () { return 'Iron Dagger'; } }; }
 function moved(baseId, count, from, to) {
   queue.push({
     oldContainer: from ? form(from) : null, newContainer: to ? form(to) : null,
@@ -114,6 +120,13 @@ const player = {
 const sp = {
   Game: { getPlayer: function () { return player; }, getFormEx: function (id) { return form(id); } },
   Ui: { isMenuOpen: function (name) { return name === 'Crafting Menu' && menuOpen; } },
+  Enchantment: { from: function (f) { return f ? { enchantmentId: f.getFormID() } : null; } },
+  TESModPlatform: {
+    addItemEx: function (refr, f, count, health, ench, maxCharge) {
+      calls.push(['addItemEx', f.getFormID(), count, ench ? ench.enchantmentId : 0, maxCharge]);
+      moved(f.getFormID(), count, 0, PLAYER);
+    },
+  },
 };
 const controller = {
   on: function (name, h) { (handlers[name] = handlers[name] || []).push(h); },
@@ -133,7 +146,16 @@ const built = [];
 const inventoryStub = {
   readMadePotion: function (f) { return f && f.getFormID() === BOTTLE ? BREW_CONTENTS : undefined; },
   ensureMadePotion: function (id, made) { built.push([id, made]); return id !== UNBUILDABLE; },
+  // Thornswood #4513. A piece the game enchanted this session reads as
+  // ENCHANTED, a made enchantment id can be built unless it is UNBUILDABLE.
+  readMadeEnchantment: function (refr, baseId) {
+    return baseId === ENCHANTED_PIECE ? { enchantment: ENCHANTMENT, maxCharge: 250 } : undefined;
+  },
+  ensureMadeEnchantment: function (id, e) { builtEnchantments.push([id, e]); return id !== UNBUILDABLE; },
 };
+const ENCHANTED_PIECE = 0x1397f, ENCHANTMENT_ID = 0xff8e0001;
+const ENCHANTMENT = { weapon: true, effects: [{ effectId: 0x4605a, magnitude: 10, area: 0, duration: 1 }] };
+const builtEnchantments = [];
 
 class ClientListener { }
 const M = load(CRAFT, {
@@ -220,6 +242,35 @@ craft(ALCHEMY_INPUTS, BOTTLE, 1);
 const callsBeforeBad = calls.length;
 serverSays({ customPacketType: 'craftMade', baseId: UNBUILDABLE, count: 1, made: BREW_CONTENTS });
 yes('11. a brewed bottle that cannot be built is not put in', calls.length === callsBeforeBad && built.length === 2);
+
+// Thornswood #4513. An enchanting craft: the piece and a gem go out, the
+// enchanted piece comes in.
+const PETTY_GEM = 0x2e4e2;
+craft([[ENCHANTED_PIECE, 1], [PETTY_GEM, 1]], ENCHANTED_PIECE, 1);
+const enchant = sent(13)[sent(13).length - 1];
+yes('12. an enchanting craft sends the enchantment the game made, and a weapon\'s charge',
+    enchant.data.resultObjectId === ENCHANTED_PIECE && enchant.data.resultPotion === undefined &&
+    JSON.stringify(enchant.data.resultEnchantment) === JSON.stringify(ENCHANTMENT) &&
+    enchant.data.resultMaxCharge === 250);
+yes('13. a craft of anything else sends no enchantment',
+    sent(13).filter(function (m) { return m.data.resultObjectId !== ENCHANTED_PIECE; })
+      .every(function (m) { return m.data.resultEnchantment === undefined && m.data.resultMaxCharge === undefined; }));
+
+const callsBeforeEnchant = calls.length;
+serverSays({ customPacketType: 'craftMade', baseId: ENCHANTED_PIECE, count: 1,
+  madeEnchantment: ENCHANTMENT, enchantmentId: ENCHANTMENT_ID, maxCharge: 250 });
+const putEnchanted = calls.slice(callsBeforeEnchant);
+yes('14. craftMade for an enchanted piece builds the enchantment under the server\'s id and puts the piece back with it',
+    builtEnchantments.length === 1 && builtEnchantments[0][0] === ENCHANTMENT_ID &&
+    JSON.stringify(builtEnchantments[0][1]) === JSON.stringify(ENCHANTMENT) &&
+    putEnchanted.length === 1 && putEnchanted[0][0] === 'addItemEx' && putEnchanted[0][1] === ENCHANTED_PIECE &&
+    putEnchanted[0][3] === ENCHANTMENT_ID && putEnchanted[0][4] === 250);
+
+craft([[ENCHANTED_PIECE, 1], [PETTY_GEM, 1]], ENCHANTED_PIECE, 1);
+const callsBeforeBadEnchant = calls.length;
+serverSays({ customPacketType: 'craftMade', baseId: ENCHANTED_PIECE, count: 1,
+  madeEnchantment: ENCHANTMENT, enchantmentId: UNBUILDABLE, maxCharge: 250 });
+yes('15. an enchantment that cannot be built leaves the piece out', calls.length === callsBeforeBadEnchant);
 closeMenu();
 
 console.log('');

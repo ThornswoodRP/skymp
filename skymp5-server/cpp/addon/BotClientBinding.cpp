@@ -46,7 +46,9 @@ Napi::Value CreateBotClient(const Napi::CallbackInfo& info)
   auto env = info.Env();
   if (info.Length() < 2 || !info[0].IsString() || !info[1].IsNumber()) {
     throw Napi::TypeError::New(
-      env, "createBotClient(host, port, password = \"\", timeoutMs = 60000)");
+      env,
+      "createBotClient(host, port, password = \"\", timeoutMs = 60000, "
+      "localAddress = \"\")");
   }
   std::string host = info[0].As<Napi::String>().Utf8Value();
   uint32_t port = info[1].As<Napi::Number>().Uint32Value();
@@ -61,11 +63,15 @@ Napi::Value CreateBotClient(const Napi::CallbackInfo& info)
   if (info.Length() >= 4 && info[3].IsNumber()) {
     timeoutMs = info[3].As<Napi::Number>().Int32Value();
   }
+  std::string localAddress;
+  if (info.Length() >= 5 && info[4].IsString()) {
+    localAddress = info[4].As<Napi::String>().Utf8Value();
+  }
 
   std::shared_ptr<BotClient> bot;
   try {
     bot = std::make_shared<BotClient>(host, static_cast<uint16_t>(port),
-                                      password, timeoutMs);
+                                      password, timeoutMs, localAddress);
   } catch (std::exception& e) {
     throw Napi::Error::New(env, std::string("createBotClient: ") + e.what());
   }

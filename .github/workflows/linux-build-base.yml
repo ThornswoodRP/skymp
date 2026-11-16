@@ -150,31 +150,31 @@ jobs:
                 ./build.sh --print-env
 
           # Download Skyrim SE data files
-          - uses: suisei-cn/actions-download-file@8500334edf23d9fb3bd8a6e23e4347d9d3d9e20f # v1
+          - uses: suisei-cn/actions-download-file@9f75b8c2dad5ccced7509c44a3b881c5613abde2 # v1.6.1
             if: ${{ !inputs.skip_tests }}
             name: Download Skyrim.esm
             with:
               url: "https://gitlab.com/pospelov/se-data/-/raw/main/Skyrim.esm"
               target: ${{github.workspace}}/skyrim_data_files/
-          - uses: suisei-cn/actions-download-file@8500334edf23d9fb3bd8a6e23e4347d9d3d9e20f # v1
+          - uses: suisei-cn/actions-download-file@9f75b8c2dad5ccced7509c44a3b881c5613abde2 # v1.6.1
             if: ${{ !inputs.skip_tests }}
             name: Download Update.esm
             with:
               url: "https://gitlab.com/pospelov/se-data/-/raw/main/Update.esm"
               target: ${{github.workspace}}/skyrim_data_files/
-          - uses: suisei-cn/actions-download-file@8500334edf23d9fb3bd8a6e23e4347d9d3d9e20f # v1
+          - uses: suisei-cn/actions-download-file@9f75b8c2dad5ccced7509c44a3b881c5613abde2 # v1.6.1
             if: ${{ !inputs.skip_tests }}
             name: Download Dawnguard.esm
             with:
               url: "https://gitlab.com/pospelov/se-data/-/raw/main/Dawnguard.esm"
               target: ${{github.workspace}}/skyrim_data_files/
-          - uses: suisei-cn/actions-download-file@8500334edf23d9fb3bd8a6e23e4347d9d3d9e20f # v1
+          - uses: suisei-cn/actions-download-file@9f75b8c2dad5ccced7509c44a3b881c5613abde2 # v1.6.1
             if: ${{ !inputs.skip_tests }}
             name: Download HearthFires.esm
             with:
               url: "https://gitlab.com/pospelov/se-data/-/raw/main/HearthFires.esm"
               target: ${{github.workspace}}/skyrim_data_files/
-          - uses: suisei-cn/actions-download-file@8500334edf23d9fb3bd8a6e23e4347d9d3d9e20f # v1
+          - uses: suisei-cn/actions-download-file@9f75b8c2dad5ccced7509c44a3b881c5613abde2 # v1.6.1
             if: ${{ !inputs.skip_tests }}
             name: Download Dragonborn.esm
             with:
@@ -242,8 +242,28 @@ jobs:
               archive: false
               retention-days: ${{ inputs.retention_days }}
 
+          # A mongod beside the tests, so the MongoDB driver's tests
+          # (unit/MongoDatabaseServerTest.cpp) run against a real one instead
+          # of skipping (Thornswood #6237). The version the box runs, pinned by
+          # digest; on the host's loopback only, no volume, gone with the job.
+          - name: Start MongoDB for the tests
+            if: ${{ !inputs.skip_tests }}
+            run: |
+              docker run -d --name test-mongo --network host \
+                mongo:8.0.38@sha256:d97fea17ccb8d004cd137be8dab54d70d0df11be69c9f422aefe4484c8414ab7 \
+                --bind_ip 127.0.0.1 --port 27017
+              for i in $(seq 1 60); do
+                if docker exec test-mongo mongosh --quiet --eval 'db.runCommand({ping:1}).ok' 2>/dev/null | grep -q 1; then
+                  echo "mongod answers after ${i} s"; exit 0
+                fi
+                sleep 1
+              done
+              docker logs test-mongo
+              echo "mongod did not answer in 60 s"; exit 1
+
           - name: Test
             if: ${{ !inputs.skip_tests }}
             run: |
-              docker run --rm -v "${{ github.workspace }}:/src" -w /src/build -u skymp localhost/buildimage \
+              docker run --rm --network host -e SKYMP_TEST_MONGO_URI=mongodb://127.0.0.1:27017 \
+                -v "${{ github.workspace }}:/src" -w /src/build -u skymp localhost/buildimage \
                 ctest -C ${{env.BUILD_TYPE}} --verbose --output-on-failure

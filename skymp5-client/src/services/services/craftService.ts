@@ -3,7 +3,7 @@ import { localIdToRemoteId } from "../../view/worldViewMisc";
 
 import { Actor, ContainerChangedEvent } from "skyrimPlatform";
 import { ClientListener, CombinedController, Sp } from "./clientListener";
-import { Inventory, Made, ensureMadePotion, readMadePotion } from "../../sync/inventory";
+import { Inventory, Made, MadeEnchantment, ensureMadePotion, ensureMadeEnchantment, readMadePotion, readMadeEnchantment } from "../../sync/inventory";
 import { MsgType } from "../../messages";
 import { logTrace, logError } from "../../logging";
 import { ConnectionMessage } from "../events/connectionMessage";
@@ -127,6 +127,24 @@ export class CraftService extends ClientListener {
             logError(this, `Could not put back the made item`, baseId.toString(16), `before the menu closes`);
             return;
         }
+        // Thornswood #4513: an enchanted piece goes back with the enchantment
+        // the server keeps, built under the server's id, as applyInventory
+        // adds one.
+        const madeEnchantment = content["madeEnchantment"];
+        const enchantmentId = content["enchantmentId"];
+        if (madeEnchantment !== undefined && typeof enchantmentId === "number") {
+            const maxCharge = content["maxCharge"];
+            const enchantment = ensureMadeEnchantment(enchantmentId, madeEnchantment as MadeEnchantment)
+                ? this.sp.Enchantment.from(this.sp.Game.getFormEx(enchantmentId)) : null;
+            if (!enchantment) {
+                logError(this, `Could not build the enchantment`, enchantmentId.toString(16), `before the menu closes`);
+                return;
+            }
+            this.ownChanges.push({ baseId, count, out: false });
+            this.sp.TESModPlatform.addItemEx(pc, form, count, 1, enchantment,
+                typeof maxCharge === "number" ? maxCharge : 0, false, 0, form.getName(), 0, null, 0);
+            return;
+        }
         this.ownChanges.push({ baseId, count, out: false });
         pc.addItem(form, count, true);
     }
@@ -215,10 +233,19 @@ export class CraftService extends ClientListener {
                 // goes along and the server keeps it by that.
                 const resultPotion = readMadePotion(e.baseObj);
 
+                // THORNSWOOD PATCH (Thornswood #4513). So is an enchantment
+                // the game made on a piece: what is in it goes along, with
+                // the charge the piece holds at most, and the server keeps
+                // the piece with it.
+                const read = resultPotion ? undefined :
+                    readMadeEnchantment(this.sp.Game.getPlayer() as Actor, resultObjectId);
+                const resultEnchantment = read ? read.enchantment : undefined;
+                const resultMaxCharge = read && read.enchantment.weapon ? read.maxCharge : undefined;
+
                 this.controller.emitter.emit("sendMessage", {
                     message: {
                         t: MsgType.CraftItem,
-                        data: { workbench, craftInputObjects, resultObjectId, resultPotion },
+                        data: { workbench, craftInputObjects, resultObjectId, resultPotion, resultEnchantment, resultMaxCharge },
                     },
                     reliability: "reliable"
                 });

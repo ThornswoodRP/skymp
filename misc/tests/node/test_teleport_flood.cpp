@@ -64,6 +64,8 @@ struct UpdateMovementMessage
     bool isWeapDrawn = false;
     bool isDead = false;
     std::optional<uint32_t> teleportSeq;
+    std::optional<uint32_t> moveSeq;
+    std::optional<bool> settled;
   };
   uint32_t idx = 0;
   Data data;
@@ -162,6 +164,13 @@ public:
   bool IsSentBeforeNewestTeleport(std::optional<uint32_t> carriedOut) const;
   void ForgetTeleportsForOwnClient();
 
+  // Since Thornswood #6247 a move overtaken on the way is dropped before
+  // validation; the replay's client sends no moveSeq, which is always taken.
+  bool TakeClientMove(Networking::UserId, std::optional<uint32_t>)
+  {
+    return true;
+  }
+
 private:
   WorldState* parent;
   Networking::UserId userId;
@@ -206,6 +215,13 @@ public:
   {
     return partOne.serverState.ActorByUser(raw.userId);
   }
+  // Since Thornswood #6247: who the move is for, then passing it on, which
+  // the replay has nobody to pass it to.
+  MpActor* NeighboursTarget(uint32_t, Networking::UserId userId)
+  {
+    return partOne.serverState.ActorByUser(userId);
+  }
+  void RelayMove(MpActor&, const UpdateMovementMessage&, Networking::UserId) {}
   void OnUpdateMovement(const RawMessageData& rawMsgData,
                         const UpdateMovementMessage& msg);
 

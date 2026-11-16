@@ -330,7 +330,8 @@ void ExpectNoNeighborStateThenRepublish(PartOne& partOne, MpActor& actor0,
   REQUIRE(CountMsg(partOne, 1, MsgType::UpdateMovement, actor0Idx) == 0);
   REQUIRE(CountMsg(partOne, 1, MsgType::UpdateAnimation, actor0Idx) == 0);
   REQUIRE(CountMsg(partOne, 1, MsgType::UpdateEquipment, actor0Idx) == 0);
-  REQUIRE(CountMsg(partOne, 0, MsgType::UpdateMovement, actor0Idx) == 1);
+  // A move never goes back to its sender (Thornswood #6251).
+  REQUIRE(CountMsg(partOne, 0, MsgType::UpdateMovement, actor0Idx) == 0);
   REQUIRE(CountMsg(partOne, 0, MsgType::UpdateAnimation, actor0Idx) == 1);
   REQUIRE(CountMsg(partOne, 0, MsgType::UpdateEquipment, actor0Idx) == 1);
 

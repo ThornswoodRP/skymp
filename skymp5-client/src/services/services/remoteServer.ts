@@ -1047,6 +1047,17 @@ export class RemoteServer extends ClientListener {
       return;
     }
 
+    // THORNSWOOD (Thornswood #6247). Moves come when they change, so one the
+    // server sent before the newest one taken but that arrived after it
+    // would stay as the actor's place: nothing follows to correct it.
+    const moveSeq = msg.data.moveSeq;
+    if (typeof moveSeq === 'number') {
+      if (typeof form.lastMoveSeq === 'number' && moveSeq <= form.lastMoveSeq) {
+        return;
+      }
+      form.lastMoveSeq = moveSeq;
+    }
+
     form.movement = msg.data;
     if (!form.numMovementChanges) {
       form.numMovementChanges = 0;
@@ -1146,6 +1157,10 @@ export class RemoteServer extends ClientListener {
     const i = this.getIdManager().getId(msg.idx);
     const form = this.worldModel.forms[i];
     (form as Record<string, unknown>)[msg.propName] = msgData;
+    // THORNSWOOD (Thornswood #6247). See FormModel.numHostedByOtherChanges.
+    if (form && msg.propName === 'isHostedByOther') {
+      form.numHostedByOtherChanges = (form.numHostedByOtherChanges || 0) + 1;
+    }
   }
 
   private onDeathStateContainerMessage(event: ConnectionMessage<DeathStateContainerMessage>): void {

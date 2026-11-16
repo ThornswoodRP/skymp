@@ -38,6 +38,11 @@ public:
   void InvalidateRuntimeIdentity(bool preserveLife = false) noexcept;
   // Revoke NPC authority derived from this human's ending session.
   void ReleaseHostedActors() noexcept;
+  // THORNSWOOD (Thornswood #6247). ReleaseHostedActors for a session that
+  // ends while the world goes on (the person leaves, or their connection is
+  // moved to another character): everybody near each NPC it held hears that
+  // nobody hosts it, so one of them asks for it at once.
+  void HandOffHostedActors();
   void AcceptClientHost();
   bool HasRuntimeIdentity(uint64_t expected) const;
   bool CompareAndSetActorProperty(int32_t expectedProfileId,
@@ -217,6 +222,27 @@ public:
   // A newly attached client has carried out none of the numbers given so
   // far, so nothing is outstanding for it.
   void ForgetTeleportsForOwnClient();
+
+  // THORNSWOOD (Thornswood #6247). Moves are sent when they change, not on a
+  // timer (UpdateMovementMessage::Data::moveSeq). True for a move numbered at
+  // or below the last one this actor took from the same connection: it was
+  // overtaken on the way and describes an older place. A move without a
+  // number, or from another connection than the last, is always taken.
+  // Taking a move remembers its number and its connection.
+  bool TakeClientMove(Networking::UserId userId,
+                      std::optional<uint32_t> moveSeq);
+  // A new connection or hoster counts from 1 again.
+  void ForgetClientMoves();
+  // The number the server puts on the next move it passes on for this
+  // actor. It only ever grows while the actor exists, so a reader that keeps
+  // the highest it took since the actor was created for it never needs
+  // telling that the sender (the person, or the NPC's hoster) changed.
+  uint32_t NumberRelayedMove();
+
+  // THORNSWOOD (Thornswood #6247). Ends this NPC's hosting by whoever holds
+  // it, as ReleaseHostedActors does for each NPC of a session that ends:
+  // nothing it held is rearmed until a new host accepts authority.
+  void MarkHostAuthorityReleased() noexcept;
 
   void SetSpawnPoint(const LocationalData& position);
   LocationalData GetSpawnPoint() const;

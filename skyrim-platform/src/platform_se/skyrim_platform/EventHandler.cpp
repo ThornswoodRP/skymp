@@ -70,8 +70,8 @@ void EventHandler::HandleSKSEMessage(SKSE::MessagingInterface::Message* msg)
     case SKSE::MessagingInterface::kDataLoaded: {
       // Thornswood #3129: plugins run from the first tick after this.
       logger::info("game data loaded");
-      // Before any plugin runs, so CursorFocus follows every Cursor Menu
-      // open and close from the first focus a plugin asks for.
+      // Before any plugin runs, so the page's focus menu is registered
+      // before the first focus a plugin asks for (Thornswood #6215).
       BrowserApiTilted::WatchMenus();
       TickHandler::GetSingleton()->Update();
 

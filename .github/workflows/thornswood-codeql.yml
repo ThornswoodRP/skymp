@@ -14,6 +14,11 @@
 # code. Findings go to this repository's Security tab, which only people with
 # write access read.
 #
+# WHICH QUERIES. The security-extended suite (Patrick, 12 Nov 2026): the
+# default security queries plus the ones of lower severity and precision.
+# Not security-and-quality: GitHub Code Quality reads the same code for
+# quality faults, and the two would raise each of those twice.
+#
 # WHAT IT RUNS ON. GitHub's hosted runner, whose minutes cost nothing in this
 # public repository. Never a self-hosted runner, and no secret: a pull
 # request from another repository runs this with a read-only token, and
@@ -59,6 +64,7 @@ jobs:
         with:
           languages: ${{ matrix.language }}
           build-mode: none
+          queries: security-extended
       - uses: github/codeql-action/analyze@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
         with:
           category: /language:${{ matrix.language }}

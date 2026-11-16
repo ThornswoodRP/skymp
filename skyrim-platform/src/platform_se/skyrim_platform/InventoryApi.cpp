@@ -6,6 +6,7 @@
 #include "InventoryRemove.h"
 #include "InventoryRename.h"
 #include "MadePotion.h"
+#include "MadeEnchantment.h"
 
 extern CallNativeApi::NativeCallRequirements g_nativeCallRequirements;
 
@@ -637,11 +638,113 @@ Napi::Value InventoryApi::CreateMadePotion(const Napi::CallbackInfo& info)
     env, RE::TESForm::LookupByID<RE::AlchemyItem>(request.formId) == potion);
 }
 
+// createMadeEnchantment(formId, weapon, effectIds, magnitudes, areas,
+// durations): builds, in this session, the enchantment the server keeps
+// under formId by its contents (Thornswood #4513), and gives it that very
+// id, so a piece the server sends carrying it (enchantmentId) is enchanted
+// with it here, and everything the client sends back about the piece names
+// the same id. True when an enchantment has that id now: built by this call
+// or an earlier one this session. False, building nothing, for a request
+// that is not well formed (MadeEnchantment::IsWellFormed), an effect id that
+// is not a magic effect, or an id some other form already has.
+//
+// Built the way the game builds one at an arcane enchanter: a weapon's is
+// cast fire-and-forget by touch, as every weapon enchantment is, and
+// armour's is a constant effect on the wearer. Synchronous, for the same
+// reason createMadePotion is: the caller hands the new form to addItemEx on
+// the next line.
+Napi::Value InventoryApi::CreateMadeEnchantment(const Napi::CallbackInfo& info)
+{
+  const auto env = info.Env();
+  MadePotion::Request request;
+  request.formId = NapiHelper::ExtractUInt32(info[0], "formId");
+  const bool weapon = NapiHelper::ExtractBoolean(info[1], "weapon");
+  auto effectIds = NapiHelper::ExtractArray(info[2], "effectIds");
+  auto magnitudes = NapiHelper::ExtractArray(info[3], "magnitudes");
+  auto areas = NapiHelper::ExtractArray(info[4], "areas");
+  auto durations = NapiHelper::ExtractArray(info[5], "durations");
+  for (uint32_t i = 0; i < effectIds.Length(); ++i) {
+    request.effectIds.push_back(
+      NapiHelper::ExtractUInt32(effectIds.Get(i), "effectIds[i]"));
+  }
+  for (auto [array, out] :
+       { std::make_pair(&magnitudes, &request.magnitudes),
+         std::make_pair(&areas, &request.areas),
+         std::make_pair(&durations, &request.durations) }) {
+    for (uint32_t i = 0; i < array->Length(); ++i) {
+      out->push_back(NapiHelper::ExtractDouble(array->Get(i), "effect value"));
+    }
+  }
+  if (!MadeEnchantment::IsWellFormed(request)) {
+    return Napi::Boolean::New(env, false);
+  }
+
+  if (auto existing = RE::TESForm::LookupByID(request.formId)) {
+    return Napi::Boolean::New(env, existing->Is(RE::FormType::Enchantment));
+  }
+
+  std::vector<RE::EffectSetting*> mgefs;
+  for (auto id : request.effectIds) {
+    auto mgef = RE::TESForm::LookupByID<RE::EffectSetting>(id);
+    if (!mgef) {
+      return Napi::Boolean::New(env, false);
+    }
+    mgefs.push_back(mgef);
+  }
+
+  auto factory =
+    RE::IFormFactory::GetConcreteFormFactoryByType<RE::EnchantmentItem>();
+  if (!factory) {
+    return Napi::Boolean::New(env, false);
+  }
+  RE::EnchantmentItem* enchantment = factory->Create();
+  if (!enchantment) {
+    return Napi::Boolean::New(env, false);
+  }
+
+  // Each effect is a new one, as createMadePotion's are.
+  enchantment->effects.clear();
+  enchantment->hostileCount = 0;
+  for (size_t i = 0; i < mgefs.size(); ++i) {
+    auto effect = new RE::Effect();
+    effect->baseEffect = mgefs[i];
+    effect->effectItem.magnitude = static_cast<float>(request.magnitudes[i]);
+    effect->effectItem.area = static_cast<uint32_t>(request.areas[i]);
+    effect->effectItem.duration = static_cast<uint32_t>(request.durations[i]);
+    effect->cost =
+      MadePotion::Cost(mgefs[i]->data.baseCost, effect->effectItem.magnitude,
+                       effect->effectItem.duration);
+    if (mgefs[i]->IsHostile()) {
+      enchantment->hostileCount++;
+    }
+    enchantment->effects.push_back(effect);
+  }
+  enchantment->avEffectSetting = mgefs[0];
+  enchantment->data.spellType = RE::MagicSystem::SpellType::kEnchantment;
+  enchantment->data.castingType = weapon
+    ? RE::MagicSystem::CastingType::kFireAndForget
+    : RE::MagicSystem::CastingType::kConstantEffect;
+  enchantment->data.delivery =
+    weapon ? RE::MagicSystem::Delivery::kTouch : RE::MagicSystem::Delivery::kSelf;
+  enchantment->data.costOverride = 0;
+  enchantment->data.chargeOverride = 0;
+  enchantment->data.flags.reset(
+    RE::EnchantmentItem::EnchantmentFlag::kCostOverride);
+  enchantment->SetFormID(request.formId, false);
+
+  return Napi::Boolean::New(
+    env,
+    RE::TESForm::LookupByID<RE::EnchantmentItem>(request.formId) == enchantment);
+}
+
 void InventoryApi::Register(Napi::Env env, Napi::Object& exports)
 {
   exports.Set("createMadePotion",
               Napi::Function::New(
                 env, NapiHelper::WrapCppExceptions(CreateMadePotion)));
+  exports.Set("createMadeEnchantment",
+              Napi::Function::New(
+                env, NapiHelper::WrapCppExceptions(CreateMadeEnchantment)));
   exports.Set("renameInventoryItems",
               Napi::Function::New(
                 env, NapiHelper::WrapCppExceptions(RenameInventoryItems)));

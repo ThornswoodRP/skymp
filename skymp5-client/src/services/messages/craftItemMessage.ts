@@ -1,6 +1,6 @@
 import { Inventory } from "skyrimPlatform";
 import { MsgType } from "../../messages";
-import { Made } from "../../sync/inventory";
+import { Made, MadeEnchantment } from "../../sync/inventory";
 
 export interface CraftItemMessage {
     t: MsgType.CraftItem,
@@ -13,4 +13,8 @@ interface CraftItemMessageData {
     resultObjectId: number;
     // Thornswood #1649: what is in a bottle the game brewed this session.
     resultPotion?: Made;
+    // Thornswood #4513: the enchantment the game put on a piece this session,
+    // and the charge the piece holds at most (a weapon's).
+    resultEnchantment?: MadeEnchantment;
+    resultMaxCharge?: number;
 }

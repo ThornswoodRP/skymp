@@ -35,6 +35,9 @@ export class SendInputsService extends ClientListener {
         this.controller.on("equip", (e) => this.onEquip(e));
         this.controller.on("unequip", (e) => this.onUnequip(e));
         this.controller.on("loadGame", () => this.onLoadGame());
+        // THORNSWOOD (Thornswood #6247). A new connection is sent every
+        // actor's place once, changed or not.
+        this.controller.emitter.on("connectionAccepted", () => this.lastMovementSent.clear());
     }
 
     private onUpdate() {
@@ -100,6 +103,15 @@ export class SendInputsService extends ClientListener {
 
         const world = modelSource.getWorldModel();
 
+        // A target this game stopped hosting starts afresh if it hosts it
+        // again: its first move then always goes (sendMovement).
+        const current = new Set(targets.map((target) => `${target}`));
+        for (const k of Array.from(this.lastMovementSent.keys())) {
+            if (!current.has(k)) {
+                this.lastMovementSent.delete(k);
+            }
+        }
+
         targets.forEach((target) => {
             const targetFormModel = target ? this.getForm(target, world) : this.getForm(undefined, world);
             this.sendMovement(target, targetFormModel);
@@ -111,6 +123,27 @@ export class SendInputsService extends ClientListener {
         this.sendHostAttempts();
     }
 
+    /*
+      THORNSWOOD (Thornswood #6247). A move is sent when it changes, not every
+      130 ms.
+
+      This looked at the actor every 130 ms and sent what it saw, changed or
+      not, for this character and for every NPC this game hosts, and the
+      server passed each one on to everybody near. In the load test with 100
+      people at one spot that was 99% of everything the server sent. Still
+      people and still NPCs now send nothing.
+
+      It still looks every 130 ms, the rate a moving actor is sent at. A look
+      that differs from the last move sent goes unreliably, as before: the
+      next look replaces it. The first look that finds nothing changed sends
+      that move once more as settled, reliably, because nothing replaces it;
+      then nothing is sent until something changes. Every move carries
+      moveSeq, so the server drops one overtaken on the way.
+
+      What counts as a change is held to what anybody could see: a whole unit
+      of place (about 1.4 cm), a whole degree of facing, a whole percent of
+      health, so the physics engine's settling noise is not a move.
+    */
     private sendMovement(_refrId?: number, form?: FormModel) {
         const owner = this.getInputOwner(_refrId);
         if (!owner) {
@@ -121,27 +154,46 @@ export class SendInputsService extends ClientListener {
         const sendMovementRateMs = 130;
         const now = Date.now();
         const last = this.lastSendMovementMoment.get(refrIdStr);
-        if (!last || now - last > sendMovementRateMs) {
-            const message: MessageWithRefrId<UpdateMovementMessage> = {
-                t: MsgType.UpdateMovement,
-                data: getMovement(owner, form),
-                _refrId
-            };
-            if (_refrId === undefined) {
-                // THORNSWOOD. Tells the server which of its teleports this
-                // packet was sent after (ActionListener::OnUpdateMovement).
-                message.data.teleportSeq = this.controller.lookupListener(RemoteServer).getCarriedOutTeleportSeq();
+        if (last && now - last <= sendMovementRateMs) {
+            return;
+        }
+        this.lastSendMovementMoment.set(refrIdStr, now);
+
+        const data: UpdateMovementMessage["data"] = getMovement(owner, form);
+        if (_refrId === undefined) {
+            // THORNSWOOD. Tells the server which of its teleports this
+            // packet was sent after (ActionListener::OnUpdateMovement).
+            data.teleportSeq = this.controller.lookupListener(RemoteServer).getCarriedOutTeleportSeq();
+        }
+
+        const key = movementKey(data, form?.idx);
+        const sent = this.lastMovementSent.get(refrIdStr);
+        let settled = false;
+        if (sent && sent.key === key) {
+            if (sent.settled) {
+                return;
             }
-            this.controller.emitter.emit("sendMessageWithRefrId", {
-                message,
-                reliability: "unreliable"
-            });
-            this.lastSendMovementMoment.set(refrIdStr, now);
-            if (_refrId !== undefined) {
-                // THORNSWOOD (Thornswood #1287). A hosted reference's place
-                // sent while it is still spawning; logs nothing otherwise.
-                traceHostedSend(owner.getFormID(), _refrId, message.data.pos);
-            }
+            settled = true;
+        }
+
+        data.moveSeq = ++this.moveSeq;
+        if (settled) {
+            data.settled = true;
+        }
+        const message: MessageWithRefrId<UpdateMovementMessage> = {
+            t: MsgType.UpdateMovement,
+            data,
+            _refrId
+        };
+        this.controller.emitter.emit("sendMessageWithRefrId", {
+            message,
+            reliability: settled ? "reliable" : "unreliable"
+        });
+        this.lastMovementSent.set(refrIdStr, { key, settled });
+        if (_refrId !== undefined) {
+            // THORNSWOOD (Thornswood #1287). A hosted reference's place
+            // sent while it is still spawning; logs nothing otherwise.
+            traceHostedSend(owner.getFormID(), _refrId, data.pos);
         }
     }
 
@@ -309,7 +361,9 @@ export class SendInputsService extends ClientListener {
                 t: MsgType.Host,
                 remoteId
             },
-            reliability: "unreliable"
+            // THORNSWOOD (Thornswood #6247). Asked once each time the NPC is
+            // freed (FormView.tryHostIfNeed), so the ask has to arrive.
+            reliability: "reliable"
         });
     }
 
@@ -341,6 +395,8 @@ export class SendInputsService extends ClientListener {
     }
 
     private lastSendMovementMoment = new Map<string, number>();
+    private lastMovementSent = new Map<string, { key: string, settled: boolean }>();
+    private moveSeq = 0;
     private playerAnimSource = new Map<string, AnimationSource>(); // TODO: make service
     private lastAnimationSent = new Map<string, Animation>();
     private actorValuesNeedUpdate = false;
@@ -351,3 +407,18 @@ export class SendInputsService extends ClientListener {
     private prevActorValuesUpdateTime = 0;
     private prevCastingDetectedTime = 0;
 }
+
+// THORNSWOOD (Thornswood #6247). What a move looks like to anybody watching:
+// two moves with the same key show the same thing. See sendMovement.
+const movementKey = (m: UpdateMovementMessage["data"], idx: number | undefined): string => {
+    const r = Math.round;
+    return [
+        idx, m.worldOrCell,
+        r(m.pos[0]), r(m.pos[1]), r(m.pos[2]),
+        r(m.rot[0]), r(m.rot[1]), r(m.rot[2]),
+        m.runMode, r(m.direction), r(m.speed), r(m.healthPercentage * 100),
+        m.isInJumpState, m.isSneaking, m.isBlocking, m.isWeapDrawn, m.isDead,
+        m.lookAt ? m.lookAt.map(r).join(",") : "",
+        m.teleportSeq ?? "",
+    ].join("|");
+};

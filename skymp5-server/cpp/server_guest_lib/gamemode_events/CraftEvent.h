@@ -27,7 +27,10 @@ public:
              uint32_t workbenchId_ = 0,
              std::optional<std::vector<uint32_t>> effects_ = std::nullopt,
              std::vector<StockDraw> stockDraws_ = {},
-             std::optional<Inventory::Made> made_ = std::nullopt);
+             std::optional<Inventory::Made> made_ = std::nullopt,
+             std::optional<Inventory::MadeEnchantment> enchantment_ =
+               std::nullopt,
+             std::optional<float> maxCharge_ = std::nullopt);
 
   const char* GetName() const override;
 
@@ -71,6 +74,12 @@ public:
   // a listener has named another record, which has contents of its own.
   std::optional<Inventory::Made> GetOutputMade() const;
 
+  // Thornswood #4513. The enchantment an enchanted piece goes in with, and
+  // the charge it holds at most, while the output is still that piece, and
+  // nothing once a listener has named another record.
+  std::optional<Inventory::MadeEnchantment> GetOutputEnchantment() const;
+  std::optional<float> GetOutputMaxCharge() const;
+
 private:
   void OnFireSuccess(WorldState* worldState) override;
 
@@ -103,6 +112,12 @@ private:
   // set, craftedItemBaseId is Inventory::MadeBaseId of it and the bottle
   // goes in the pack as an entry carrying it.
   std::optional<Inventory::Made> made;
+
+  // THORNSWOOD PATCH (Thornswood #4513). An enchanted piece's enchantment,
+  // and a weapon's charge. When set, the piece goes in the pack carrying it,
+  // named by Inventory::MadeEnchantmentId.
+  std::optional<Inventory::MadeEnchantment> enchantment;
+  std::optional<float> maxCharge;
 
   // OnFireSuccess-specific arguments
   const std::vector<Inventory::Entry>& entries;
