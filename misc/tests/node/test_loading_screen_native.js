@@ -76,7 +76,7 @@ const tilted = read('skyrim-platform/src/platform_se/skyrim_platform/BrowserApiT
 // their menuOpen is queued for the next tick in any case.
 check('the menu sink tells the browser of the Loading Menu, before the queued menuOpen',
   /if \(event->menuName == RE::LoadingMenu::MENU_NAME\) \{\s*BrowserApiTilted::OnLoadingMenu\(event->opening\);\s*\}/.test(tilted) &&
-  /BrowserApiTilted::WatchMenus\(\);\s*TickHandler::GetSingleton\(\)->Update\(\);/.test(events) &&
+  /BrowserApiTilted::WatchMenus\(\);(?:\s*\/\/[^\n]*|\s*\w+::Install\(\);)*\s*TickHandler::GetSingleton\(\)->Update\(\);/.test(events) &&
   !events.includes('BrowserApiTilted::OnLoadingMenu('));
 check('OnLoadingMenu sets Loading() and runs the script',
   /void BrowserApiTilted::OnLoadingMenu\(bool opening\)[\s\S]*?DX11RenderHandler::Loading\(\) = opening;[\s\S]*?ExecuteJavaScript\(LoadingScreen::Script\(opening\)\)/.test(tilted));
