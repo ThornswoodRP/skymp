@@ -643,6 +643,9 @@ TEST_CASE("An NPC changes hosts on events, not when its moves go quiet",
       p.CreateFormCallbacks(), 0x1e7a4),
     0xff000001);
   auto& remote = p.worldState.GetFormAt<MpActor>(0xff000001);
+  // Onto the grid, as an NPC loaded from the espm is (AttachEspmRecord):
+  // AddForm alone leaves it where nobody sees it.
+  remote.ForceSubscriptionsUpdate();
   DoConnect(p, 1);
   p.CreateActor(0xff000002, { 0, 0, 0 }, 0, 0x3c);
   p.SetUserActor(1, 0xff000002);
