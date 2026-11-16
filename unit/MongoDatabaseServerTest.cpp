@@ -267,7 +267,7 @@ TEST_CASE("Migration from files to MongoDB moves every form and checks it",
 
   bool exited = false;
   auto mongo = scoped.Open();
-  std::make_shared<MigrationDatabase>(mongo, files, [&] { exited = true; });
+  MigrationDatabase migration(mongo, files, [&] { exited = true; });
   REQUIRE(exited);
 
   auto fromFiles = All(*files);
