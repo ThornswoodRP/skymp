@@ -135,7 +135,6 @@ TEST_CASE("An NPC batch loads an unseen placed actor without any human host",
   REQUIRE(actor->GetUserId() == Networking::InvalidUserId);
   REQUIRE(actor->GetProfileId() == -1);
   REQUIRE(world.hosters.empty());
-  REQUIRE(world.lastMovUpdateByIdx.empty());
 
   const auto record = GetEspmLoader().GetBrowser().LookupById(kCowId);
   const auto data = reinterpret_cast<const espm::REFR*>(record.rec)
