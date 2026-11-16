@@ -321,7 +321,7 @@ jobs:
           )
           Write-Host "ccache $($env:CCACHE_VERSION) at $exe, sha256 $sum, store $store"
       - name: Restore the compiled objects
-        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ runner.temp }}/ccache
           key: ccache-windows-2022-${{ github.sha }}
@@ -335,7 +335,7 @@ jobs:
       # never an exact hit and the newest saved folder is taken.
       - name: Restore the installed libraries
         id: vcpkg-installed
-        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ github.workspace }}/build/vcpkg_installed
           key: vcpkg-installed-windows-2022-abis-none
@@ -368,7 +368,7 @@ jobs:
       # A push's build only: the store the shipped engine's next build reads.
       - name: Keep the compiled objects
         if: github.event_name == 'push'
-        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ runner.temp }}/ccache
           key: ccache-windows-2022-${{ github.sha }}
@@ -396,7 +396,7 @@ jobs:
           Add-Content -LiteralPath $env:GITHUB_OUTPUT -Value @("key=$key", "save=$(if ($env:RESTORED_KEY -eq $key) { 'false' } else { 'true' })")
       - name: Keep the installed libraries
         if: github.event_name == 'push' && steps.vcpkg-abis.outputs.save == 'true'
-        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ github.workspace }}/build/vcpkg_installed
           key: ${{ steps.vcpkg-abis.outputs.key }}
