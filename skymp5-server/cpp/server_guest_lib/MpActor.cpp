@@ -482,9 +482,8 @@ void MpActor::EquipBestWeapon()
   UpdateEquipmentMessage msg;
   msg.data = newEq;
   msg.idx = GetIdx();
-  for (auto listener : GetActorListeners()) {
-    listener->GetActorToSendTo().SendToUser(msg, true);
-  }
+  // Once to each person near it (Thornswood #6252).
+  SendMessageToActorListeners(msg, true);
 }
 
 void MpActor::ReplaceEquipment(Equipment newEquipment)
@@ -495,9 +494,8 @@ void MpActor::ReplaceEquipment(Equipment newEquipment)
   UpdateEquipmentMessage msg;
   msg.data = newEquipment;
   msg.idx = GetIdx();
-  for (auto listener : GetActorListeners()) {
-    listener->GetActorToSendTo().SendToUser(msg, true);
-  }
+  // Once to each person near it (Thornswood #6252).
+  SendMessageToActorListeners(msg, true);
 }
 
 bool MpActor::RenameEquipment(const Equipment& renamed)

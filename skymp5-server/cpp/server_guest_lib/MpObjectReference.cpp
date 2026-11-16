@@ -763,12 +763,20 @@ void MpObjectReference::UpdateHoster(uint32_t newHosterId)
 {
   auto hostedMsg = CreatePropertyMessage_(this, "isHostedByOther", "true");
   auto notHostedMsg = CreatePropertyMessage_(this, "isHostedByOther", "false");
+  // THORNSWOOD (Thornswood #6252). Each person near it is told, once, what
+  // is true for that person. An NPC near it was told too, and its answer,
+  // worked out for the NPC, went on to the person hosting that NPC: the
+  // person who had just taken this one heard "hosted by another" after
+  // "yours", in whatever order the listeners came.
   for (auto listener : this->GetActorListeners()) {
+    if (listener->GetUserId() == Networking::InvalidUserId) {
+      continue;
+    }
     if ((AsActor() && AsActor()->IsServerControlled()) ||
         (newHosterId != 0 && newHosterId != listener->GetFormId())) {
-      listener->GetActorToSendTo().SendToUser(hostedMsg, true);
+      listener->SendToUser(hostedMsg, true);
     } else {
-      listener->GetActorToSendTo().SendToUser(notHostedMsg, true);
+      listener->SendToUser(notHostedMsg, true);
     }
   }
 }
@@ -2422,14 +2430,18 @@ void MpObjectReference::CheckInteractionAbility(MpObjectReference& refr)
   }
 }
 
+// THORNSWOOD (Thornswood #6252). Said to each person near this form, once.
+// An NPC near it has nobody to tell: until 16 Nov 2026 its copy went on to
+// the person hosting it (GetActorToSendTo), who heard it once as a listener
+// already, or whose game never loaded this form, so a person hosting k NPCs
+// near it got it k+1 times. GetActorToSendTo stays for a message to one
+// actor, which its hoster carries out for it.
 void MpObjectReference::SendMessageToActorListeners(const IMessageBase& msg,
                                                     bool reliable) const
 {
   VisitCurrentActorListeners([&](MpActor& listener) {
-    auto& destination = listener.GetActorToSendTo();
-    const auto keepDestination = destination.GetParent()->LookupFormById(destination.GetFormId());
-    if (keepDestination.get() == &destination)
-      destination.SendToUser(msg, reliable);
+    if (listener.GetUserId() != Networking::InvalidUserId)
+      listener.SendToUser(msg, reliable);
   });
 }
 
