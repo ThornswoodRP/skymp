@@ -1,5 +1,7 @@
 #include "TestUtils.hpp"
 
+extern espm::Loader& GetEspmLoader();
+
 TEST_CASE("Hypothesis: UpdateMovement may send nothing when actor without "
           "user present",
           "[PartOne]")
@@ -207,7 +209,9 @@ TEST_CASE("A move overtaken on the way is neither applied nor passed on",
 
 TEST_CASE("A property set to the value it holds tells nobody", "[PartOne]")
 {
+  // A property message names the base record's type, so it reads the espm.
   PartOne partOne;
+  partOne.AttachEspm(&GetEspmLoader());
   DoConnect(partOne, 0);
   partOne.CreateActor(0xff000ABC, { 1.f, 2.f, 3.f }, 180.f, 0x3c);
   GiveStoredAppearance(partOne.worldState.GetFormAt<MpActor>(0xff000ABC));

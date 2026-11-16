@@ -630,7 +630,8 @@ std::string Last(const std::vector<std::string>& news)
 TEST_CASE("An NPC changes hosts on events, not when its moves go quiet",
           "[HostAttempt][PartOne]")
 {
-  auto& p = GetPartOne();
+  PartOne p;
+  p.AttachEspm(&GetEspmLoader());
   DoConnect(p, 0);
   p.CreateActor(0xff000000, { 0, 0, 0 }, 0, 0x3c);
   p.SetUserActor(0, 0xff000000);
