@@ -610,7 +610,8 @@ Napi::Value ScampServer::_SetSelf(const Napi::CallbackInfo& info)
 Napi::Value ScampServer::AttachSaveStorage(const Napi::CallbackInfo& info)
 {
   try {
-    auto db = DatabaseFactory::Create(serverSettings, logger);
+    auto db = DatabaseFactory::Create(serverSettings, logger,
+                                      partOne->GetEspm().GetLoadOrder());
     auto saveStorage =
       Viet::SaveStorageFactory::Create<MpChangeForm, FormDesc>(db, logger);
     partOne->AttachSaveStorage(saveStorage);

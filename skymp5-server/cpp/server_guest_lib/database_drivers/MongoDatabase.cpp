@@ -22,6 +22,8 @@
 #endif
 
 #include <map>
+#include <mutex>
+#include <set>
 #include <sodium.h>
 #include <spdlog/spdlog.h>
 #include <vector>
@@ -70,13 +72,20 @@
 // "Retrying". Now one cursor walks the collection in formDesc order over the
 // unique index; a form seen twice, a count that does not match, or any error
 // stops the load with what went wrong.
+//
+// IDS BY PLUGIN. The ids inside a form (its items, spells, head parts, race
+// and effects) are stored as "id:Plugin", the way its own keys are, and read
+// back as the ids this load order gives them, so a load order change cannot
+// shift them (utils/StableIds.h). A document saved with numbers reads as it
+// always did, and its next save stores descriptors.
 
 #ifdef NO_MONGO
 struct MongoDatabase::Impl
 {
 };
 
-MongoDatabase::MongoDatabase(const std::string&, const std::string&)
+MongoDatabase::MongoDatabase(const std::string&, const std::string&,
+                             std::shared_ptr<const StableIds>)
 {
   throw std::runtime_error("MongoDB is not supported in this build");
 }
@@ -151,6 +160,26 @@ struct MongoDatabase::Impl
 
   std::unique_ptr<JsonSanitizer> jsonSanitizer;
 
+  std::shared_ptr<const StableIds> stableIds;
+
+  // What StableIds noted, each said once: a form saved every few seconds
+  // with an id no plugin owns would otherwise say it at every save.
+  std::mutex notesMutex;
+  std::set<std::string> notesSaid;
+
+  void Say(const StableIds::Notes& notes)
+  {
+    if (notes.empty()) {
+      return;
+    }
+    std::lock_guard lock(notesMutex);
+    for (const auto& note : notes) {
+      if (notesSaid.insert(note).second) {
+        spdlog::warn("MongoDB: {}", note);
+      }
+    }
+  }
+
   void EnsureIndexes()
   {
     auto entry = pool->acquire();
@@ -189,8 +218,13 @@ struct MongoDatabase::Impl
   }
 };
 
-MongoDatabase::MongoDatabase(const std::string& uri_, const std::string& name_)
+MongoDatabase::MongoDatabase(const std::string& uri_, const std::string& name_,
+                             std::shared_ptr<const StableIds> stableIds_)
 {
+  if (!stableIds_) {
+    throw std::runtime_error("MongoDB: the driver needs the server's load "
+                             "order to store ids by plugin");
+  }
   // One driver instance per process, shared with anything else that
   // talks to MongoDB here (the tests do).
   mongocxx::instance::current();
@@ -200,6 +234,7 @@ MongoDatabase::MongoDatabase(const std::string& uri_, const std::string& name_)
   static const std::vector<char> kBannedCharactersMongo5 = { '\0' };
 
   pImpl.reset(new Impl{ uri_, name_ });
+  pImpl->stableIds = std::move(stableIds_);
   pImpl->pool.reset(new mongocxx::pool(mongocxx::uri(pImpl->uri.data())));
   pImpl->jsonSanitizer.reset(
     new JsonSanitizer(kBannedCharactersMongo5,
@@ -259,8 +294,11 @@ std::vector<std::optional<MpChangeForm>>&& MongoDatabase::UpsertImpl(
     size_t submitted = 0;
     for (const auto& [formDesc, position] : lastPosition) {
       const auto& changeForm = *changeForms[position];
-      auto document = pImpl->jsonSanitizer->SanitizeJsonRecursive(
-        MpChangeForm::ToJson(changeForm));
+      auto json = MpChangeForm::ToJson(changeForm);
+      StableIds::Notes notes;
+      pImpl->stableIds->Encode(json, notes);
+      pImpl->Say(notes);
+      auto document = pImpl->jsonSanitizer->SanitizeJsonRecursive(json);
       mongocxx::model::replace_one replace(
         make_document(kvp("formDesc", formDesc)),
         bsoncxx::from_json(document.dump()));
@@ -335,6 +373,7 @@ void MongoDatabase::Iterate(const IterateCallback& iterateCallback,
     std::string hash;
     std::string previous;
     size_t processed = 0;
+    size_t dropped = 0;
 
     auto cursor = collection.find(filterBson.view(), options);
     for (auto&& documentView : cursor) {
@@ -346,14 +385,14 @@ void MongoDatabase::Iterate(const IterateCallback& iterateCallback,
         pImpl->jsonSanitizer->RestoreSanitizedJsonRecursive(document,
                                                             restored);
 
-      MpChangeFormREFR changeForm;
-      if (restored) {
-        std::string restoredDump = restoredDocument.dump();
-        auto restoredElement = restoredParser.parse(restoredDump).value();
-        changeForm = MpChangeForm::JsonToChangeForm(restoredElement);
-      } else {
-        changeForm = MpChangeForm::JsonToChangeForm(document);
-      }
+      StableIds::Notes notes;
+      pImpl->stableIds->Decode(restoredDocument, notes);
+      pImpl->Say(notes);
+      dropped += notes.size();
+
+      const std::string decodedDump = restoredDocument.dump();
+      auto decoded = restoredParser.parse(decodedDump).value();
+      MpChangeFormREFR changeForm = MpChangeForm::JsonToChangeForm(decoded);
 
       auto desc = changeForm.formDesc.ToString();
       if (processed > 0 && !(previous < desc)) {
@@ -379,6 +418,11 @@ void MongoDatabase::Iterate(const IterateCallback& iterateCallback,
                     processed, expected));
     }
     spdlog::info("MongoDB: loaded {} forms", processed);
+    if (dropped > 0) {
+      spdlog::warn("MongoDB: {} thing(s) from forgotten plugins were dropped "
+                   "from the forms, each said above",
+                   dropped);
+    }
   } catch (std::exception& e) {
     throw Viet::AsyncSaveStorage<
       MpChangeForm, FormDesc,

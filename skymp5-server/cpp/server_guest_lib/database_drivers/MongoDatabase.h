@@ -1,6 +1,7 @@
 #pragma once
 #include "MpChangeForms.h"
 #include "utils/JsonSanitizer.h"
+#include "utils/StableIds.h"
 #include <database_drivers/IDatabase.h>
 #include <memory>
 #include <nlohmann/json.hpp>
@@ -11,8 +12,11 @@ class MongoDatabase
 {
 public:
   // Connects and makes the indexes the saves and the tools read by
-  // (MongoDatabase.cpp says which and why). Throws when it cannot.
-  MongoDatabase(const std::string& uri_, const std::string& name_);
+  // (MongoDatabase.cpp says which and why). Throws when it cannot. The ids
+  // inside each form are stored by plugin through stableIds, which is the
+  // server's load order (utils/StableIds.h).
+  MongoDatabase(const std::string& uri_, const std::string& name_,
+                std::shared_ptr<const StableIds> stableIds_);
 
   // IDatabase
   void Iterate(const IterateCallback& iterateCallback,

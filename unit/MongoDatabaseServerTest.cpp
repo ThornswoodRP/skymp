@@ -8,6 +8,7 @@
 #include "database_drivers/FileDatabase.h"
 #include "database_drivers/MigrationDatabase.h"
 #include "database_drivers/MongoDatabase.h"
+#include "database_drivers/utils/StableIds.h"
 #include <catch2/catch_all.hpp>
 #include <cstdlib>
 #include <filesystem>
@@ -19,6 +20,7 @@
 #ifndef NO_MONGO
 #  include <bsoncxx/builder/basic/document.hpp>
 #  include <bsoncxx/builder/basic/kvp.hpp>
+#  include <bsoncxx/json.hpp>
 #  include <mongocxx/client.hpp>
 #  include <mongocxx/instance.hpp>
 #  include <mongocxx/uri.hpp>
@@ -77,9 +79,13 @@ struct ScopedMongoDatabase
     } catch (...) {
     }
   }
-  std::shared_ptr<MongoDatabase> Open() const
+  std::shared_ptr<MongoDatabase> Open(
+    const espm::LoadOrder& order =
+      espm::LoadOrder::FullPlugins({ "Skyrim.esm" })) const
   {
-    return std::make_shared<MongoDatabase>(MongoUri(), name);
+    return std::make_shared<MongoDatabase>(
+      MongoUri(), name,
+      std::make_shared<const StableIds>(order, std::vector<std::string>{}));
   }
   const std::string name;
 };
@@ -209,6 +215,35 @@ TEST_CASE("MongoDB driver refuses to start on a form kept twice",
                       Catch::Matchers::ContainsSubstring("kept twice"));
 }
 
+TEST_CASE("MongoDB driver keeps a character's items through a load order "
+          "change",
+          "[MongoDatabaseServer]")
+{
+  SKIP_WITHOUT_MONGO();
+  ScopedMongoDatabase scoped("tw_order_change_");
+  auto before = espm::LoadOrder::FullPlugins({ "Skyrim.esm", "Sword.esp" });
+  auto after =
+    espm::LoadOrder::FullPlugins({ "Skyrim.esm", "New.esp", "Sword.esp" });
+
+  auto f = Form("14", 42);
+  f.inv.AddItem(FormDesc::FromString("801:Sword.esp").ToFormId(before), 1);
+  f.inv.AddItem(0xf, 300);
+  f.learnedSpells.LearnSpell(
+    FormDesc::FromString("805:Sword.esp").ToFormId(before));
+  REQUIRE(scoped.Open(before)->Upsert({ f }) == 1);
+
+  auto back = All(*scoped.Open(after));
+  REQUIRE(back.size() == 1);
+  std::set<std::string> items;
+  for (auto& entry : back[0].inv.entries) {
+    items.insert(FormDesc::FromFormId(entry.baseId, after).ToString());
+  }
+  REQUIRE(items == std::set<std::string>{ "801:Sword.esp", "f:Skyrim.esm" });
+  REQUIRE(back[0].learnedSpells.GetLearnedSpells() ==
+          std::vector<uint32_t>{
+            FormDesc::FromString("805:Sword.esp").ToFormId(after) });
+}
+
 TEST_CASE("Migration from files to MongoDB moves every form and checks it",
           "[MongoDatabaseServer]")
 {
@@ -225,6 +260,7 @@ TEST_CASE("Migration from files to MongoDB moves every form and checks it",
     auto f = Form(desc, i % 10 == 0 ? 100 + i : -1, float(i) / 3);
     if (i % 10 == 0)
       f.displayName = "Name " + std::to_string(i);
+    f.inv.AddItem(0xf, 1 + i);
     batch.push_back(f);
   }
   REQUIRE(files->Upsert(std::move(batch)) == 1500);
@@ -243,6 +279,18 @@ TEST_CASE("Migration from files to MongoDB moves every form and checks it",
   for (auto& f : fromMongo)
     b[f.formDesc.ToString()] = Dump(f);
   REQUIRE(a == b);
+
+  // The move stores the ids inside each form by plugin: the file world kept
+  // numbers.
+  {
+    mongocxx::client client{ mongocxx::uri{ MongoUri() } };
+    auto doc = client[scoped.name]["changeForms"].find_one(
+      bsoncxx::builder::basic::make_document(
+        bsoncxx::builder::basic::kvp("formDesc", "20000:Skyrim.esm")));
+    REQUIRE(doc);
+    auto text = bsoncxx::to_json(doc->view());
+    REQUIRE_THAT(text, Catch::Matchers::ContainsSubstring("\"f:Skyrim.esm\""));
+  }
 
   // A second run finds MongoDB holding a world and moves nothing.
   exited = false;
