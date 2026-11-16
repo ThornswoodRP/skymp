@@ -14,7 +14,7 @@ const sandbox = {exports: {}, require(name) {
   return new Proxy({}, {get: () => class {}});
 }};
 vm.runInNewContext(ts.transpileModule(source, {compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2018}}).outputText, sandbox);
-const input = new sandbox.exports.SendInputsService({storage,Game:{getPlayer:()=>({})}}, {on(name,fn){callbacks[name]=fn;},emitter:{emit(name,data){reports.push(data);}}});
+const input = new sandbox.exports.SendInputsService({storage,Game:{getPlayer:()=>({})}}, {on(name,fn){callbacks[name]=fn;},emitter:{on(name,fn){callbacks[name]=fn;},emit(name,data){reports.push(data);}}});
 input.equipmentChanged = true;
 input.sendEquipment();
 assert.equal(reports.length,0,'transient loading equipment cannot overwrite the saved outfit');

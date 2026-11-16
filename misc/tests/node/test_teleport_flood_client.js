@@ -76,8 +76,13 @@ if (ragdollStart < 0) throw new Error('missing RagdollService');
 const ragdollClass = ragdoll.slice(ragdollStart).replace('export class', 'class') + '\nreturn RagdollService;\n';
 
 const inputs = read('sendInputsService.ts');
+// Since Thornswood #6247 a move is sent when it changes: the key of what
+// was sent last (movementKey, module level) and the state it keeps.
+const movementKeyFn = blockAt(inputs, 'const movementKey = ', 'sendInputsService.ts');
 const inputsClass =
+  (movementKeyFn ? movementKeyFn + ';\n' : '') +
   'class SendInputsUnderTest extends SendInputsBase {\n' +
+  (movementKeyFn ? lineWith(inputs, 'private lastMovementSent') + lineWith(inputs, 'private moveSeq') : '') +
   need(blockAt(inputs, '    private sendMovement(', 'sendInputsService.ts'), 'sendMovement') +
   '}\nreturn SendInputsUnderTest;\n';
 

@@ -194,7 +194,7 @@ void PartOne::SetUserActor(Networking::UserId userId, uint32_t actorFormId)
     // Revoke the outgoing human and its hosted NPCs before any callback from
     // the incoming actor can observe the previous session's authority.
     if (auto outgoing = serverState.ActorByUser(userId)) {
-      outgoing->ReleaseHostedActors();
+      outgoing->HandOffHostedActors();
       outgoing->InvalidateRuntimeIdentity();
     }
 
@@ -222,6 +222,8 @@ void PartOne::SetUserActor(Networking::UserId userId, uint32_t actorFormId)
     // (RemoteServer.handleConnectionAccepted), so no number given to an
     // earlier client of this actor may count as outstanding.
     actor.ForgetTeleportsForOwnClient();
+    // THORNSWOOD (#6247). The new connection counts its moves from 1.
+    actor.ForgetClientMoves();
 
     actor.ForceSubscriptionsUpdate();
 
@@ -482,7 +484,7 @@ void PartOne::HandlePacket(void* partOneInstance, Networking::UserId userId,
 
       this_->serverState.disconnectingUserId = userId;
       if (auto actor = this_->serverState.ActorByUser(userId)) {
-        actor->ReleaseHostedActors();
+        actor->HandOffHostedActors();
         actor->InvalidateRuntimeIdentity();
       }
       for (auto& listener : this_->worldState.listeners)

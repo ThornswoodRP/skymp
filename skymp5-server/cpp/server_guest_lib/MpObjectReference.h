@@ -151,6 +151,9 @@ public:
   void ForceSubscriptionsUpdate();
   void SetPrimitive(const NiPoint3& boundsDiv2);
   void UpdateHoster(uint32_t newHosterId);
+  // THORNSWOOD (Thornswood #6247). Tells one listener whether somebody
+  // else hosts this, as UpdateHoster tells all of them.
+  void SendIsHostedByOther(MpActor& listener, bool hostedByOther);
   void SetPropertyValueDump(const std::string& propertyName,
                             const std::string& valueDump,
                             bool isVisibleByOwner, bool isVisibleByNeighbor);

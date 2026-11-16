@@ -10,6 +10,13 @@ export interface FormModel extends CreateActorMessageAdditionalProps, CreateActo
   idx?: number;
   movement?: Movement;
   numMovementChanges?: number;
+  // THORNSWOOD (Thornswood #6247). The highest moveSeq the server numbered a
+  // move of this form with that was taken; an older one is dropped.
+  lastMoveSeq?: number;
+  // THORNSWOOD (Thornswood #6247). One more each time the server says who
+  // hosts this form (isHostedByOther), so FormView asks to host it once each
+  // time it is freed, however quickly the news came.
+  numHostedByOtherChanges?: number;
   numAppearanceChanges?: number;
   isMyClone?: boolean;
 }
