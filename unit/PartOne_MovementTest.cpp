@@ -214,7 +214,6 @@ TEST_CASE("A property set to the value it holds tells nobody", "[PartOne]")
   partOne.AttachEspm(&GetEspmLoader());
   DoConnect(partOne, 0);
   partOne.CreateActor(0xff000ABC, { 1.f, 2.f, 3.f }, 180.f, 0x3c);
-  GiveStoredAppearance(partOne.worldState.GetFormAt<MpActor>(0xff000ABC));
   partOne.SetUserActor(0, 0xff000ABC);
   auto& actor = partOne.worldState.GetFormAt<MpActor>(0xff000ABC);
 
