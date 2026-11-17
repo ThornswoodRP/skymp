@@ -4,6 +4,7 @@
 #include "EventManager.h"
 #include "EventsApi.h"
 #include "FavoritesMenuUnpaused.h"
+#include "JournalMenuUnpaused.h"
 #include "JsUtils.h"
 #include "SkyrimPlatform.h"
 #include "TickHandler.h"
@@ -76,6 +77,8 @@ void EventHandler::HandleSKSEMessage(SKSE::MessagingInterface::Message* msg)
       BrowserApiTilted::WatchMenus();
       // Before anybody can press Q (Thornswood #6408).
       FavoritesMenuUnpaused::Install();
+      // The Escape menu must keep the world running too (#6428).
+      JournalMenuUnpaused::Install();
       TickHandler::GetSingleton()->Update();
 
       EventManager::Init();
