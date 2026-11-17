@@ -212,6 +212,8 @@ jobs:
         run: node misc/tests/node/test_browser_start_focus.js
       - name: The page's focus is a menu the game keeps the cursor for
         run: node misc/tests/node/test_page_focus_menu.js
+      - name: The Escape journal keeps its pause count balanced
+        run: node misc/tests/node/test_journal_menu_unpaused.js
       - name: The update event's Papyrus call opens its way when it ends
         run: node misc/tests/node/test_papyrus_update_way_native.js
   save-directory-linux:
@@ -223,6 +225,12 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           submodules: false
+      - name: Execute the journal menu creator wrapper
+        shell: bash
+        run: |
+          g++ -std=c++17 -Wall -Wextra -Werror \
+            misc/tests/cpp/test_journal_menu_unpaused.cpp -o "$RUNNER_TEMP/journal-menu-test"
+          "$RUNNER_TEMP/journal-menu-test"
       - name: Check POSIX directory initialization
         shell: bash
         run: |
