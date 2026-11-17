@@ -9,6 +9,7 @@ RE::IMenu* CreateUnpaused()
   RE::IMenu* menu = g_gameCreate();
   if (menu) {
     menu->menuFlags.reset(RE::IMenu::Flag::kPausesGame);
+    menu->menuFlags.reset(RE::IMenu::Flag::kFreezeFrameBackground);
   }
   return menu;
 }

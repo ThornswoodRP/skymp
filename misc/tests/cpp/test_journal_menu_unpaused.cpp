@@ -5,7 +5,7 @@
 #include <string>
 namespace RE {
 struct IMenu {
-  enum class Flag : uint32_t { kPausesGame = 1 };
+  enum class Flag : uint32_t { kPausesGame = 1, kFreezeFrameBackground = 32 };
   struct Flags {
     uint32_t value;
     void reset(Flag f) { value &= ~static_cast<uint32_t>(f); }
@@ -32,7 +32,7 @@ bool empty = false;
 RE::IMenu* GameCreate()
 {
   ++calls;
-  return empty ? nullptr : new RE::IMenu{{0x401}};
+  return empty ? nullptr : new RE::IMenu{{0x421}};
 }
 int main()
 {

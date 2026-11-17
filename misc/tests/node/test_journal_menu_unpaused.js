@@ -63,9 +63,11 @@ function makeGame() {
 const cpp = read('JournalMenuUnpaused.cpp');
 const events = read('EventHandler.cpp');
 check('the wrapper builds with the game\'s own creator', /g_gameCreate\(\)/.test(cpp));
-check('and takes only kPausesGame off what it built',
+check('and removes the frozen background so the moving world is visible',
+  /menuFlags\.reset\(RE::IMenu::Flag::kFreezeFrameBackground\)/.test(cpp));
+check('and changes only the pause and frozen-background flags',
   /menuFlags\.reset\(RE::IMenu::Flag::kPausesGame\)/.test(cpp) &&
-  !/menuFlags\.(set|reset)\((?![^)]*kPausesGame\))/.test(cpp));
+  !/menuFlags\.(set|reset)\((?!RE::IMenu::Flag::(?:kPausesGame|kFreezeFrameBackground)\))/.test(cpp));
 check('it replaces the creator registered for JournalMenu',
   /menuMap\.find\(RE::BSFixedString\(RE::JournalMenu::MENU_NAME\)\)/.test(cpp) &&
   /it->second\.create = CreateUnpaused/.test(cpp));
