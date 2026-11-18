@@ -4,6 +4,7 @@
 #include "EventManager.h"
 #include "EventsApi.h"
 #include "FavoritesMenuUnpaused.h"
+#include "GameplayMenuUnpaused.h"
 #include "JournalMenuUnpaused.h"
 #include "JsUtils.h"
 #include "SkyrimPlatform.h"
@@ -72,25 +73,30 @@ void EventHandler::HandleSKSEMessage(SKSE::MessagingInterface::Message* msg)
     case SKSE::MessagingInterface::kDataLoaded: {
       // Thornswood #3129: plugins run from the first tick after this.
       logger::info("game data loaded");
+      // The guarded all-menu policy owns the show/count lifecycle (#6497).
+      // If no native patch can be installed, retain the old two-menu behavior.
+      if (!GameplayMenuUnpaused::Installed()) {
+        FavoritesMenuUnpaused::Install();
+        JournalMenuUnpaused::Install();
+      }
       // Before any plugin runs, so the page's focus menu is registered
       // before the first focus a plugin asks for (Thornswood #6215).
       BrowserApiTilted::WatchMenus();
-      // Before anybody can press Q (Thornswood #6408).
-      FavoritesMenuUnpaused::Install();
-      // The Escape menu must keep the world running too (#6428).
-      JournalMenuUnpaused::Install();
       TickHandler::GetSingleton()->Update();
 
       EventManager::Init();
       SendSimpleEventOnTick("skyrimLoaded");
     } break;
     case SKSE::MessagingInterface::kNewGame:
+      GameplayMenuUnpaused::WorldLoaded(true);
       SendSimpleEventOnTick("newGame");
       break;
     case SKSE::MessagingInterface::kPreLoadGame:
+      GameplayMenuUnpaused::WorldLoading();
       SendSimpleEventOnTick("preLoadGame");
       break;
     case SKSE::MessagingInterface::kPostLoadGame:
+      GameplayMenuUnpaused::PostLoad(msg->data);
       SendSimpleEventOnTick("postLoadGame");
       break;
     case SKSE::MessagingInterface::kSaveGame:

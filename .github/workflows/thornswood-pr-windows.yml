@@ -231,6 +231,13 @@ jobs:
           g++ -std=c++17 -Wall -Wextra -Werror \
             misc/tests/cpp/test_journal_menu_unpaused.cpp -o "$RUNNER_TEMP/journal-menu-test"
           "$RUNNER_TEMP/journal-menu-test"
+      - name: Gameplay menu flags after the native Show callback
+        shell: bash
+        run: |
+          g++ -std=c++17 -Wall -Wextra -Werror \
+            -I skyrim-platform/src/platform_lib \
+            misc/tests/gameplay_menu_test.cpp -o "$RUNNER_TEMP/gameplay-menu-test"
+          "$RUNNER_TEMP/gameplay-menu-test"
       - name: Check POSIX directory initialization
         shell: bash
         run: |
