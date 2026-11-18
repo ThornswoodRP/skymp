@@ -1,4 +1,5 @@
 #include "MpClientPluginApi.h"
+#include "GameplayMenuUnpaused.h"
 
 namespace {
 const char* GetPacketTypeName(int32_t type)
@@ -71,6 +72,7 @@ Napi::Value MpClientPluginApi::CreateClient(const Napi::CallbackInfo& info)
   typedef void (*CreateClient)(const char* hostName, uint16_t port);
   auto f = (CreateClient)GetMpClientPlugin()->GetFunction("CreateClient");
   f(hostName.data(), static_cast<uint16_t>(port));
+  GameplayMenuUnpaused::RequestClient(true);
   return info.Env().Undefined();
 }
 
@@ -79,6 +81,7 @@ Napi::Value MpClientPluginApi::DestroyClient(const Napi::CallbackInfo& info)
   typedef void (*DestroyClient)();
   auto f = (DestroyClient)GetMpClientPlugin()->GetFunction("DestroyClient");
   f();
+  GameplayMenuUnpaused::RequestClient(false);
   return info.Env().Undefined();
 }
 

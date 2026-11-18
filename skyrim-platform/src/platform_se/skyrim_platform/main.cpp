@@ -10,6 +10,7 @@
 #include "EventsApi.h"
 #include "FlowManager.h"
 #include "FridaHooks.h"
+#include "GameplayMenuUnpaused.h"
 #include "Hooks.h"
 #include "IPC.h"
 #include "InputConverter.h"
@@ -186,6 +187,10 @@ DLLEXPORT bool SKSEAPI SKSEPlugin_Load_Impl(const SKSE::LoadInterface* skse)
 
   Hooks::Install();
   Frida::InstallHooks();
+  // SKSE 2.2.6 loads plugins while obtaining WinMain's command line, before
+  // MainUpdate or any UI job can execute. Install the whole checked hook set
+  // here; DataLoaded is too late to assume those sites are quiescent (#6497).
+  GameplayMenuUnpaused::Install();
 
   // init custom events first
   // and the rest at DataLoaded, to be safe

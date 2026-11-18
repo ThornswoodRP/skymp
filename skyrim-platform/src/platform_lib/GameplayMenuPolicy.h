@@ -20,16 +20,17 @@ private:
   bool held = false;
 };
 
-inline std::uint32_t Flags(std::uint32_t flags, bool /*worldInSession*/)
+inline std::uint32_t Flags(std::uint32_t flags, bool worldInSession)
 {
-  return flags;
+  return worldInSession ? flags & ~(Pauses | FrozenBackground) : flags;
 }
 
-template <class Menu, class Callback>
-auto Show(Menu& menu, bool worldInSession, Callback&& original)
+template <class Callback, class ReadFlags, class WriteFlags>
+auto Show(bool worldInSession, Callback&& original, ReadFlags&& read,
+          WriteFlags&& write)
 {
   const auto result = std::forward<Callback>(original)();
-  menu.flags = Flags(menu.flags, worldInSession);
+  std::forward<WriteFlags>(write)(Flags(std::forward<ReadFlags>(read)(), worldInSession));
   return result;
 }
 }
