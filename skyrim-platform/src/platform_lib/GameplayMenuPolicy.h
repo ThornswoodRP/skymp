@@ -11,7 +11,9 @@ constexpr std::uint32_t FrozenBackground = 1u << 5;
 
 inline bool PostLoadSucceeded(void* data)
 {
-  return data && *static_cast<bool*>(data);
+  // SKSE2.2.6 dispatches (void*)result, not a pointer to a bool. Success is
+  // the value 0x1 and must never be dereferenced (Hooks_SaveLoad.cpp:51).
+  return data != nullptr;
 }
 
 class Session
@@ -27,26 +29,35 @@ private:
 };
 
 // Request/Entered cross the Node/SKSE boundary. The held Session is accessed
-// only by the main UI owner (including the explicit title Show callback).
+// only by the main UI owner's eligibility calculation.
 class World
 {
 public:
   void Request(bool value) { requested.store(value, std::memory_order_release); }
-  void Loading() { entered.store(false, std::memory_order_release); }
+  void Loading()
+  {
+    entered.store(false, std::memory_order_release);
+    unloadEpoch.fetch_add(1, std::memory_order_release);
+  }
   void Loaded(bool success) { entered.store(success, std::memory_order_release); }
   void Title()
   {
-    entered.store(false, std::memory_order_release);
-    requested.store(false, std::memory_order_release);
-    session.Update(false, false);
+    Loading(); // a title transition does not destroy an existing client
   }
   bool Eligible(bool player3D, bool titleOpen)
   {
+    const auto epoch = unloadEpoch.load(std::memory_order_acquire);
+    if (epoch != seenUnload) {
+      session.Update(false, false);
+      seenUnload = epoch;
+    }
     const bool world = entered.load(std::memory_order_acquire) && player3D && !titleOpen;
     return session.Update(requested.load(std::memory_order_acquire), world);
   }
 private:
   std::atomic_bool requested{ false }, entered{ false };
+  std::atomic<std::uint64_t> unloadEpoch{ 0 };
+  std::uint64_t seenUnload = 0;
   Session session;
 };
 

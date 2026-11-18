@@ -83,7 +83,12 @@ lifetime even if stale player/3D pointers remain. Eligibility also requires
 loaded player 3D and absence of the title menu. Loading a replacement world
 does not discard a requested client session. Other modal menus have no
 exemption. Only atomic requests/lifecycle bits cross threads; held-session
-state and native menu flags belong to the main UI owner.
+state and native menu flags belong to the main UI owner. A monotonic unload
+epoch prevents PreLoad followed by PostLoad between two owner passes from
+hiding the unload. The title never overwrites a CreateClient request that
+could precede its initial Show. SKSE 2.2.6 PostLoad encodes success directly
+as pointer value 1 (Hooks_SaveLoad.cpp:51); it is compared with null, never
+dereferenced.
 
 ## Checks
 
@@ -93,6 +98,8 @@ the actual emitted x64 Show, Map and Stats stubs in private fixture pages on
 Windows and Linux. It checks original-call count, Windows x64 arguments,
 EAX/comparison preservation, R11/RSI preservation, unrelated flags,
 offline behavior and reconnect/unload transitions.
+The actual lifecycle boundary also covers initial-title ordering, a complete
+load replacement between owner passes, and SKSE's null/value-1 payload.
 
 Full Windows engine compilation and Linux checks are required. A normal Dev
 run must additionally verify initial title, load, fresh creation containment,
