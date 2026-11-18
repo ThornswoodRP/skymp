@@ -46,12 +46,19 @@ class SleepWaitHandoff
 {
 public:
   template <class Hide>
-  void BeforeMessages(bool /*live*/, bool /*pickerOpen*/, Hide&& /*hide*/)
+  void BeforeMessages(bool live, bool pickerOpen, Hide&& hide)
   {
+    if (live && !wasLive && pickerOpen) {
+      closing = true;
+      std::forward<Hide>(hide)();
+    }
+    if (!live) closing = false;
+    wasLive = live;
   }
-  bool AllowMovies(bool /*pickerOpen*/)
+  bool AllowMovies(bool pickerOpen)
   {
-    return true;
+    closing = closing && pickerOpen;
+    return !closing;
   }
 private:
   bool wasLive = false, closing = false;

@@ -47,6 +47,15 @@ then wraps OK. Live confirmations call verified Cancel before explaining that
 time cannot be skipped, without calling native OK or touching rest/needs rates.
 Offline confirmations call the exact retained original with unchanged arguments.
 Repeated Show never captures the wrapper as its own original.
+Supported offline Shows also install the wrapper, retaining that exact offline
+dispatch if a picker outlives its original session. On live activation an
+already-open picker is queued for ordinary Hide before the sole messages pass.
+Native AddMessage (13631) pushes onto the same queue that ProcessMessages
+(82082) drains before movies, so the old pause is decremented by native Hide.
+There is no post-open flag change or counter repair. If the picker refuses to
+close, movie/input advancement is blocked and separately reported as a failed
+handoff with refused passes and counter mismatches; this is not successful
+all-menu acceptance. No repeated hide request is issued.
 
 An unsupported live callback/owner/body is left untouched and Show returns
 native Ignore before stack insertion/counting, with a queued Hide and message.
