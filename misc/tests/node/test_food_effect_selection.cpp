@@ -57,6 +57,52 @@ struct EatItemEvent {
 };
 #include "callback.inc"
 
+// Stand-ins exercise the native selection and lookup, not Skyrim's heap.
+namespace RE {
+enum class ActorValue { kResistFrost, kHealth, kStamina };
+struct EffectSetting { struct { ActorValue primaryAV; } data; };
+struct Effect { EffectSetting* baseEffect; float magnitude; int duration; };
+struct AlchemyItem { std::vector<Effect*> effects; };
+struct TESDataHandler {
+  struct Record { std::string_view plugin; uint32_t id; AlchemyItem item; };
+  std::vector<Record> records;
+  static TESDataHandler* GetSingleton() { static TESDataHandler data; return &data; }
+  template <class T> T* LookupForm(uint32_t id, std::string_view plugin) {
+    for (auto& record : records) {
+      if (record.plugin == plugin && record.id == id) return &record.item;
+    }
+    return nullptr;
+  }
+};
+}
+#include "client.inc"
+
+int CheckClient() {
+  RE::EffectSetting frost{{RE::ActorValue::kResistFrost}};
+  RE::EffectSetting health{{RE::ActorValue::kHealth}};
+  RE::EffectSetting stamina{{RE::ActorValue::kStamina}};
+  RE::Effect bread{&frost, 5, 60}, flour{&frost, 3, 60}, juice{&frost, 5, 30};
+  RE::Effect other{&health, 8, 0};
+  auto& records = RE::TESDataHandler::GetSingleton()->records;
+  records = {
+    {"WindhelmSSE.esp", 0x12010f, {{&bread, new RE::Effect{&health, 3, 0}}}},
+    {"WindhelmSSE.esp", 0x12f9c4, {{new RE::Effect{&health, 1, 0}, &flour}}},
+    {"WindhelmSSE.esp", 0x17167b, {{&juice, new RE::Effect{&stamina, 5, 0}}}},
+    {"Other.esp", 0x17167b, {{&other}}},
+  };
+  SelectTemperatureFoodEffects();
+  const bool ok = records[0].item.effects == std::vector<RE::Effect*>{&bread} &&
+    records[1].item.effects == std::vector<RE::Effect*>{&flour} &&
+    records[2].item.effects == std::vector<RE::Effect*>{&juice} &&
+    records[3].item.effects == std::vector<RE::Effect*>{&other} &&
+    bread.magnitude == 5 && bread.duration == 60 &&
+    flour.magnitude == 3 && flour.duration == 60 &&
+    juice.magnitude == 5 && juice.duration == 30;
+  records.clear();
+  std::cout << (ok ? "PASS " : "FAIL ") << "Client record selection\n";
+  return !ok;
+}
+
 int main() {
   WorldState world;
   int failures = 0;
@@ -81,5 +127,6 @@ int main() {
   check("Temperature-only", 0x4517167b, {{1, 5, 30}}, 1, 5, 30);
   check("Same local ID in another plugin", 0x4617167b, {{1, 5, 30}, {3, 5, 0}}, 2, 5, 30);
   check("Zero scale", 0x4517167b, {{1, 5, 30}, {3, 5, 0}}, 0, 0, 0, 0.f);
+  failures += CheckClient();
   return failures ? 1 : 0;
 }
