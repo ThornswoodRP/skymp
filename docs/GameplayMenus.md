@@ -37,9 +37,24 @@ Unsupported or conflicting bytes leave the whole hook set uninstalled, and
 DataLoaded retains the old Favorites/Journal wrappers. No pause-counter reset
 or repeated repair of an already-open menu is used.
 
-Actual sleeping/waiting fast-forward can independently request a pause after
-Show. That remains an explicit acceptance criterion of #6497; this common-menu
-candidate does not claim to solve it.
+Sleeping/waiting fast-forward independently requests a pause after Show. The
+native Accept function (ID 52487) registers OK at ID 52488 and Cancel at ID
+52489. Read-only native tracing confirms OK starts sleep/wait, writes requested
+hours into the player and marks the menu active. Cancel only queues Hide.
+After original Show initializes the delegate, the candidate verifies the OK
+entry/prologue, the complete Cancel body and the callback handler ownership,
+then wraps OK. Live confirmations call verified Cancel before explaining that
+time cannot be skipped, without calling native OK or touching rest/needs rates.
+Offline confirmations call the exact retained original with unchanged arguments.
+Repeated Show never captures the wrapper as its own original.
+
+An unsupported live callback/owner/body is left untouched and Show returns
+native Ignore before stack insertion/counting, with a queued Hide and message.
+It cannot receive normal menu input. If Cancel changes after a supported Show,
+live dispatch uses the queue-hide API instead; it never falls through to OK.
+An offline unsupported callback remains untouched. Physical bed occupancy and
+real server rest behavior still require native acceptance; the callback fixture
+does not prove bed recovery or claim that cancelling preserves bed occupancy.
 
 ## UI scheduling
 
@@ -104,11 +119,14 @@ the actual emitted x64 Show, Map, Stats and Stats-input stubs in private fixture
 Windows and Linux. It checks original-call count, Windows x64 arguments,
 EAX/comparison preservation, R11/RSI preservation, unrelated flags,
 offline behavior and reconnect/unload transitions.
+The actual sleep/wait dispatch is exercised with native-OK pause/time-jump
+side effects, verified Cancel, changed Cancel fallback, original offline calls,
+unsupported/missing callback and owner, repeated binding and unbound dispatch.
 The actual lifecycle boundary also covers initial-title ordering, a complete
 load replacement between owner passes, and SKSE's null/value-1 payload.
 
 Full Windows engine compilation and Linux checks are required. A normal Dev
 run must additionally verify initial title, load, fresh creation containment,
 Tab navigation/cursor/close, Inventory, Magic, world/local Map, Skills, nested
-menus, and the native UI-pass counters. Main remains held pending that evidence
+menus, sleeping/waiting, physical bed/server rest, and native UI-pass counters. Main remains held pending that evidence
 and the other open release conditions.

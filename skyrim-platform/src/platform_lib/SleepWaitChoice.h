@@ -10,7 +10,7 @@ public:
   bool Bind(Callback** slot, Callback* expectedOk, Callback* expectedCancel,
             Callback* wrapper, bool supported, bool ownsHandler)
   {
-    if (!supported || !ownsHandler || !slot || !expectedOk || !expectedCancel)
+    if (!supported || !ownsHandler || !slot || !expectedOk || !expectedCancel || !wrapper)
       return false;
     if (*slot == wrapper)
       return original == expectedOk && cancel == expectedCancel;
@@ -22,11 +22,17 @@ public:
   }
 
   template <class Hide, class Notify>
-  bool Run(const Args& args, bool /*live*/, bool /*cancelVerified*/,
-           Hide&& /*hide*/, Notify&& /*notify*/) const
+  bool Run(const Args& args, bool live, bool cancelVerified,
+           Hide&& hide, Notify&& notify) const
   {
     if (!original) return false;
-    original(args);
+    if (!live) {
+      original(args);
+      return true;
+    }
+    if (cancelVerified) cancel(args);
+    else std::forward<Hide>(hide)();
+    std::forward<Notify>(notify)();
     return true;
   }
 private:

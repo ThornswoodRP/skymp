@@ -2,6 +2,7 @@
 #include "FridaHookHandler.h"
 #include "GameplayMenuPatches.h"
 #include "GameplayMenuPolicy.h"
+#include "SleepWaitChoice.h"
 #include <array>
 #include <atomic>
 #include <map>
@@ -27,6 +28,63 @@ thread_local bool g_insideOwner = false;
 std::array<std::atomic<std::uint32_t>, 3> g_passes{};
 std::atomic<std::uint32_t> g_outside{ 0 };
 SKSE::Trampoline g_trampoline("Gameplay menus");
+SleepWaitChoice<RE::FxDelegateArgs> g_sleepChoice;
+using SleepCallback = RE::FxDelegateHandler::CallbackFn;
+SleepCallback* g_sleepOk = nullptr;
+SleepCallback* g_sleepCancel = nullptr;
+
+bool SleepOkVerified()
+{
+  constexpr std::array<std::uint8_t, 10> bytes{
+    0x48, 0x89, 0x5c, 0x24, 8, 0x57, 0x48, 0x83, 0xec, 0x30 };
+  return std::memcmp(reinterpret_cast<void*>(g_sleepOk), bytes.data(), bytes.size()) == 0;
+}
+bool SleepCancelVerified()
+{
+  // Native Cancel only queues kHide. It never reads the supplied arguments
+  // or requests sleep/wait, changes hours, pause flags, or Main.freezeTime.
+  constexpr std::array<std::uint8_t, 33> bytes{
+    0x48, 0x8b, 0x15, 0xb1, 0xa8, 0x79, 1, 0x45, 0x33, 0xc9,
+    0x48, 0x8b, 0x0d, 0x9f, 0xa8, 0x79, 1, 0x48, 0x81, 0xc2,
+    0x38, 1, 0, 0, 0x45, 0x8d, 0x41, 3, 0xe9, 0x9f, 0x11, 0x85, 0xff };
+  return std::memcmp(reinterpret_cast<void*>(g_sleepCancel), bytes.data(), bytes.size()) == 0;
+}
+void HideSleepChoice()
+{
+  RE::UIMessageQueue::GetSingleton()->AddMessage(RE::SleepWaitMenu::MENU_NAME,
+    RE::UI_MESSAGE_TYPE::kHide, nullptr);
+}
+void ExplainRealTime()
+{
+  RE::DebugNotification("Time passes for everyone here. Sleeping and waiting cannot skip hours.");
+}
+void SleepConfirm(const RE::FxDelegateArgs& args)
+{
+  const bool live = g_enabled.load(std::memory_order_acquire) != 0;
+  auto current = RE::UI::GetSingleton()->GetMenu<RE::SleepWaitMenu>();
+  const bool owner = current && args.GetHandler() == current.get();
+  if (!g_sleepChoice.Run(args, live, owner && SleepCancelVerified(), HideSleepChoice, ExplainRealTime)) {
+    logger::error("sleep/wait: unbound callback refused");
+    HideSleepChoice();
+    ExplainRealTime();
+  }
+}
+
+bool PrepareSleepChoice(RE::IMenu* menu)
+{
+  auto* callback = menu->fxDelegate ? menu->fxDelegate->callbacks.GetAlt("OK") : nullptr;
+  const bool owner = callback && callback->handler.get() == menu;
+  if (g_sleepChoice.Bind(callback ? &callback->callback : nullptr,
+      g_sleepOk, g_sleepCancel, SleepConfirm, SleepOkVerified() && SleepCancelVerified(), owner))
+    return true;
+  // Fail before native stack/count insertion: returning kIgnore below makes
+  // Skyrim refuse this Show, so an unknown OK callback cannot receive input.
+  // Its callback is left untouched; an offline Show still has its original.
+  logger::error("sleep/wait: unsupported callback, code or owner; live Show refused");
+  HideSleepChoice();
+  ExplainRealTime();
+  return false;
+}
 
 struct Observers
 {
@@ -83,7 +141,14 @@ RE::UI_MESSAGE_RESULTS Show(RE::IMenu* menu, RE::UIMessage* message)
     g_enabled.store(0, std::memory_order_release);
   }
   return GameplayMenuPolicy::Show(g_enabled.load(std::memory_order_acquire) != 0,
-    [&] { return menu->ProcessMessage(*message); },
+    [&] {
+      const auto result = menu->ProcessMessage(*message);
+      if (result != RE::UI_MESSAGE_RESULTS::kIgnore &&
+          message->menu == RE::SleepWaitMenu::MENU_NAME && g_enabled.load() &&
+          !PrepareSleepChoice(menu))
+        return RE::UI_MESSAGE_RESULTS::kIgnore;
+      return result;
+    },
     [&] { return menu->menuFlags.underlying(); },
     [&](std::uint32_t flags) { menu->menuFlags = static_cast<RE::IMenu::Flag>(flags); });
 }
@@ -215,6 +280,8 @@ bool GameplayMenuUnpaused::Install()
   g_movies = reinterpret_cast<UiPass>(REL::ID(82083).address());
   g_console = reinterpret_cast<decltype(g_console)>(REL::ID(52950).address());
   g_commands = reinterpret_cast<decltype(g_commands)>(REL::ID(52952).address());
+  g_sleepOk = reinterpret_cast<SleepCallback*>(REL::ID(52488).address());
+  g_sleepCancel = reinterpret_cast<SleepCallback*>(REL::ID(52489).address());
   const auto heapCall = main + 0xadf;
   g_originalHeapCall = reinterpret_cast<decltype(g_originalHeapCall)>(heapCall + 5 +
     *reinterpret_cast<std::int32_t*>(heapCall + 1));
