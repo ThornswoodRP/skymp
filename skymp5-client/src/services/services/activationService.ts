@@ -31,7 +31,8 @@ export class ActivationService extends ClientListener {
             content = JSON.parse(event.message.contentJsonDump);
         } catch (e) {
             if (e instanceof SyntaxError) {
-                logError(this, "onCustomPacketMessage failed to parse JSON", e.message, "json:", event.message.contentJsonDump);
+                // A parser error can quote the input too.
+                logError(this, "onCustomPacketMessage failed to parse JSON");
                 return;
             }
             throw e;
@@ -45,7 +46,7 @@ export class ActivationService extends ClientListener {
         }
         const bases = packet["bases"];
         if (!Array.isArray(bases) || !bases.every((b) => typeof b === "number" && Number.isInteger(b) && b > 0)) {
-            logError(this, "serverFirstBases expected a list of form ids, got", JSON.stringify(bases));
+            logError(this, "serverFirstBases expected a list of form ids");
             return;
         }
         ObjectReferenceEx.setServerFirstBases(bases as number[]);

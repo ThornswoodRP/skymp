@@ -138,6 +138,7 @@ const Ex = load(EX, {
 }).ObjectReferenceEx;
 
 const sent = [];
+const errors = [];
 const handlers = {};
 const controller = {
   on: function (name, fn) { handlers['on:' + name] = fn; },
@@ -154,14 +155,18 @@ const Act = load(ACT, {
   '../../sync/inventory': { getInventory: function () { return {}; } },
   '../../view/worldViewMisc': { localIdToRemoteId: function (id) { return id; } },
   './lastInvService': { LastInvService: function () { } },
-  '../../logging': { logError: function () { }, logTrace: function () { } },
+  '../../logging': { logError: (_source, ...args) => errors.push(args), logTrace: function () { } },
   '../../extensions/objectReferenceEx': { ObjectReferenceEx: Ex },
 }).ActivationService;
 new Act(sp, controller);
 
-function packet(content) {
+function rawPacket(contentJsonDump) {
   const fn = handlers.customPacketMessage;
-  if (fn) { fn({ message: { contentJsonDump: JSON.stringify(content) } }); }
+  if (fn) { fn({ message: { contentJsonDump } }); }
+}
+
+function packet(content) {
+  rawPacket(JSON.stringify(content));
 }
 
 const BLOCK = base(0x7022e, FormType.Furniture);
@@ -204,6 +209,19 @@ yes('5. and keeps the blocks', block1.blocked === true && block2.blocked === tru
 
 const beforeIgnored = [block1, block2, vein1, vein2, chair, lever, forge, door, chest];
 const beforeRules = beforeIgnored.map((r) => r.blocked);
+const marker = 'unexpected-packet-text';
+rawPacket('x' + marker);
+yes('6. malformed JSON leaves activation rules unchanged',
+  beforeIgnored.every((r, i) => r.blocked === beforeRules[i]));
+yes('6. malformed JSON is reported without its contents',
+  errors.length === 1 && JSON.stringify(errors).includes('parse JSON') && !JSON.stringify(errors).includes(marker));
+errors.length = 0;
+packet({ customPacketType: 'serverFirstBases', bases: [0x1000b, marker] });
+yes('6. an invalid bases list is reported without its contents',
+  errors.length === 1 && JSON.stringify(errors).includes('list of form ids') && !JSON.stringify(errors).includes(marker));
+errors.length = 0;
+packet({ customPacketType: 'craftMade', bases: marker });
+yes('6. unrelated packets are not reported', errors.length === 0);
 for (const [name, content] of [
   ['null', null],
   ['array', []],
