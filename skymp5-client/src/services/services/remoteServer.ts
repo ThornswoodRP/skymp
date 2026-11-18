@@ -243,12 +243,14 @@ export class RemoteServer extends ClientListener {
   }
 
   private onOpenContainerMessage(event: ConnectionMessage<OpenContainerMessage>): void {
+    const epoch = this.ownerSpawnEpoch;
     once('update', async () => {
       await Utility.wait(0.1); // Give a chance to update inventory
+      if (epoch !== this.ownerSpawnEpoch) { return; }
 
       const remoteId = event.message.target;
       const localId = remoteIdToLocalId(remoteId);
-      const refr = ObjectReference.from(Game.getFormEx(localId));
+      let refr = ObjectReference.from(Game.getFormEx(localId));
 
       if (refr === null) {
         logError(this, 'onOpenContainerMessage - refr not found', 'remoteId', remoteId.toString(16), 'localId', localId.toString(16));
@@ -258,6 +260,14 @@ export class RemoteServer extends ClientListener {
       // THORNSWOOD PATCH (Thornswood #3159). See packBeforeBench.
       if (refr.getBaseObject()?.getType() === FormType.Furniture) {
         await this.packBeforeBench();
+        if (epoch !== this.ownerSpawnEpoch) { return; }
+        // SP3 wrappers expire on Papyrus updates. Keep the id across the
+        // inventory wait, then resolve again in the current update.
+        refr = ObjectReference.from(Game.getFormEx(remoteIdToLocalId(remoteId)));
+        if (refr === null) {
+          logError(this, 'onOpenContainerMessage - furniture left while waiting for inventory', 'remoteId', remoteId.toString(16));
+          return;
+        }
       }
 
       refr.activate(Game.getPlayer(), true);
@@ -339,12 +349,19 @@ export class RemoteServer extends ClientListener {
     no pack from the server yet. The bench then opens as it always did.
   */
   private async packBeforeBench(): Promise<void> {
-    const pc = Game.getPlayer();
-    const inv = getPcInventory();
-    if (!pc || !inv || storage['ownerInventorySettling'] === true || isBadMenuShown() || Utility.isInMenuMode()) {
+    if (!Game.getPlayer() || !getPcInventory() || storage['ownerInventorySettling'] === true || isBadMenuShown() || Utility.isInMenuMode()) {
       return;
     }
+    const epoch = this.ownerSpawnEpoch;
     await this.inventoryQueueRan();
+    if (epoch !== this.ownerSpawnEpoch || storage['ownerInventorySettling'] === true || isBadMenuShown() || Utility.isInMenuMode()) {
+      return;
+    }
+    // A native player wrapper cannot cross that await. The server may have
+    // sent a newer pack while the queue drained, so read both again.
+    const pc = Game.getPlayer();
+    const inv = getPcInventory();
+    if (!pc || !inv) { return; }
     if (getDiff(inv, getInventory(pc), true).entries.length === 0) {
       return;
     }
