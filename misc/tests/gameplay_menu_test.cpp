@@ -196,6 +196,10 @@ int main()
   CHECK(!session.Update(false, false)); // explicit end plus world unload
   CHECK(!session.Update(false, true)); // later offline world is not latched
   Thunks();
+  CHECK(!P::PostLoadSucceeded(nullptr));
+  std::printf("checking SKSE PostLoad success encoded as pointer value 1\n");
+  std::fflush(stdout);
+  CHECK(P::PostLoadSucceeded(reinterpret_cast<void*>(std::uintptr_t(1))));
   std::printf("%d failures\n", failed);
   return failed ? 1 : 0;
 }

@@ -96,7 +96,7 @@ void EventHandler::HandleSKSEMessage(SKSE::MessagingInterface::Message* msg)
       SendSimpleEventOnTick("preLoadGame");
       break;
     case SKSE::MessagingInterface::kPostLoadGame:
-      GameplayMenuUnpaused::WorldLoaded(msg->data && *static_cast<bool*>(msg->data));
+      GameplayMenuUnpaused::PostLoad(msg->data);
       SendSimpleEventOnTick("postLoadGame");
       break;
     case SKSE::MessagingInterface::kSaveGame:

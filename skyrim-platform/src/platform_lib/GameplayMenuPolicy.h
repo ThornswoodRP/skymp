@@ -8,6 +8,11 @@ namespace GameplayMenuPolicy {
 constexpr std::uint32_t Pauses = 1u << 0;
 constexpr std::uint32_t FrozenBackground = 1u << 5;
 
+inline bool PostLoadSucceeded(void* data)
+{
+  return data && *static_cast<bool*>(data);
+}
+
 class Session
 {
 public:

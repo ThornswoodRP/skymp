@@ -194,6 +194,11 @@ void GameplayMenuUnpaused::WorldLoaded(bool success)
   if (!success) g_enabled.store(0, std::memory_order_release);
 }
 
+void GameplayMenuUnpaused::PostLoad(void* outcome)
+{
+  WorldLoaded(GameplayMenuPolicy::PostLoadSucceeded(outcome));
+}
+
 bool GameplayMenuUnpaused::Install()
 {
   if (g_installed.load()) return true;
