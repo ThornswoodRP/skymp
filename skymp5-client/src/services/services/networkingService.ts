@@ -7,6 +7,7 @@ import { AnyMessage } from "../messages/anyMessage";
 import { ClientListener, CombinedController, Sp } from "./clientListener";
 import { RemoteServer } from "./remoteServer";
 import { SendRawMessageEvent } from "../events/sendRawMessageEvent";
+import { ObjectReferenceEx } from "../../extensions/objectReferenceEx";
 
 // Thornswood #1893. Where the last engine-level refusal (connectionDenied) is
 // left for the game's own plugins: { error, at }. The client's emitter is
@@ -64,6 +65,7 @@ export class NetworkingService extends ClientListener {
   }
 
   close() {
+    ObjectReferenceEx.resetServerFirstActivation();
     this.sp.mpClientPlugin.destroyClient();
   }
 
@@ -216,6 +218,7 @@ export class NetworkingService extends ClientListener {
   }
 
   private createClientSafe() {
+    ObjectReferenceEx.resetServerFirstActivation();
     const { hostName, port } = this.serverAddress;
 
     logTrace(this, "createClientSafe " + hostName + ":" + port);
