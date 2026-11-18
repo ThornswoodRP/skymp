@@ -40,6 +40,48 @@ export class ObjectReferenceEx {
     return getWorkbenchType(base.getFormID()) !== 0;
   }
 
+  /*
+    THORNSWOOD PATCH (Thornswood #4598). THE BASES THE SERVER ANSWERS FIRST.
+
+    dealWithRef below chooses by record type, and the gamemode answers some
+    bases that no type rule names: a chopping block is furniture that is no
+    bench, an ore vein is an activator. Left unblocked, the presser's own
+    Skyrim sat them at the block or started the swing before the server had
+    said whether they may, and the gamemode could only end it afterwards.
+
+    So the server names those bases (the customPacket "serverFirstBases",
+    activationService), and every reference of one of them is blocked the way
+    a bench is: a refused press changes nothing on this machine, and an
+    allowed one comes back as the server's activation.
+
+    The list can arrive after references have streamed, and a later list can
+    drop a base, so each furniture and activator reference dealt with is
+    remembered and dealt with again when a list arrives. Nothing else is
+    remembered: no other type is decided by the list.
+  */
+  private static serverFirstBases = new Set<number>();
+  private static listedRefs = new Set<number>();
+
+  static resetServerFirstActivation(): void {
+    // Restore the ordinary rules on references that are still live before
+    // forgetting which IDs belonged to the old connection.
+    ObjectReferenceEx.setServerFirstBases([]);
+    ObjectReferenceEx.listedRefs.clear();
+  }
+
+  static setServerFirstBases(baseIds: number[]): void {
+    ObjectReferenceEx.serverFirstBases = new Set(baseIds);
+    ObjectReferenceEx.listedRefs.forEach((refrId) => {
+      const refr = sp.ObjectReference.from(sp.Game.getFormEx(refrId));
+      const base = refr ? refr.getBaseObject() : null;
+      if (!refr || !base) {
+        ObjectReferenceEx.listedRefs.delete(refrId);
+        return;
+      }
+      ObjectReferenceEx.dealWithRef(refr, base);
+    });
+  }
+
   static dealWithRef(self: ObjectReference, base: Form): void {
     const t = base.getType();
     const isItem = FormTypeEx.isItem(t);
@@ -93,7 +135,15 @@ export class ObjectReferenceEx {
 
       getWorkbenchType is ours (ObjectReferenceApi) and is not in the npm
       typings this client builds against, hence the cast.
+
+      THORNSWOOD PATCH (Thornswood #4598). And any base the server names as
+      one it answers first (setServerFirstBases): a chopping block, an ore
+      vein. A locked reference still comes first, as above.
     */
+    const listed = t === FormType.Furniture || t === FormType.Activator;
+    if (listed) {
+      ObjectReferenceEx.listedRefs.add(self.getFormID());
+    }
     if (self.isLocked()) {
       self.blockActivation(false);
     } else if (t === FormType.Container
@@ -102,6 +152,7 @@ export class ObjectReferenceEx {
       || t === FormType.Flora
       || t === FormType.Tree
       || (t === FormType.Furniture && ObjectReferenceEx.isBench(base))
+      || (listed && ObjectReferenceEx.serverFirstBases.has(base.getFormID()))
       || (t === FormType.Door && self.getBaseObject()?.getFormID() !== caveGSecretDoor01)) {
       self.blockActivation(true);
     } else {
