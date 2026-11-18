@@ -195,6 +195,24 @@ int main()
   CHECK(session.Update(false, true));
   CHECK(!session.Update(false, false)); // explicit end plus world unload
   CHECK(!session.Update(false, true)); // later offline world is not latched
+  P::World world;
+  world.Request(true); // CreateClient can precede the initial title Show.
+  world.Title();
+  CHECK(!world.Eligible(true, true)); // even stale player 3D is not a world
+  world.Loaded(true);
+  CHECK(world.Eligible(true, false));
+  world.Request(false);
+  CHECK(world.Eligible(true, false)); // live world survives destroy/recreate
+  world.Title();
+  world.Loaded(true);
+  CHECK(!world.Eligible(true, false)); // explicit destroy/title then offline
+  world.Request(true);
+  world.Loading();
+  CHECK(!world.Eligible(true, false));
+  world.Loaded(false);
+  CHECK(!world.Eligible(true, false));
+  world.Loaded(true);
+  CHECK(world.Eligible(true, false)); // loading must not discard a request
   Thunks();
   CHECK(!P::PostLoadSucceeded(nullptr));
   std::printf("checking SKSE PostLoad success encoded as pointer value 1\n");

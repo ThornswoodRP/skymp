@@ -18,10 +18,10 @@ UiPass g_messages = nullptr, g_movies = nullptr;
 void* (*g_console)() = nullptr;
 void (*g_commands)(void*) = nullptr;
 void (*g_barrier)(void*) = nullptr;
-std::atomic_bool g_requested{ false }, g_entered{ false }, g_installed{ false };
+std::atomic_bool g_installed{ false };
 std::atomic<std::uint32_t> g_enabled{ 0 };
 static_assert(decltype(g_enabled)::is_always_lock_free && sizeof(g_enabled) == 4);
-GameplayMenuPolicy::Session g_session; // main-thread owner only
+GameplayMenuPolicy::World g_world;
 thread_local bool g_insideOwner = false;
 std::array<std::atomic<std::uint32_t>, 3> g_passes{};
 std::atomic<std::uint32_t> g_outside{ 0 };
@@ -68,9 +68,8 @@ struct Observers
 void UpdateEligibility(RE::UI* ui)
 {
   const auto* player = RE::PlayerCharacter::GetSingleton();
-  const bool world = g_entered.load(std::memory_order_acquire) && player &&
-    player->Is3DLoaded() && !ui->IsMenuOpen(RE::MainMenu::MENU_NAME);
-  g_enabled.store(g_session.Update(g_requested.load(std::memory_order_acquire), world),
+  g_enabled.store(g_world.Eligible(player && player->Is3DLoaded(),
+                                   ui->IsMenuOpen(RE::MainMenu::MENU_NAME)),
                   std::memory_order_release);
 }
 
@@ -79,10 +78,8 @@ RE::UI_MESSAGE_RESULTS Show(RE::IMenu* menu, RE::UIMessage* message)
   if (message->menu == RE::MainMenu::MENU_NAME) {
     // A returned title can retain a player/cell/3D. This explicit transition,
     // unlike a generic modal or connection loss, ends the live-world lifetime.
-    g_entered.store(false, std::memory_order_release);
-    g_requested.store(false, std::memory_order_release);
+    g_world.Title();
     g_enabled.store(0, std::memory_order_release);
-    g_session.Update(false, false);
   }
   return GameplayMenuPolicy::Show(g_enabled.load(std::memory_order_acquire) != 0,
     [&] { return menu->ProcessMessage(*message); },
@@ -181,16 +178,16 @@ std::uintptr_t Store(const P::Bytes& bytes)
 
 void GameplayMenuUnpaused::RequestClient(bool requested)
 {
-  g_requested.store(requested, std::memory_order_release);
+  g_world.Request(requested);
 }
 void GameplayMenuUnpaused::WorldLoading()
 {
-  g_entered.store(false, std::memory_order_release);
+  g_world.Loading();
   g_enabled.store(0, std::memory_order_release);
 }
 void GameplayMenuUnpaused::WorldLoaded(bool success)
 {
-  g_entered.store(success, std::memory_order_release);
+  g_world.Loaded(success);
   if (!success) g_enabled.store(0, std::memory_order_release);
 }
 
