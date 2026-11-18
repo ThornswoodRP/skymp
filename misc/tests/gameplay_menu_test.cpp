@@ -213,6 +213,15 @@ int main()
   CHECK(!world.Eligible(true, false));
   world.Loaded(true);
   CHECK(world.Eligible(true, false)); // loading must not discard a request
+  P::World replacement;
+  replacement.Request(true);
+  replacement.Loaded(true);
+  CHECK(replacement.Eligible(true, false));
+  replacement.Request(false);
+  CHECK(replacement.Eligible(true, false));
+  replacement.Loading();
+  replacement.Loaded(true); // both notifications before the next owner pass
+  CHECK(!replacement.Eligible(true, false));
   Thunks();
   CHECK(!P::PostLoadSucceeded(nullptr));
   std::printf("checking SKSE PostLoad success encoded as pointer value 1\n");

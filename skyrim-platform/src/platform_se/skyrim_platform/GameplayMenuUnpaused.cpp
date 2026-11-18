@@ -108,9 +108,10 @@ void Owner(void* heap)
   ++frames;
   bad += mismatch;
   if (frames == 1 || frames % 1200 == 0 || (mismatch && bad <= 5)) {
-    logger::info("menu UI owner: frames {} messages {} movies {} console {} mismatches {} outside {} live {} pauses {}",
+    const auto* main = RE::Main::GetSingleton();
+    logger::info("menu UI owner: frames {} messages {} movies {} console {} mismatches {} outside {} live {} pauses {} freezeTime {}",
       frames, totals[0], totals[1], totals[2], bad, g_outside.load(),
-      g_enabled.load(), ui->numPausesGame);
+      g_enabled.load(), ui->numPausesGame, main && main->freezeTime);
   }
 }
 
