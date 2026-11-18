@@ -2,6 +2,7 @@
 
 #include "MpActor.h"
 #include "WorldState.h"
+#include "libespm/TemperatureFood.h"
 #include <cmath>
 #include <unordered_set>
 #include <vector>
@@ -71,6 +72,25 @@ void EatItemEvent::OnFireSuccess(WorldState* worldState)
     effects = *madeEffects;
   } else if (isAlchemyItem) {
     effects = espm::GetData<espm::ALCH>(baseId, worldState).effects;
+    using namespace espm::TemperatureFood;
+    const auto plugin = worldState->espmFiles.FindByFileName(kPlugin);
+    if (plugin) {
+      const auto slot = worldState->espmFiles.GetSlot(*plugin);
+      for (const auto localId : kLocalIds) {
+        if (slot.ToId(localId) != baseId) {
+          continue;
+        }
+        const auto item = worldState->GetEspm().GetBrowser().LookupById(baseId);
+        for (auto& effect : effects) {
+          effect.effectId = item.ToGlobalId(effect.effectId);
+        }
+        KeepFrost(effects, [&](const auto& effect) {
+          return espm::GetData<espm::MGEF>(effect.effectId, worldState)
+                   .data.primaryAV == espm::ActorValue::FrostResist;
+        }, [](const auto&) {});
+        break;
+      }
+    }
   } else if (isIngredient) {
     // effects = espm::GetData<espm::INGR>(baseId, worldState).effects;
   } else {

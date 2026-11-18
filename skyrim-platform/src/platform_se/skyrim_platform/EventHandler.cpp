@@ -9,8 +9,28 @@
 #include "JsUtils.h"
 #include "SkyrimPlatform.h"
 #include "TickHandler.h"
+#include "../../../../libespm/include/libespm/TemperatureFood.h"
 
 namespace {
+void SelectTemperatureFoodEffects()
+{
+  auto* data = RE::TESDataHandler::GetSingleton();
+  if (!data) {
+    return;
+  }
+  for (const auto localId : espm::TemperatureFood::kLocalIds) {
+    auto* food = data->LookupForm<RE::AlchemyItem>(
+      localId, espm::TemperatureFood::kPlugin);
+    if (!food) {
+      continue;
+    }
+    espm::TemperatureFood::KeepFrost(food->effects, [](const RE::Effect* effect) {
+      return effect && effect->baseEffect &&
+        effect->baseEffect->data.primaryAV == RE::ActorValue::kResistFrost;
+    }, [](RE::Effect* effect) { delete effect; });
+  }
+}
+
 inline void SendEvent(const char* eventName)
 {
   EventsApi::SendEvent(eventName, {});
@@ -73,6 +93,7 @@ void EventHandler::HandleSKSEMessage(SKSE::MessagingInterface::Message* msg)
     case SKSE::MessagingInterface::kDataLoaded: {
       // Thornswood #3129: plugins run from the first tick after this.
       logger::info("game data loaded");
+      SelectTemperatureFoodEffects();
       // The guarded all-menu policy owns the show/count lifecycle (#6497).
       // If no native patch can be installed, retain the old two-menu behavior.
       if (!GameplayMenuUnpaused::Installed()) {
