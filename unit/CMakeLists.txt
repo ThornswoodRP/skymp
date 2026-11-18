@@ -60,6 +60,11 @@ if(BUILD_UNIT_TESTS AND NOT EMSCRIPTEN)
     target_link_libraries(unit PUBLIC Dbghelp.lib)
   endif()
 
+  add_executable(gameplay-menu-test "${CMAKE_SOURCE_DIR}/misc/tests/gameplay_menu_test.cpp")
+  target_include_directories(gameplay-menu-test PRIVATE "${CMAKE_SOURCE_DIR}/skyrim-platform/src/platform_lib")
+  apply_default_settings(TARGETS gameplay-menu-test)
+  add_test(NAME gameplay_menu COMMAND gameplay-menu-test)
+
   # The private ledger writer has no game-data dependency. Exercise the
   # actual platform file/rename barriers rather than a mocked acknowledgement.
   add_executable(private-ledger-test "${CMAKE_SOURCE_DIR}/misc/tests/private_ledger_test.cpp")
