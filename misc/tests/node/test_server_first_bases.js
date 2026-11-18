@@ -202,10 +202,35 @@ packet({ customPacketType: 'serverFirstBases', bases: [0x7022e] });
 yes('5. a later list without the vein hands the veins back to Skyrim', vein1.blocked === false && vein2.blocked === false);
 yes('5. and keeps the blocks', block1.blocked === true && block2.blocked === true);
 
-packet({ customPacketType: 'craftMade', bases: [0x1000b] });
-packet({ customPacketType: 'serverFirstBases', bases: ['1000b'] });
-packet({ customPacketType: 'serverFirstBases', bases: 7 });
-yes('6. another packet, or a list that is not numbers, changes nothing', chair.blocked === false && block1.blocked === true);
+const beforeIgnored = [block1, block2, vein1, vein2, chair, lever, forge, door, chest];
+const beforeRules = beforeIgnored.map((r) => r.blocked);
+for (const [name, content] of [
+  ['null', null],
+  ['array', []],
+  ['string', 'serverFirstBases'],
+  ['number', 7],
+  ['boolean', false],
+  ['missing type', { bases: [] }],
+  ['unrelated type', { customPacketType: 'craftMade', bases: [0x1000b] }],
+  ['missing list', { customPacketType: 'serverFirstBases' }],
+  ['non-array list', { customPacketType: 'serverFirstBases', bases: 7 }],
+  ['non-numeric form id', { customPacketType: 'serverFirstBases', bases: [0x1000b, '1000b'] }],
+]) {
+  try {
+    packet(content);
+    yes('6. ' + name + ' leaves activation rules unchanged',
+      beforeIgnored.every((r, i) => r.blocked === beforeRules[i]));
+  } catch (e) {
+    yes('6. ' + name + ' should be ignored, but threw: ' + e.message, false);
+  }
+}
+const block3 = ref(0xb394b, BLOCK);
+Ex.dealWithRef(block3, BLOCK);
+yes('6. newly streamed blocks still use the last valid list', block3.blocked === true);
+
+packet({ customPacketType: 'serverFirstBases', bases: [0x7022e, 0x1000a] });
+yes('7. a valid list after ignored packets still applies',
+  vein1.blocked === true && vein2.blocked === true && block3.blocked === true);
 
 sent.length = 0;
 handlers['on:activate']({

@@ -26,7 +26,7 @@ export class ActivationService extends ClientListener {
       Each list replaces the last. See ObjectReferenceEx.setServerFirstBases.
     */
     private onCustomPacketMessage(event: ConnectionMessage<CustomPacketMessage>) {
-        let content: Record<string, unknown> = {};
+        let content: unknown;
         try {
             content = JSON.parse(event.message.contentJsonDump);
         } catch (e) {
@@ -36,10 +36,14 @@ export class ActivationService extends ClientListener {
             }
             throw e;
         }
-        if (content["customPacketType"] !== "serverFirstBases") {
+        if (content === null || typeof content !== "object" || Array.isArray(content)) {
             return;
         }
-        const bases = content["bases"];
+        const packet = content as Record<string, unknown>;
+        if (packet["customPacketType"] !== "serverFirstBases") {
+            return;
+        }
+        const bases = packet["bases"];
         if (!Array.isArray(bases) || !bases.every((b) => typeof b === "number" && Number.isInteger(b) && b > 0)) {
             logError(this, "serverFirstBases expected a list of form ids, got", JSON.stringify(bases));
             return;
