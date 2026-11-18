@@ -26,7 +26,7 @@ import { setActorValuePercentage } from '../../sync/actorvalues';
 import { applyAppearanceToPlayer } from '../../sync/appearance';
 import { applyEquipment, isBadMenuShown, syncSpellEquipment, SpellType } from '../../sync/equipment';
 import { Inventory, acceptPreloadedInventoryBase, applyInventory, getDiff, getInventory, inventoryEntriesEqual, resetInventoryBase } from '../../sync/inventory';
-import { Movement } from '../../sync/movement';
+import { Movement, Transform } from '../../sync/movement';
 import { learnSpells, removeAllSpells } from '../../sync/spell';
 import { ModelApplyUtils } from '../../view/modelApplyUtils';
 import { FormModel, WorldModel } from '../../view/model';
@@ -1173,6 +1173,20 @@ export class RemoteServer extends ClientListener {
     }
     const i = this.getIdManager().getId(msg.idx);
     const form = this.worldModel.forms[i];
+    if (msg.propName === 'placedTransform') {
+      if (!form?.movement || form.refrId !== msg.refrId || !msgData) {
+        return;
+      }
+      const { pos, rot, worldOrCell } = msgData as Transform;
+      const isPoint = (p: unknown) => Array.isArray(p) && p.length === 3 && p.every(Number.isFinite);
+      if (!isPoint(pos) || !isPoint(rot) || !Number.isInteger(worldOrCell)) {
+        return;
+      }
+      form.placedTransform = { pos, rot, worldOrCell };
+      // Keep the spawn target current even if the local reference is not ready.
+      Object.assign(form.movement, form.placedTransform);
+      return;
+    }
     (form as Record<string, unknown>)[msg.propName] = msgData;
     // THORNSWOOD (Thornswood #6247). See FormModel.numHostedByOtherChanges.
     if (form && msg.propName === 'isHostedByOther') {

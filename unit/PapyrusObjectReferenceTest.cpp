@@ -208,6 +208,55 @@ TEST_CASE("BlockActivation", "[Papyrus][ObjectReference][espm]")
                       ContainsSubstring("No espm attached"));
 }
 
+TEST_CASE("A placed board updates both existing listeners",
+          "[Papyrus][ObjectReference]")
+{
+  PartOne partOne;
+  for (unsigned user : { 0u, 1u }) {
+    DoConnect(partOne, user);
+    partOne.CreateActor(0xff000010 + user, { 10, 20, 30 }, 0, 0x3c);
+    partOne.SetUserActor(user, 0xff000010 + user);
+  }
+  auto& steward = partOne.worldState.GetFormAt<MpActor>(0xff000010);
+  auto& neighbor = partOne.worldState.GetFormAt<MpActor>(0xff000011);
+  auto board = std::make_unique<MpObjectReference>(
+    LocationalData{ { 1, 2, 3 }, {}, FormDesc::Tamriel() },
+    partOne.CreateFormCallbacks(), 0x7e8c9, "STAT");
+  partOne.worldState.AddForm(std::move(board), 0xff000100);
+  auto& refr = partOne.worldState.GetFormAt<MpObjectReference>(0xff000100);
+  refr.ForceSubscriptionsUpdate();
+  REQUIRE(refr.GetListeners().count(&steward) == 1);
+  REQUIRE(refr.GetListeners().count(&neighbor) == 1);
+  partOne.Messages().clear();
+
+  PapyrusObjectReference papyrus;
+  papyrus.SetAngle(refr.ToVarValue(), { VarValue(0), VarValue(0), VarValue(90) });
+  papyrus.MoveTo(refr.ToVarValue(), { steward.ToVarValue(), VarValue(1),
+                                    VarValue(2), VarValue(3), VarValue(false) });
+  for (unsigned user : { 0u, 1u }) {
+    std::vector<nlohmann::json> updates;
+    for (const auto& m : partOne.Messages()) {
+      if (m.userId != user || m.j.value("idx", 0u) != refr.GetIdx()) {
+        continue;
+      }
+      CHECK(m.j["t"] != MsgType::CreateActor);
+      CHECK(m.j["t"] != MsgType::DestroyActor);
+      if (m.j["t"] == MsgType::UpdateProperty &&
+          m.j["propName"] == "placedTransform") {
+        CHECK(m.reliable);
+        CHECK(m.j["refrId"] == refr.GetFormId());
+        updates.push_back(nlohmann::json::parse(m.j.at("dataDump").get<std::string>()));
+      }
+    }
+    REQUIRE(updates.size() == 2);
+    CHECK(updates[0]["pos"] == nlohmann::json::array({ 1, 2, 3 }));
+    CHECK(updates[0]["rot"] == nlohmann::json::array({ 0, 0, 90 }));
+    CHECK(updates[1]["pos"] == nlohmann::json::array({ 11, 22, 33 }));
+    CHECK(updates[1]["rot"] == updates[0]["rot"]);
+    CHECK(updates[1]["worldOrCell"] == 0x3c);
+  }
+}
+
 TEST_CASE("MoveTo", "[Papyrus][ObjectReference]")
 {
   PapyrusObjectReference papyrusObjectReference;
