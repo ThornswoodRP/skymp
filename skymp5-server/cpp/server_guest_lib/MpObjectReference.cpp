@@ -624,6 +624,27 @@ void MpObjectReference::SetAngle(const NiPoint3& newAngle,
     SaveModeFor(IsLocationSavingNeeded(), setAngleMode));
 }
 
+void MpObjectReference::SendPlacedTransform()
+{
+  // Plugin references and actors use their existing synchronization paths.
+  if (AsActor() || IsEspmForm() || IsDisabled() || !GetParent()) {
+    return;
+  }
+  const auto& pos = GetPos();
+  const auto& rot = GetAngle();
+  const nlohmann::json transform = {
+    { "pos", { pos.x, pos.y, pos.z } },
+    { "rot", { rot.x, rot.y, rot.z } },
+    { "worldOrCell", GetCellOrWorld().ToFormId(GetParent()->espmFiles) },
+  };
+  UpdatePropertyMessage msg;
+  msg.idx = GetIdx();
+  msg.refrId = GetFormId();
+  msg.propName = "placedTransform";
+  msg.dataDump = transform.dump();
+  SendMessageToActorListeners(msg, true);
+}
+
 void MpObjectReference::SetHarvested(bool harvested)
 {
   if (harvested != ChangeForm().isHarvested) {
