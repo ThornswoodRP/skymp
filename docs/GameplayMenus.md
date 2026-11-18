@@ -45,11 +45,13 @@ candidate does not claim to solve it.
 
 [Skyrim Souls RE's 1.6.1170 implementation](https://github.com/Vermunds/SkyrimSoulsRE/blob/714c44301d9e278b3d0a609fb291de50cd17cf45/src/MenuProcessing.cpp)
 documents why unpaused menu processing must run on the main thread after
-rendering and the worker-job barrier. Its code is GPL-3.0-or-later with a modding
+rendering, when worker jobs should no longer be running. Its code is GPL-3.0-or-later with a modding
 exception, compatible with Skyrim Platform's GPL distribution.
 
-The candidate retains that barrier, Main Update ID 36564 at `+ADF`, calling
-the original function first and exactly once. It then owns one messages,
+The candidate uses that after-render phase, Main Update ID 36564 at `+ADF`, calling
+the displaced original function first and exactly once. That function increments
+ScrapHeap.keepPagesRequest; the increment itself is not a job-wait barrier.
+The owner then runs one messages,
 movies and console pass per frame. This deliberately moves paused/title
 messages after rendering too. The UI job at ID 39042 `+B`, Main's earlier
 message call at `+A8A`, and its movies/console calls at `+AF0..B02` are disabled
@@ -82,8 +84,9 @@ withdraw it. DestroyClient withdraws the request, but a live world retains
 the session until unload; this covers a destroy/recreate reconnect without
 reintroducing pause. NewGame or successful PostLoad marks a world entered;
 PreLoad and failed PostLoad clear it. Main Menu Show explicitly ends the old
-lifetime even if stale player/3D pointers remain. Eligibility also requires
-loaded player 3D and absence of the title menu. Loading a replacement world
+lifetime even if stale player/3D pointers remain. Initial activation also requires
+loaded player 3D and absence of the title menu. Once active, a temporary 3D rebuild
+cannot end the session or reintroduce pause without an explicit unload. Loading a replacement world
 does not discard a requested client session. Other modal menus have no
 exemption. Only atomic requests/lifecycle bits cross threads; held-session
 state and native menu flags belong to the main UI owner. A monotonic unload

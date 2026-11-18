@@ -208,14 +208,14 @@ int main()
   CHECK(count == 0);
 
   P::Session session;
-  CHECK(!session.Update(false, false));
-  CHECK(!session.Update(true, false)); // connection at the title/loading screen
-  CHECK(session.Update(true, true));
-  CHECK(session.Update(false, true)); // destroy/recreate while a world is live
-  CHECK(session.Update(true, true));
-  CHECK(session.Update(false, true));
-  CHECK(!session.Update(false, false)); // explicit end plus world unload
-  CHECK(!session.Update(false, true)); // later offline world is not latched
+  CHECK(!session.Update(false, false, false));
+  CHECK(!session.Update(true, false, false)); // connection at the title/loading screen
+  CHECK(session.Update(true, true, true));
+  CHECK(session.Update(false, true, false)); // 3D rebuild is not a world unload
+  CHECK(session.Update(true, true, true));
+  CHECK(session.Update(false, true, true)); // destroy/recreate while a world is live
+  CHECK(!session.Update(false, false, false)); // explicit end plus world unload
+  CHECK(!session.Update(false, true, true)); // later offline world is not latched
   P::World world;
   world.Request(true); // CreateClient can precede the initial title Show.
   world.Title();
@@ -224,6 +224,8 @@ int main()
   CHECK(world.Eligible(true, false));
   world.Request(false);
   CHECK(world.Eligible(true, false)); // live world survives destroy/recreate
+  CHECK(world.Eligible(false, false)); // no unload event: temporary 3D loss
+  CHECK(world.Eligible(true, false));
   world.Title();
   world.Loaded(true);
   CHECK(!world.Eligible(true, false)); // explicit destroy/title then offline

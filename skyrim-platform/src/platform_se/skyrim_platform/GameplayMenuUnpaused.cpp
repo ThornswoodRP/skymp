@@ -7,7 +7,8 @@
 #include <map>
 
 // UI job synchronization follows Vermunds' Skyrim Souls RE, 1-6-1170,
-// src/MenuProcessing.cpp (GPL-3.0-or-later). Its barrier is retained; here one
+// src/MenuProcessing.cpp (GPL-3.0-or-later). Its after-render phase is retained;
+// the displaced original heap call is preserved, not treated as a job wait. One
 // owner also replaces vanilla's paused/title passes, so all message processing
 // deliberately happens AFTER rendering. No Skyrim Souls controls/cursor or
 // time-scale changes are installed. See docs/GameplayMenus.md for native proof.
@@ -17,7 +18,7 @@ using UiPass = void (*)(RE::UI*);
 UiPass g_messages = nullptr, g_movies = nullptr;
 void* (*g_console)() = nullptr;
 void (*g_commands)(void*) = nullptr;
-void (*g_barrier)(void*) = nullptr;
+void (*g_originalHeapCall)(void*) = nullptr;
 std::atomic_bool g_installed{ false };
 std::atomic<std::uint32_t> g_enabled{ 0 };
 static_assert(decltype(g_enabled)::is_always_lock_free && sizeof(g_enabled) == 4);
@@ -89,7 +90,7 @@ RE::UI_MESSAGE_RESULTS Show(RE::IMenu* menu, RE::UIMessage* message)
 
 void Owner(void* heap)
 {
-  g_barrier(heap); // original ScrapHeap barrier, once, before UI access
+  g_originalHeapCall(heap); // original keepPagesRequest increment, exactly once
   auto* ui = RE::UI::GetSingleton();
   UpdateEligibility(ui);
   g_insideOwner = true;
@@ -214,16 +215,16 @@ bool GameplayMenuUnpaused::Install()
   g_movies = reinterpret_cast<UiPass>(REL::ID(82083).address());
   g_console = reinterpret_cast<decltype(g_console)>(REL::ID(52950).address());
   g_commands = reinterpret_cast<decltype(g_commands)>(REL::ID(52952).address());
-  const auto barrier = main + 0xadf;
-  g_barrier = reinterpret_cast<decltype(g_barrier)>(barrier + 5 +
-    *reinterpret_cast<std::int32_t*>(barrier + 1));
+  const auto heapCall = main + 0xadf;
+  g_originalHeapCall = reinterpret_cast<decltype(g_originalHeapCall)>(heapCall + 5 +
+    *reinterpret_cast<std::int32_t*>(heapCall + 1));
   std::vector<Patch> patches{
     { job + 0xb, { 0x75, 0x25 }, { 0xeb, 0x25 } },
     { main + 0xa8a, { 0xe8, 0x71, 0xd6, 0x95, 0 }, P::Bytes(5, 0x90) },
     { main + 0xaf0, { 0xe8, 0xfb, 0xe2, 0x95, 0 }, P::Bytes(5, 0x90) },
     { main + 0xaf5, { 0xe8, 0x46, 0x49, 0x33, 0, 0x48, 0x8b, 0xc8,
                      0xe8, 0xee, 0x4a, 0x33, 0 }, P::Bytes(13, 0x90) },
-    { barrier, { 0xe8, 0xec, 0xf2, 0x67, 0 }, P::Bytes(5, 0x90) },
+    { heapCall, { 0xe8, 0xec, 0xf2, 0x67, 0 }, P::Bytes(5, 0x90) },
     { show, { 0xff, 0x50, 0x20, 0x83, 0xf8, 1 }, P::Bytes(6, 0x90) },
     { map, { 0x83, 0xc8, 0x20, 0xeb, 3 }, P::Bytes(5, 0x90) },
     { stats, { 0x83, 0x4e, 0x1c, 0x20, 0x48, 0x83, 0xbe, 0xa8, 2, 0, 0, 0 }, P::Bytes(12, 0x90) },
@@ -234,7 +235,7 @@ bool GameplayMenuUnpaused::Install()
   g_trampoline.create(1024);
   P::Bytes owner;
   P::Jump(owner, reinterpret_cast<std::uintptr_t>(&Owner));
-  patches[4].after = P::Branch(0xe8, barrier, Store(owner), 5);
+  patches[4].after = P::Branch(0xe8, heapCall, Store(owner), 5);
   patches[5].after = P::Branch(0xe9, show,
     Store(P::Show(reinterpret_cast<std::uintptr_t>(&Show), show + 6)), 6);
   const auto enabled = reinterpret_cast<std::uintptr_t>(&g_enabled);

@@ -19,10 +19,10 @@ inline bool PostLoadSucceeded(void* data)
 class Session
 {
 public:
-  bool Update(bool requested, bool worldLoaded)
+  bool Update(bool requested, bool entered, bool readyToEnter)
   {
-    held = requested || (held && worldLoaded);
-    return held && worldLoaded;
+    held = entered && (held || (requested && readyToEnter));
+    return held;
   }
 private:
   bool held = false;
@@ -48,11 +48,11 @@ public:
   {
     const auto epoch = unloadEpoch.load(std::memory_order_acquire);
     if (epoch != seenUnload) {
-      session.Update(false, false);
+      session.Update(false, false, false);
       seenUnload = epoch;
     }
-    const bool world = entered.load(std::memory_order_acquire) && player3D && !titleOpen;
-    return session.Update(requested.load(std::memory_order_acquire), world);
+    return session.Update(requested.load(std::memory_order_acquire),
+      entered.load(std::memory_order_acquire), player3D && !titleOpen);
   }
 private:
   std::atomic_bool requested{ false }, entered{ false };
