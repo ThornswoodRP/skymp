@@ -29,6 +29,7 @@ std::array<std::atomic<std::uint32_t>, 3> g_passes{};
 std::atomic<std::uint32_t> g_outside{ 0 };
 SKSE::Trampoline g_trampoline("Gameplay menus");
 SleepWaitChoice<RE::FxDelegateArgs> g_sleepChoice;
+SleepWaitHandoff g_sleepHandoff;
 using SleepCallback = RE::FxDelegateHandler::CallbackFn;
 SleepCallback* g_sleepOk = nullptr;
 SleepCallback* g_sleepCancel = nullptr;
@@ -70,13 +71,14 @@ void SleepConfirm(const RE::FxDelegateArgs& args)
   }
 }
 
-bool PrepareSleepChoice(RE::IMenu* menu)
+bool PrepareSleepChoice(RE::IMenu* menu, bool live)
 {
   auto* callback = menu->fxDelegate ? menu->fxDelegate->callbacks.GetAlt("OK") : nullptr;
   const bool owner = callback && callback->handler.get() == menu;
   if (g_sleepChoice.Bind(callback ? &callback->callback : nullptr,
       g_sleepOk, g_sleepCancel, SleepConfirm, SleepOkVerified() && SleepCancelVerified(), owner))
     return true;
+  if (!live) return true; // unsupported offline callback stays exactly as it was
   // Fail before native stack/count insertion: returning kIgnore below makes
   // Skyrim refuse this Show, so an unknown OK callback cannot receive input.
   // Its callback is left untouched; an offline Show still has its original.
@@ -144,8 +146,8 @@ RE::UI_MESSAGE_RESULTS Show(RE::IMenu* menu, RE::UIMessage* message)
     [&] {
       const auto result = menu->ProcessMessage(*message);
       if (result != RE::UI_MESSAGE_RESULTS::kIgnore &&
-          message->menu == RE::SleepWaitMenu::MENU_NAME && g_enabled.load() &&
-          !PrepareSleepChoice(menu))
+          message->menu == RE::SleepWaitMenu::MENU_NAME &&
+          !PrepareSleepChoice(menu, g_enabled.load() != 0))
         return RE::UI_MESSAGE_RESULTS::kIgnore;
       return result;
     },
@@ -159,8 +161,22 @@ void Owner(void* heap)
   auto* ui = RE::UI::GetSingleton();
   UpdateEligibility(ui);
   g_insideOwner = true;
+  g_sleepHandoff.BeforeMessages(g_enabled.load() != 0,
+    ui->IsMenuOpen(RE::SleepWaitMenu::MENU_NAME), [] {
+      HideSleepChoice();
+      ExplainRealTime();
+    });
   g_messages(ui);
-  g_movies(ui);
+  const bool handoffBlocked = !g_sleepHandoff.AllowMovies(ui->IsMenuOpen(RE::SleepWaitMenu::MENU_NAME));
+  static std::uint64_t refusedMovies = 0;
+  if (!handoffBlocked) {
+    g_movies(ui);
+  } else {
+    // Never deliver a live input callback to a picker that refused Hide.
+    // The passive pass counters also report this unsupported transition.
+    if (++refusedMovies <= 3 || refusedMovies % 1200 == 0)
+      logger::critical("sleep/wait: blocked live handoff; picker did not close, movie/input pass refused ({})", refusedMovies);
+  }
   g_commands(g_console());
   g_insideOwner = false;
   static std::uint64_t frames = 0, bad = 0;
@@ -175,9 +191,9 @@ void Owner(void* heap)
   bad += mismatch;
   if (frames == 1 || frames % 1200 == 0 || (mismatch && bad <= 5)) {
     const auto* main = RE::Main::GetSingleton();
-    logger::info("menu UI owner: frames {} messages {} movies {} console {} mismatches {} outside {} live {} pauses {} freezeTime {}",
+    logger::info("menu UI owner: frames {} messages {} movies {} console {} mismatches {} outside {} live {} handoffBlocked {} refusedMovies {} pauses {} freezeTime {}",
       frames, totals[0], totals[1], totals[2], bad, g_outside.load(),
-      g_enabled.load(), ui->numPausesGame, main && main->freezeTime);
+      g_enabled.load(), handoffBlocked, refusedMovies, ui->numPausesGame, main && main->freezeTime);
   }
 }
 

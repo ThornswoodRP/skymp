@@ -173,6 +173,7 @@ void Thunks()
 
 struct Hours { int hours; int marker; };
 int sleepOk = 0, sleepCancel = 0, skippedSeconds = 0, sleepPause = 0, sleepMarker = 0;
+int unknownSleep = 0;
 void NativeSleepOk(const Hours& args)
 {
   ++sleepOk;
@@ -182,7 +183,9 @@ void NativeSleepOk(const Hours& args)
 }
 void NativeSleepCancel(const Hours& args) { ++sleepCancel; sleepMarker = args.marker; }
 void SleepWrapper(const Hours&) {}
-void UnknownSleep(const Hours&) {}
+// Deliberately different observable behavior: MSVC /OPT:ICF is allowed to
+// merge empty functions, which would make the unknown slot equal Wrapper.
+void UnknownSleep(const Hours& args) { ++unknownSleep; sleepMarker = args.marker; }
 
 void SleepChoices()
 {
@@ -208,6 +211,7 @@ void SleepChoices()
   Callback* unknown = UnknownSleep;
   CHECK(!choice.Bind(&unknown, NativeSleepOk, NativeSleepCancel, SleepWrapper, true, true));
   CHECK(unknown == UnknownSleep);
+  CHECK(unknownSleep == 0);
   Callback* known = NativeSleepOk;
   CHECK(!choice.Bind(&known, NativeSleepOk, NativeSleepCancel, SleepWrapper, false, true));
   CHECK(!choice.Bind(&known, NativeSleepOk, NativeSleepCancel, SleepWrapper, true, false));
@@ -216,6 +220,31 @@ void SleepChoices()
   SleepWaitChoice<Hours> unbound;
   CHECK(!unbound.Bind(&slot, NativeSleepOk, NativeSleepCancel, SleepWrapper, true, true));
   CHECK(!unbound.Run(args, true, true, [&] { ++hidden; }, [&] { ++notes; }));
+
+  // The actual handoff helper covers a supported or unknown picker opened
+  // offline before CreateClient. Hide runs before the one messages pass;
+  // movie/input is permitted only after the native close removed the picker.
+  for (bool supported : { false, true }) {
+    SleepWaitHandoff handoff;
+    SleepWaitChoice<Hours> preopened;
+    Callback* oldSlot = supported ? NativeSleepOk : UnknownSleep;
+    const bool bound = preopened.Bind(&oldSlot, NativeSleepOk, NativeSleepCancel,
+      SleepWrapper, true, true);
+    CHECK(bound == supported);
+    bool open = true, hideQueued = false;
+    int pauses = 1, hideRequests = 0;
+    auto hide = [&] { hideQueued = true; ++hideRequests; };
+    handoff.BeforeMessages(false, open, hide);
+    CHECK(handoff.AllowMovies(open) && hideRequests == 0);
+    handoff.BeforeMessages(true, open, hide);
+    CHECK(hideQueued && hideRequests == 1);
+    CHECK(!handoff.AllowMovies(open)); // no callback if Hide has not run
+    if (hideQueued) { open = false; --pauses; } // ordinary native Hide in messages
+    CHECK(handoff.AllowMovies(open) && pauses == 0);
+    handoff.BeforeMessages(true, open, hide);
+    CHECK(hideRequests == 1); // no repeated hide/counter decrement
+    CHECK(handoff.AllowMovies(open));
+  }
 }
 
 int main()

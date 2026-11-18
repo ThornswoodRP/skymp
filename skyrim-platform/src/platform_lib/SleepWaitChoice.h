@@ -39,3 +39,20 @@ private:
   Callback* original = nullptr;
   Callback* cancel = nullptr;
 };
+
+// Close an offline picker before any live movie/input pass. Native Hide, not
+// a changed flag or repaired counter, removes its original pause exactly once.
+class SleepWaitHandoff
+{
+public:
+  template <class Hide>
+  void BeforeMessages(bool /*live*/, bool /*pickerOpen*/, Hide&& /*hide*/)
+  {
+  }
+  bool AllowMovies(bool /*pickerOpen*/)
+  {
+    return true;
+  }
+private:
+  bool wasLive = false, closing = false;
+};
