@@ -62,6 +62,13 @@ export class ObjectReferenceEx {
   private static serverFirstBases = new Set<number>();
   private static listedRefs = new Set<number>();
 
+  static resetServerFirstActivation(): void {
+    // Restore the ordinary rules on references that are still live before
+    // forgetting which IDs belonged to the old connection.
+    ObjectReferenceEx.setServerFirstBases([]);
+    ObjectReferenceEx.listedRefs.clear();
+  }
+
   static setServerFirstBases(baseIds: number[]): void {
     ObjectReferenceEx.serverFirstBases = new Set(baseIds);
     ObjectReferenceEx.listedRefs.forEach((refrId) => {

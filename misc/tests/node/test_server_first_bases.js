@@ -239,6 +239,42 @@ handlers['on:activate']({
 yes('7. a press on a blocked chopping block is still sent to the server',
   sent.length === 1 && sent[0].t === 'Activate' && sent[0].data.target === 0xb3949);
 
+const netStorage = {};
+let connections = 0;
+let pending;
+const Net = load(path.join(path.dirname(ACT), 'networkingService.ts'), {
+  './clientListener': { ClientListener: class { } },
+  '../../logging': { logError() {}, logTrace() {} },
+  '../../extensions/objectReferenceEx': { ObjectReferenceEx: Ex },
+}).NetworkingService;
+const net = new Net({ storage: netStorage, mpClientPlugin: {
+  createClient() { connections++; },
+  destroyClient() {},
+  tick(cb) { if (pending) cb(pending); },
+} }, controller);
+// The real disconnect path replaces the transport. Keep the JS services and
+// references alive, as they are when reconnecting without quitting the game.
+netStorage.serverAddress = { hostName: 'test.invalid', port: 1 };
+pending = 'disconnect';
+handlers['on:tick']();
+pending = undefined;
+yes('8. disconnect reconnects with no previous list or leftover block',
+  connections === 1 && block1.blocked === false && vein1.blocked === false && forge.blocked === true);
+
+const newVein = ref(0xa008, VEIN);
+Ex.dealWithRef(newVein, VEIN);
+yes('8. newly streamed refs before the next list use default rules', newVein.blocked === false);
+const lookups = [];
+const getFormEx = Game.getFormEx;
+Game.getFormEx = (id) => { lookups.push(id); return getFormEx(id); };
+packet({ customPacketType: 'serverFirstBases', bases: [0x1000a] });
+Game.getFormEx = getFormEx;
+yes('8. the next list revisits only refs seen since reconnect',
+  lookups.length === 1 && lookups[0] === newVein.id && newVein.blocked === true && vein1.blocked === false);
+
+net.close();
+yes('9. explicit close also restores the default rules', newVein.blocked === false);
+
 console.log('');
 console.log(pass + ' passed, ' + fail + ' failed');
-process.exit(fail ? 1 : 0);
+process.exitCode = fail ? 1 : 0;
