@@ -153,7 +153,7 @@ bool Commit(const std::vector<Patch>& patches)
     }
   };
   // Obtain every writable page before touching any instruction. Any failure
-  // leaves ALL eight original sites intact, not half a scheduling change.
+  // leaves ALL nine original sites intact, not half a scheduling change.
   for (auto& [page, old] : pages) {
     if (!VirtualProtect(reinterpret_cast<void*>(page), info.dwPageSize, PAGE_EXECUTE_READWRITE, &old)) {
       logger::error("gameplay menus: cannot prepare code pages: {}; no patch installed", GetLastError());
@@ -209,6 +209,7 @@ bool GameplayMenuUnpaused::Install()
   const auto show = REL::ID(82082).address() + 0x6ba;
   const auto map = REL::ID(53112).address() + 0x95;
   const auto stats = REL::ID(52510).address() + 0xa10;
+  const auto statsInput = REL::ID(52518).address() + 0x46;
   g_messages = reinterpret_cast<UiPass>(REL::ID(82082).address());
   g_movies = reinterpret_cast<UiPass>(REL::ID(82083).address());
   g_console = reinterpret_cast<decltype(g_console)>(REL::ID(52950).address());
@@ -225,7 +226,8 @@ bool GameplayMenuUnpaused::Install()
     { barrier, { 0xe8, 0xec, 0xf2, 0x67, 0 }, P::Bytes(5, 0x90) },
     { show, { 0xff, 0x50, 0x20, 0x83, 0xf8, 1 }, P::Bytes(6, 0x90) },
     { map, { 0x83, 0xc8, 0x20, 0xeb, 3 }, P::Bytes(5, 0x90) },
-    { stats, { 0x83, 0x4e, 0x1c, 0x20, 0x48, 0x83, 0xbe, 0xa8, 2, 0, 0, 0 }, P::Bytes(12, 0x90) }
+    { stats, { 0x83, 0x4e, 0x1c, 0x20, 0x48, 0x83, 0xbe, 0xa8, 2, 0, 0, 0 }, P::Bytes(12, 0x90) },
+    { statsInput, { 0x0f, 0x85, 0x64, 1, 0, 0 }, P::Bytes(6, 0x90) }
   };
   if (!Matches(patches)) return false;
   // Prepare all code and observers before changing any functional instruction.
@@ -238,6 +240,8 @@ bool GameplayMenuUnpaused::Install()
   const auto enabled = reinterpret_cast<std::uintptr_t>(&g_enabled);
   patches[6].after = P::Branch(0xe9, map, Store(P::Background(enabled, map + 8, false)), 5);
   patches[7].after = P::Branch(0xe9, stats, Store(P::Background(enabled, stats + 12, true)), 12);
+  patches[8].after = P::Branch(0xe9, statsInput,
+    Store(P::StatsInput(enabled, statsInput + 6, statsInput + 6 + 0x164)), 6);
   if (!g_observers.Install({ reinterpret_cast<std::uintptr_t>(g_messages),
       reinterpret_cast<std::uintptr_t>(g_movies), reinterpret_cast<std::uintptr_t>(g_commands) })) {
     logger::error("gameplay menus: cannot observe native UI passes; no patch installed");

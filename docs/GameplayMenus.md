@@ -27,6 +27,9 @@ Read-only examination of the running executable confirms:
   Its hook preserves RSI/R11 and replays the displaced comparison.
 - Map local update, ID 53112, adds background bit 5 at `+95`. Its hook retains
   the native store at `+9D`. The cursor-bit write at `+53` is untouched.
+- Stats input, ID 52518 `+46`, normally rejects worker-thread UI mode. The
+  policy bypasses that one gate only in a live world whose UI is now owned by
+  the main thread; offline it replays the original AL test and branch.
 
 These are exact runtime guards, not offsets presumed compatible with another
 executable. Every displaced instruction is checked before any is changed.
@@ -63,7 +66,7 @@ cannot prove engine scheduling.
 
 Installation runs synchronously in SKSEPlugin_Load_Impl, beside the existing
 native hooks, **before WinMain**. This is a quiescent startup installation,
-not an assertion that eight separate instruction writes are atomic. Official
+not an assertion that nine separate instruction writes are atomic. Official
 [SKSE 2.2.6 source](https://github.com/ianpatt/skse64/blob/9398d04592a7eb9d754f2997701116df1022f1b4/skse64/skse64.cpp#L49)
 calls Initialize from the CRT command-line hook before returning WinMain's
 argument. Initialize calls PluginManager.Init, whose InstallPlugins invokes
@@ -94,7 +97,7 @@ dereferenced.
 
 The compiled regression first failed 16 flag/count assertions at fork PR170
 head `103bf9ce`. The green fixture exercises the actual policy and executes
-the actual emitted x64 Show, Map and Stats stubs in private fixture pages on
+the actual emitted x64 Show, Map, Stats and Stats-input stubs in private fixture pages on
 Windows and Linux. It checks original-call count, Windows x64 arguments,
 EAX/comparison preservation, R11/RSI preservation, unrelated flags,
 offline behavior and reconnect/unload transitions.

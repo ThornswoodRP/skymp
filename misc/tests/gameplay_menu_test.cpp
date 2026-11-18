@@ -140,6 +140,27 @@ void Thunks()
     CHECK(out.r11 == savedR11);
     if (stats) CHECK(out.zero == 1); // displaced CMP [RSI+2A8],0 was replayed
   }
+  for (std::uint32_t enabled : { 0u, 1u }) for (std::uint8_t mode : { 0, 1 }) {
+    Code code;
+    Output out;
+    constexpr std::uint64_t savedR11 = 0x13579bdf02468ace;
+    A::Bytes entry{ 0x49, 0xbb };
+    A::Address(entry, savedR11);
+    entry.insert(entry.end(), { 0xb0, mode }); // native thread-mode result AL
+    A::Jump(entry, code.At(0x100));
+    code.Put(0, entry);
+    code.Put(0x100, A::StatsInput(reinterpret_cast<std::uintptr_t>(&enabled), code.At(0x200), code.At(0x300)));
+    for (std::uint32_t blocked : { 0u, 1u }) {
+      A::Bytes finish{ 0x49, 0xba };
+      A::Address(finish, reinterpret_cast<std::uintptr_t>(&out));
+      finish.insert(finish.end(), { 0x41, 0xc7, 0x02, std::uint8_t(blocked), 0, 0, 0,
+                                    0x4d, 0x89, 0x5a, 8, 0xc3 });
+      code.Put(blocked ? 0x300 : 0x200, finish);
+    }
+    code.Run();
+    CHECK(out.result == std::uint32_t(!enabled && mode));
+    CHECK(out.r11 == savedR11);
+  }
   auto branch = A::Branch(0xe9, 0x1000, 0x2000, 6);
   std::int32_t relative;
   std::memcpy(&relative, branch.data() + 1, sizeof(relative));
@@ -222,6 +243,13 @@ int main()
   replacement.Loading();
   replacement.Loaded(true); // both notifications before the next owner pass
   CHECK(!replacement.Eligible(true, false));
+  P::World cold;
+  cold.Request(true);
+  cold.Title();
+  CHECK(!cold.Eligible(false, true));
+  cold.Request(false); // destroyed before any live world existed
+  cold.Loaded(true); // NewGame before another owner pass
+  CHECK(!cold.Eligible(true, false));
   Thunks();
   CHECK(!P::PostLoadSucceeded(nullptr));
   std::printf("checking SKSE PostLoad success encoded as pointer value 1\n");

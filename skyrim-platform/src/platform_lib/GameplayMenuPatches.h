@@ -58,4 +58,18 @@ inline Bytes Background(std::uint64_t enabled, std::uint64_t resume, bool stats)
   Jump(out, resume);
   return out;
 }
+
+inline Bytes StatsInput(std::uint64_t enabled, std::uint64_t resume,
+                        std::uint64_t blocked)
+{
+  Bytes out{ 0x41, 0x53, 0x49, 0xbb };
+  Address(out, enabled);
+  out.insert(out.end(), { 0x41, 0x83, 0x3b, 0, 0x41, 0x5b,
+                          0x75, 18, 0x84, 0xc0, 0x74, 14 });
+  // Live-world UI now runs on the main thread. Bypass only this obsolete
+  // worker-mode gate; offline replay TEST AL,AL and the original JNE target.
+  Jump(out, blocked);
+  Jump(out, resume);
+  return out;
+}
 }
