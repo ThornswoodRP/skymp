@@ -73,15 +73,15 @@ void EventHandler::HandleSKSEMessage(SKSE::MessagingInterface::Message* msg)
     case SKSE::MessagingInterface::kDataLoaded: {
       // Thornswood #3129: plugins run from the first tick after this.
       logger::info("game data loaded");
-      // Before any plugin runs, so the page's focus menu is registered
-      // before the first focus a plugin asks for (Thornswood #6215).
-      BrowserApiTilted::WatchMenus();
       // The guarded all-menu policy owns the show/count lifecycle (#6497).
       // If no native patch can be installed, retain the old two-menu behavior.
       if (!GameplayMenuUnpaused::Installed()) {
         FavoritesMenuUnpaused::Install();
         JournalMenuUnpaused::Install();
       }
+      // Before any plugin runs, so the page's focus menu is registered
+      // before the first focus a plugin asks for (Thornswood #6215).
+      BrowserApiTilted::WatchMenus();
       TickHandler::GetSingleton()->Update();
 
       EventManager::Init();

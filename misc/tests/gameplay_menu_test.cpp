@@ -1,5 +1,6 @@
 #include "GameplayMenuPolicy.h"
 #include "GameplayMenuPatches.h"
+#include "SleepWaitChoice.h"
 #include <array>
 #include <cstring>
 #include <cstdio>
@@ -170,6 +171,53 @@ void Thunks()
   CHECK(rejected);
 }
 
+struct Hours { int hours; int marker; };
+int sleepOk = 0, sleepCancel = 0, skippedSeconds = 0, sleepPause = 0, sleepMarker = 0;
+void NativeSleepOk(const Hours& args)
+{
+  ++sleepOk;
+  ++sleepPause;
+  skippedSeconds += args.hours * 3600;
+  sleepMarker = args.marker;
+}
+void NativeSleepCancel(const Hours& args) { ++sleepCancel; sleepMarker = args.marker; }
+void SleepWrapper(const Hours&) {}
+void UnknownSleep(const Hours&) {}
+
+void SleepChoices()
+{
+  SleepWaitChoice<Hours> choice;
+  using Callback = SleepWaitChoice<Hours>::Callback;
+  Callback* slot = NativeSleepOk;
+  CHECK(choice.Bind(&slot, NativeSleepOk, NativeSleepCancel, SleepWrapper, true, true));
+  CHECK(slot == SleepWrapper);
+  CHECK(choice.Bind(&slot, NativeSleepOk, NativeSleepCancel, SleepWrapper, true, true)); // never recapture wrapper
+  const Hours args{ 2, 123 };
+  int hidden = 0, notes = 0;
+  CHECK(choice.Run(args, true, true, [&] { ++hidden; }, [&] { ++notes; }));
+  CHECK(sleepOk == 0 && skippedSeconds == 0 && sleepPause == 0);
+  CHECK(sleepCancel == 1 && sleepMarker == 123 && notes == 1 && hidden == 0);
+  sleepOk = sleepCancel = skippedSeconds = sleepPause = notes = hidden = 0;
+  CHECK(choice.Run(args, false, true, [&] { ++hidden; }, [&] { ++notes; }));
+  CHECK(sleepOk == 1 && skippedSeconds == 7200 && sleepPause == 1 && sleepMarker == 123);
+  CHECK(sleepCancel == 0 && notes == 0 && hidden == 0); // exact original offline behavior
+  sleepOk = sleepCancel = skippedSeconds = sleepPause = notes = hidden = 0;
+  CHECK(choice.Run(args, true, false, [&] { ++hidden; }, [&] { ++notes; }));
+  CHECK(sleepOk == 0 && sleepCancel == 0 && skippedSeconds == 0 && sleepPause == 0);
+  CHECK(hidden == 1 && notes == 1); // changed Cancel: safe queue-hide, never OK
+  Callback* unknown = UnknownSleep;
+  CHECK(!choice.Bind(&unknown, NativeSleepOk, NativeSleepCancel, SleepWrapper, true, true));
+  CHECK(unknown == UnknownSleep);
+  Callback* known = NativeSleepOk;
+  CHECK(!choice.Bind(&known, NativeSleepOk, NativeSleepCancel, SleepWrapper, false, true));
+  CHECK(!choice.Bind(&known, NativeSleepOk, NativeSleepCancel, SleepWrapper, true, false));
+  CHECK(known == NativeSleepOk);
+  CHECK(!choice.Bind(nullptr, NativeSleepOk, NativeSleepCancel, SleepWrapper, true, true));
+  SleepWaitChoice<Hours> unbound;
+  CHECK(!unbound.Bind(&slot, NativeSleepOk, NativeSleepCancel, SleepWrapper, true, true));
+  CHECK(!unbound.Run(args, true, true, [&] { ++hidden; }, [&] { ++notes; }));
+}
+
 int main()
 {
   // Every unrelated bit, including cursor/modal and freeze-frame screenshot
@@ -257,6 +305,7 @@ int main()
   std::printf("checking SKSE PostLoad success encoded as pointer value 1\n");
   std::fflush(stdout);
   CHECK(P::PostLoadSucceeded(reinterpret_cast<void*>(std::uintptr_t(1))));
+  SleepChoices();
   std::printf("%d failures\n", failed);
   return failed ? 1 : 0;
 }
