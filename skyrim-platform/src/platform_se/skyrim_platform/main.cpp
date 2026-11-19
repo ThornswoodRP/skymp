@@ -10,6 +10,7 @@
 #include "EventsApi.h"
 #include "FlowManager.h"
 #include "FridaHooks.h"
+#include "GameAudioRoute.h"
 #include "GameplayMenuUnpaused.h"
 #include "Hooks.h"
 #include "IPC.h"
@@ -163,6 +164,12 @@ DLLEXPORT bool SKSEAPI SKSEPlugin_Load_Impl(const SKSE::LoadInterface* skse)
   logger::info("Loading plugin.");
 
   SKSE::Init(skse);
+  const auto audioRoute = GameAudioRoute::ApplyAtStartup();
+  if (audioRoute == GameAudioRoute::Result::Applied) {
+    logger::info("Applied the launcher's Skyrim audio output preference.");
+  } else if (audioRoute == GameAudioRoute::Result::Unavailable) {
+    logger::warn("Could not apply the launcher's Skyrim audio output preference.");
+  }
   SKSE::AllocTrampoline(64);
 
   const auto papyrusInterface = SKSE::GetPapyrusInterface();
