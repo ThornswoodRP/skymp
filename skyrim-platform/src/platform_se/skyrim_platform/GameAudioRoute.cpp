@@ -77,8 +77,9 @@ std::optional<std::wstring> ReadSelection()
     : std::nullopt;
 }
 
-bool ActiveOutput(const std::wstring& id)
+bool CheckOutput(const std::wstring& id, bool& available)
 {
+  available = id.empty();
   ComPtr<IMMDeviceEnumerator> enumerator;
   auto hr = CoCreateInstance(__uuidof(MMDeviceEnumerator), nullptr, CLSCTX_ALL,
                              IID_PPV_ARGS(&enumerator));
@@ -94,14 +95,15 @@ bool ActiveOutput(const std::wstring& id)
   ComPtr<IMMDevice> endpoint;
   hr = enumerator->GetDevice(id.c_str(), &endpoint);
   if (FAILED(hr) || !endpoint)
-    return false;
+    return true;
   DWORD state = 0;
   if (FAILED(endpoint->GetState(&state)) || state != DEVICE_STATE_ACTIVE)
-    return false;
+    return true;
   ComPtr<IMMEndpoint> info;
   EDataFlow flow = eAll;
-  return SUCCEEDED(endpoint.As(&info)) &&
+  available = SUCCEEDED(endpoint.As(&info)) &&
     SUCCEEDED(info->GetDataFlow(&flow)) && flow == eRender;
+  return true;
 }
 
 bool ApplyPreference(const std::wstring& id)
@@ -109,7 +111,8 @@ bool ApplyPreference(const std::wstring& id)
   Runtime runtime;
   if (FAILED(runtime.status) && runtime.status != RPC_E_CHANGED_MODE)
     return false;
-  if (!ActiveOutput(id))
+  bool available = false;
+  if (!CheckOutput(id, available))
     return false;
 
   WinString runtimeClass;
@@ -124,7 +127,7 @@ bool ApplyPreference(const std::wstring& id)
     return false;
 
   WinString target;
-  if (!id.empty()) {
+  if (available && !id.empty()) {
     auto name = std::wstring(LR"(\\?\SWD#MMDEVAPI#)") + id +
       L"#{e6327cad-dcec-4949-ae8a-991e976a79d2}";
     if (FAILED(WindowsCreateString(name.c_str(), static_cast<UINT32>(name.size()),
@@ -150,7 +153,7 @@ bool ApplyPreference(const std::wstring& id)
       set(policy.Get(), pid, eRender, roles[restored], previous[restored].value);
     return false;
   }
-  return true;
+  return available;
 }
 }
 
