@@ -47,6 +47,9 @@ learned-spell set in one live commit and one queued character snapshot.
 `change` contains `name`, `expected`, `replacement`, `expectedLifeGeneration`,
 `expectedRuntimeIdentity`, `expectedSpells` and `replacementSpells`.
 Use the current process-local identity from `mp.getActorRuntimeIdentity()`.
+Read the complete stored spell set with `mp.getActorLearnedSpells(actorId)`.
+Papyrus `GetSpellCount` and `GetNthSpell` omit inherited entries even when
+explicitly stored, so their result is not a complete compare-and-set fence.
 
 The registered custom property may be visible to its owner, but must be
 hidden from neighbors. Native underscore-prefixed properties are forbidden.

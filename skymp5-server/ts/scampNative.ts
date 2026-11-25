@@ -65,6 +65,11 @@ export interface ScampServer {
     property: {name: string; expected: unknown; replacement: unknown;
       expectedLifeGeneration: number; expectedRuntimeIdentity: string}): boolean;
   getInventoryReceipt(formId: number): string;
+  /** Complete stored learned-spell set, including explicitly stored inherited
+   * abilities/powers. Papyrus GetSpellCount/GetNthSpell omit inherited entries
+   * and cannot provide the full-set fence for knowledge CAS.
+   */
+  getActorLearnedSpells(formId: number): number[];
   /** Atomically queues the complete property and learned-spell set, and opts
    * this character into server enforcement of that active spell list. Both
    * property values are capped at 1 MiB; spell arrays are unique sets of at

@@ -139,6 +139,7 @@ Napi::Object ScampServer::Init(Napi::Env env, Napi::Object exports)
       InstanceMethod("lookupEspmRecordById",
                      &ScampServer::LookupEspmRecordById),
       InstanceMethod("compareAndSetActorPropertyAndSpells", &ScampServer::CompareAndSetActorPropertyAndSpells),
+      InstanceMethod("getActorLearnedSpells", &ScampServer::GetActorLearnedSpells),
       InstanceMethod("getEspmLoadOrder", &ScampServer::GetEspmLoadOrder),
       InstanceMethod("getNeighborsByPosition",
                      &ScampServer::GetNeighborsByPosition),
@@ -774,6 +775,20 @@ Napi::Value ScampServer::CompareAndSetActorProperty(const Napi::CallbackInfo& in
     if (!actor.HasRuntimeIdentity(entryRuntime))return Napi::Boolean::New(info.Env(), false);
     return Napi::Boolean::New(info.Env(), actor.CompareAndSetActorProperty(
       static_cast<int32_t>(profile), property));
+  } catch (const std::exception& error) {
+    throw Napi::Error::New(info.Env(), error.what());
+  }
+}
+
+Napi::Value ScampServer::GetActorLearnedSpells(const Napi::CallbackInfo& info)
+{
+  try {
+    const auto id = InventoryActorId(info[0]);
+    const auto spells = partOne->worldState.GetFormAt<MpActor>(id).GetSpellList();
+    auto result = Napi::Array::New(info.Env(), spells.size());
+    for (size_t i = 0; i < spells.size(); ++i)
+      result.Set(static_cast<uint32_t>(i), Napi::Number::New(info.Env(), spells[i]));
+    return result;
   } catch (const std::exception& error) {
     throw Napi::Error::New(info.Env(), error.what());
   }
