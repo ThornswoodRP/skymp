@@ -35,11 +35,6 @@ export class ObjectReferenceEx {
     return Math.sqrt(deltaX * deltaX + deltaY * deltaY);
   };
 
-  static isBench(base: Form): boolean {
-    const getWorkbenchType = (sp as any).getWorkbenchType as (baseFormId: number) => number;
-    return getWorkbenchType(base.getFormID()) !== 0;
-  }
-
   /*
     THORNSWOOD PATCH (Thornswood #4598). THE BASES THE SERVER ANSWERS FIRST.
 
@@ -100,10 +95,9 @@ export class ObjectReferenceEx {
       world was simply gone. The unlock is removed and a locked reference is
       left unblocked, which is what makes the lockpicking mini game appear.
 
-      Activators and furniture are not blocked either: levers, chains, bars,
-      chairs and shrines are Skyrim's to run and the server has no scripts for
-      them. Containers, doors, items and actors still go through the server
-      exactly as before.
+      Activators are not blocked either: levers, chains, bars and shrines
+      are Skyrim's to run and the server has no scripts for them. Furniture,
+      containers, doors, items and actors go through the server.
 
       activationService has the other half: while a reference is locked it is
       not announced to the server at all.
@@ -120,21 +114,14 @@ export class ObjectReferenceEx {
       only sends the activation: a refused one changes nothing on this
       machine, and the server hands over what an allowed one gives.
 
-      THORNSWOOD PATCH (Thornswood #3080). A crafting bench goes through the
-      server too, before Skyrim opens its menu.
-
-      Furniture stays Skyrim's, as above, except furniture whose record names
-      a bench type (WBDT): a forge, a cookpot, a loom, an alchemy lab, an
-      enchanter. Unblocked, a bench opened its crafting menu on the presser's
-      machine before the server had said anything, so somebody the server
-      refused the bench still stood in its menu and only each pick was
-      refused. Blocked, a refused press opens nothing, and an allowed one
-      comes back as the server's open, which activates the bench with
-      default processing exactly as it does a container. One person works a
-      bench at a time, the server's occupancy rule for furniture.
-
-      getWorkbenchType is ours (ObjectReferenceApi) and is not in the npm
-      typings this client builds against, hence the cast.
+      THORNSWOOD PATCH (Thornswood #6621). All furniture waits for the server.
+      Crafting benches already did (#3080), but an ordinary seat processed
+      the physical press locally and then processed the server's FURN answer
+      again. ActivationService announces both kinds; the server owns their
+      occupancy and returns one allowed default activation. Blocking the
+      initial local press gives seats that same single path. A refused press
+      changes nothing, and ordinary beds, chairs and crafting benches each
+      process an accepted press once.
 
       THORNSWOOD PATCH (Thornswood #4598). And any base the server names as
       one it answers first (setServerFirstBases): a chopping block, an ore
@@ -151,7 +138,7 @@ export class ObjectReferenceEx {
       || t === FormType.NPC
       || t === FormType.Flora
       || t === FormType.Tree
-      || (t === FormType.Furniture && ObjectReferenceEx.isBench(base))
+      || t === FormType.Furniture
       || (listed && ObjectReferenceEx.serverFirstBases.has(base.getFormID()))
       || (t === FormType.Door && self.getBaseObject()?.getFormID() !== caveGSecretDoor01)) {
       self.blockActivation(true);
