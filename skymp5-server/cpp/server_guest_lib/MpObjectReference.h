@@ -159,6 +159,7 @@ public:
                             bool isVisibleByOwner, bool isVisibleByNeighbor);
   void SetTeleportFlag(bool value);
   void SetPosAndAngleSilent(const NiPoint3& pos, const NiPoint3& rot);
+  void SendPlacedTransform();
   void Delete();
   void SetCount(uint32_t count);
 
