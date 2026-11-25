@@ -8,6 +8,8 @@ const ts=require('../../../skymp5-client/node_modules/typescript');
 exports.install=function(sp,reference){
  const listeners={update:[]},scopes=[];let frame=0,creations=0;
  const originalGet=sp.Game.getFormEx;
+ const openMenus=new Set();
+ sp.Ui=sp.Ui||{isMenuOpen:name=>openMenus.has(name)};
  sp.Game.getFormEx=id=>id===reference.getFormID()?reference:originalGet(id);
  sp.ObjectReference.from=value=>value instanceof sp.ObjectReference?value:null;
  sp.on=(name,fn)=>{(listeners[name]||=[]).push(fn);};
@@ -22,7 +24,10 @@ exports.install=function(sp,reference){
   };scopes.push(scope);return scope;
  };
  const coordinatorFile=path.join(__dirname,'../../../skymp5-client/src/sync/inventoryApplyCoordinator.ts');
- const sandbox={exports:{},require:name=>{if(name==='skyrimPlatform')return sp;throw Error('Unexpected coordinator dependency '+name);}};
+ const menuFile=path.join(__dirname,'../../../skymp5-client/src/sync/inventoryMenus.ts'),menuBox={exports:{},require:name=>{if(name==='skyrimPlatform')return sp;throw Error('Unexpected menu dependency '+name);}};
+ vm.runInNewContext(ts.transpileModule(fs.readFileSync(menuFile,'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2018}}).outputText,menuBox);
+ const menuPolicy=menuBox.exports;
+ const sandbox={exports:{},require:name=>{if(name==='skyrimPlatform')return sp;if(name==='./inventoryMenus')return menuPolicy;throw Error('Unexpected coordinator dependency '+name);}};
  vm.runInNewContext(ts.transpileModule(fs.readFileSync(coordinatorFile,'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2018}}).outputText,sandbox);
  const coordinator=sandbox.exports;
  function advance(){
@@ -31,6 +36,7 @@ exports.install=function(sp,reference){
   let budget=16;
   for(const scope of scopes){
    while(scope.value==='pending'){
+    if(scope.id===0x14&&menuPolicy.ownerInventoryMenuBlocked())break;
     const e=scope.descriptors[scope.at];
     if(scope.refresh){
      if(budget<1)break;budget--;sp.Actor.from(reference)?.queueNiNodeUpdate();scope.refresh=false;
@@ -54,5 +60,5 @@ exports.install=function(sp,reference){
   }
  }
  function drain(){let turns=0;while(coordinator.inventoryApplyPending(reference.getFormID())){if(++turns>20000)throw Error('Fixture inventory never settled');advance();}}
- return {coordinator,advance,drain,scopes,emit(name){for(const fn of listeners[name]||[])fn();},get creations(){return creations;},get frame(){return frame;}};
+ return {coordinator,menuPolicy,advance,drain,scopes,menu(name,open=true){open?openMenus.add(name):openMenus.delete(name);},emit(name){for(const fn of listeners[name]||[])fn();},get creations(){return creations;},get frame(){return frame;}};
 };

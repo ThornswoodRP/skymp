@@ -69,6 +69,18 @@ checks the latest server target against a newly acquired player wrapper.
 It refuses a stale or incomplete activation. New targets, destroyed views,
 death messages, connection changes and explicit loads cancel prior work.
 
+Server-admitted containers use the same complete-job gate and capture a fresh
+actual transfer baseline immediately before native activation. This avoids
+counting later grant units as items manually taken from that container.
+Owner preparation and every native owner addition/refresh defer during the
+five existing bad menus and Lockpicking Menu. NPC/reference jobs keep their
+ordinary behavior. Manual container events are not discarded.
+
+Native locked-container handling bypasses server admission. Its exact
+lockpick-success/close-to-container event ordering still needs validation;
+the menu predicates alone are not a guarantee that no intermediate gap can
+occur. This remains an open correctness/acceptance item.
+
 ## Remaining runtime acceptance
 
 The TypeScript fixtures count native boundary calls, not Skyrim frame cost.

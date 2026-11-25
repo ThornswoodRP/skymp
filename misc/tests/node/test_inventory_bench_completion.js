@@ -8,23 +8,28 @@ const file=path.join(__dirname,'test_inventory_differences_close.js'),source=fs.
 const fixture=new Module(file,module);fixture.filename=file;fixture.paths=Module._nodeModulePaths(__dirname);fixture._compile(source.slice(0,end)+'\nmodule.exports={makeGame,SWORD};',file);
 const {makeGame,SWORD}=fixture.exports;let pass=0,fail=0;
 function yes(label,ok){console.log((ok?'PASS ':'FAIL ')+label);ok?pass++:fail++;}
-function game(){
+function game(type=40){
  const g=makeGame(),sp=g.sp,once=[],waits=[];let opens=0,seated=false,paused=false;
  sp.storage.worldModel={forms:[{refrId:0xff000014}],playerCharacterFormIdx:0,playerCharacterRefrId:0xff000014};
  sp.storage.idManager={getId:id=>id};
  sp.Game.getPlayer=()=>g.pc;g.pc.getFurnitureReference=()=>seated?target:null;
- sp.Ui={isMenuOpen:()=>false};sp.Utility={isInMenuMode:()=>paused,wait:()=>new Promise(resolve=>waits.push(resolve)),waitMenuMode:()=>Promise.resolve()};
+ sp.Ui={isMenuOpen:name=>name==='ContainerMenu'&&(paused||(type===28&&seated))};sp.Utility={isInMenuMode:()=>paused,wait:()=>new Promise(resolve=>waits.push(resolve)),waitMenuMode:()=>Promise.resolve()};
  sp.once=(name,fn)=>{if(name!=='update')throw Error('unexpected event '+name);once.push(fn);};
  sp.on('update',()=>{for(const fn of once.splice(0))fn();for(const resolve of waits.splice(0))resolve();});
- const target=new sp.ObjectReference(0x99);target.getBaseObject=()=>({getType:()=>40});target.activate=()=>{opens++;seated=true;};
- const get=sp.Game.getFormEx;sp.Game.getFormEx=id=>id===0x99?target:get(id);sp.FormType.Furniture=40;
+ const target=new sp.ObjectReference(0x99);target.getBaseObject=()=>({getType:()=>type,getFormID:()=>0x1000});target.activate=()=>{opens++;seated=true;};target.getOpenState=()=>0;target.isLocked=()=>false;
+ const get=sp.Game.getFormEx;sp.Game.getFormEx=id=>id===0x99?target:get(id);sp.FormType.Furniture=40;sp.FormType.Container=28;
+ const lastFile=path.join(__dirname,'../../../skymp5-client/src/services/services/lastInvService.ts'),lastBox={exports:{},require:()=>({ClientListener:class{}})};
+ vm.runInNewContext(ts.transpileModule(fs.readFileSync(lastFile,'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2018}}).outputText,lastBox);
+ const Last=lastBox.exports.LastInvService,last=new Last(sp,{}),handlers={},messages=[];
+ const controller={on:(name,fn)=>handlers[name]=fn,lookupListener:()=>last,emitter:{on(){},emit(name,data){if(name==='sendMessage')messages.push(data.message);}}};
  const remoteFile=path.join(__dirname,'../../../skymp5-client/src/services/services/remoteServer.ts');
  const sandbox={exports:{},Date:{now:()=>100},Promise,require(name){
   if(name==='skyrimPlatform')return sp;
   if(name.endsWith('/inventory'))return g.inv;
   if(name.endsWith('/inventoryApplyCoordinator'))return g.nativeApply.coordinator;
   if(name.endsWith('/clientListener'))return{ClientListener:class{}};
-  if(name.endsWith('/equipment'))return{isBadMenuShown:()=>paused};
+  if(name.endsWith('/equipment'))return{isBadMenuShown:()=>paused||g.nativeApply.menuPolicy.isBadMenuShown()};
+  if(name.endsWith('/lastInvService'))return{LastInvService:Last};
   if(name.endsWith('/nameof'))return{nameof:value=>value};
   if(name.endsWith('/worldViewMisc'))return{remoteIdToLocalId:id=>id,getViewFromStorage:()=>null};
   if(name.endsWith('/logging'))return{logError(){},logTrace(){}};
@@ -33,8 +38,8 @@ function game(){
  }};
  vm.runInNewContext(ts.transpileModule(fs.readFileSync(remoteFile,'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2018}}).outputText,sandbox);
  const remote=Object.create(sandbox.exports.RemoteServer.prototype);
- Object.assign(remote,{sp,controller:{emitter:{emit(){}}},ownerSpawnEpoch:0,raceMenuRequest:0,numSetInventory:0,teleportsOnTheirWay:new Map()});
- return{g,sp,remote,get opens(){return opens;},set paused(value){paused=value;},
+ Object.assign(remote,{sp,controller,ownerSpawnEpoch:0,raceMenuRequest:0,numSetInventory:0,teleportsOnTheirWay:new Map()});
+ return{g,sp,remote,remoteApi:sandbox.exports,last,Last,controller,handlers,messages,targetRef:target,get opens(){return opens;},set paused(value){paused=value;},
   async advance(n){for(let i=0;i<n;i++){g.advance();for(let micro=0;micro<12;micro++)await Promise.resolve();}},
   open(){remote.onOpenContainerMessage({message:{target:0x99}});},
   target(entries){sp.storage.pcInv={entries};remote.ownerInventory=sp.storage.pcInv;},

@@ -62,6 +62,7 @@ import {
   remoteIdToLocalId,
 } from '../../view/worldViewMisc';
 import { TimeService } from './timeService';
+import { LastInvService } from './lastInvService';
 import { logTrace, logError } from '../../logging';
 
 import { SpellCastMessage } from '../messages/spellCastMessage';
@@ -262,20 +263,30 @@ export class RemoteServer extends ClientListener {
         return;
       }
 
-      // THORNSWOOD PATCH (Thornswood #3159). See packBeforeBench.
-      if (refr.getBaseObject()?.getType() === FormType.Furniture) {
+      const requestedType = refr.getBaseObject()?.getType();
+      const requestedBase = refr.getBaseObject()?.getFormID();
+      // A container's transfer baseline must not precede later grant units.
+      // It shares the whole-job gate with furniture before native activation.
+      if (requestedType === FormType.Furniture || requestedType === FormType.Container) {
         if (!await this.packBeforeBench()) { return; }
         if (epoch !== this.ownerSpawnEpoch) { return; }
         // SP3 wrappers expire on Papyrus updates. Keep the id across the
         // inventory wait, then resolve again in the current update.
-        refr = ObjectReference.from(Game.getFormEx(remoteIdToLocalId(remoteId)));
-        if (refr === null) {
+        const currentLocalId = remoteIdToLocalId(remoteId);
+        if (currentLocalId !== localId) return;
+        refr = ObjectReference.from(Game.getFormEx(currentLocalId));
+        if (refr === null || refr.getBaseObject()?.getType() !== requestedType || refr.getBaseObject()?.getFormID() !== requestedBase) {
           logError(this, 'onOpenContainerMessage - furniture left while waiting for inventory', 'remoteId', remoteId.toString(16));
           return;
         }
       }
 
-      refr.activate(Game.getPlayer(), true);
+      const currentPlayer = Game.getPlayer();
+      if (!currentPlayer) return;
+      if (requestedType === FormType.Container) {
+        this.controller.lookupListener(LastInvService).lastInv = getInventory(currentPlayer);
+      }
+      refr.activate(currentPlayer, true);
 
       const baseObject = refr.getBaseObject();
       const baseType = baseObject?.getType();

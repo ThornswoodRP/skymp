@@ -1,5 +1,6 @@
 #include "../../../skyrim-platform/src/platform_se/skyrim_platform/InventoryApplyScheduler.h"
 #include "InventoryPumpUnderTest.h"
+#include "../../../skyrim-platform/src/platform_se/skyrim_platform/InventoryApplyMenus.h"
 #include "../../../skyrim-platform/src/platform_se/skyrim_platform/InventoryQueueFence.h"
 #include "../../../viet/include/TaskQueue.h"
 #include <cassert>
@@ -216,5 +217,26 @@ int main() {
     return 77;
   }
   assert(admitted->GetState() == State::Drained && raceAdds == 1);
+  for (const std::string menu : {"InventoryMenu", "FavoritesMenu", "MagicMenu", "ContainerMenu", "Crafting Menu", "Lockpicking Menu"}) {
+    const auto isOpen = [&](const char* name) {return menu == name;};
+    assert(InventoryApplyMenus::Blocks(0x14, isOpen));
+    assert(!InventoryApplyMenus::Blocks(0xff000010, isOpen));
+  }
+  Scheduler menuScheduler([] {return uint64_t{0};});
+  bool containerOpen = true;
+  uint32_t ownerAdds = 0, npcAdds = 0;
+  auto ownerMenu = menuScheduler.Submit(0x14, 28, {Units(40, [&](uint32_t) {
+    if (InventoryApplyMenus::Blocks(0x14, [&](const char* name) {return containerOpen && std::string(name) == "ContainerMenu";})) return UnitResult::Deferred;
+    ++ownerAdds;return UnitResult::Ran;
+  })}, [] {return true;});
+  auto npcMenu = menuScheduler.Submit(0x15, 29, {Units(1, [&](uint32_t) {
+    assert(!InventoryApplyMenus::Blocks(0x15, [](const char*) {return true;}));
+    ++npcAdds;return UnitResult::Ran;
+  })}, [] {return true;});
+  menuScheduler.Tick();menuScheduler.Tick();
+  assert(ownerAdds == 0 && npcAdds == 1 && ownerMenu->GetState() == State::Pending && npcMenu->GetState() == State::Drained);
+  containerOpen = false;
+  while(menuScheduler.HasPending()) menuScheduler.Tick();
+  assert(ownerAdds == 40 && ownerMenu->GetState() == State::Drained);
   std::cout << "inventory scheduler: count/time/fairness/FIFO/cancel/uncertainty controls passed\n";
 }

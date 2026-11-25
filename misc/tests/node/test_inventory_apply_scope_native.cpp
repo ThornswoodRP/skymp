@@ -15,6 +15,7 @@ bool HasLoadedWorld() { return world.HasLoadedWorld(); }
 struct {void* vm = reinterpret_cast<void*>(1);} g_nativeCallRequirements;
 
 namespace RE {
+inline bool forbidNativeReads = false;
 struct TESObjectREFR;
 struct Slot { TESObjectREFR* reference; };
 struct Resolved {
@@ -29,8 +30,8 @@ struct ObjectRefHandle {
 struct TESForm {
   static inline std::map<uint32_t, TESForm*> forms;
   virtual ~TESForm() = default;
-  template<class T> T* As() { return dynamic_cast<T*>(this); }
-  template<class T> static T* LookupByID(uint32_t id) { return dynamic_cast<T*>(forms[id]); }
+  template<class T> T* As() { assert(!forbidNativeReads); return dynamic_cast<T*>(this); }
+  template<class T> static T* LookupByID(uint32_t id) { assert(!forbidNativeReads); return dynamic_cast<T*>(forms[id]); }
 };
 struct TESObjectREFR : TESForm {
   std::shared_ptr<Slot> slot = std::make_shared<Slot>(Slot{this});
@@ -49,6 +50,7 @@ InventoryApply::Scheduler scheduler([] { return uint64_t{0}; });
 std::recursive_mutex scopesMutex;
 std::unordered_map<uint32_t, std::weak_ptr<Scope>> scopes;
 #include "InventoryStateUnderTest.inc"
+#include "InventoryPreparationUnderTest.inc"
 #include "InventoryFactoryUnderTest.inc"
 
 namespace Napi {using Env = int;}
@@ -75,6 +77,20 @@ int main() {
   GameplayMenuUnpaused::world.Loaded(true);
   auto a = CreateScope(0x14);
   assert(a->Current() && a->Ready() && !std::strcmp(StateName(a), "preparing"));
+  const auto getter = [&] {
+    GameplayMenuUnpaused::world.Loading();
+    InventoryLoadEpoch::Advance();
+    a->Cancel();
+    RE::forbidNativeReads = true;
+    return true;
+  };
+  assert(getter());
+  // Execute the actual post-getter admission helper. No actor/form read may
+  // happen after a descriptor getter synchronously invalidates the world.
+  try {ValidatePreparation(a); assert(false);} catch(const std::logic_error&) {}
+  RE::forbidNativeReads = false;
+  GameplayMenuUnpaused::world.Loaded(true);
+  a = CreateScope(0x14);
   int mutations = 0, preparations = 0;
   std::shared_ptr<Scope> c;
   a->job = scheduler.Submit(0x14, reinterpret_cast<uintptr_t>(&actor), {{1, 1, 1, [&](uint32_t) {

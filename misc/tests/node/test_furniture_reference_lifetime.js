@@ -31,7 +31,7 @@ function fixture(options = {}) {
       getFormID() { valid(); return id; },
       getBaseObject() {
         valid();
-        return {getType() { valid(); return actor ? 43 : type; }};
+        return {getType() { valid(); return actor ? 43 : type; },getFormID(){valid();return 0x1000;}};
       },
       getFurnitureReference() { valid(); return seated ? native(targetId) : null; },
       activate(player, defaultOnly) {
@@ -83,7 +83,7 @@ function fixture(options = {}) {
   const service = Object.create(sandbox.exports.RemoteServer.prototype);
   service.sp = sp;
   service.ownerSpawnEpoch = 0;
-  service.controller = {emitter: {emit: (_name, message) => messages.push(message)}};
+  service.controller = {lookupListener:()=>({lastInv:undefined}),emitter: {emit: (_name, message) => messages.push(message)}};
   function observe(promise) { Promise.resolve(promise).catch(error => errors.push(error)); }
   return {
     service, sp, state, errors, opens, applies, messages,
@@ -150,7 +150,7 @@ function noExpired(f) {
     f.open(); await f.advance(); noExpired(f); assert.equal(f.opens.length, 0);
   });
   await check('containers retain their existing activation and close acknowledgement', async () => {
-    const f = fixture({container: true}); f.open(); await f.advance(); noExpired(f);
+    const f = fixture({container: true,current:true}); f.open(); await f.advance(); noExpired(f);
     assert.equal(f.opens.length, 1); assert.equal(f.applies.length, 0);
     assert.equal(f.messages.length, 1);
   });

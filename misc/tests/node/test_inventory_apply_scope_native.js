@@ -8,6 +8,12 @@ try {
   if(start<0||end<0)throw Error('actual inventory '+part+' boundary missing');
   fs.writeFileSync(path.join(work,file),source.slice(start,end));
  }
+ const preparation=source.indexOf('// ==== inventory preparation admission ===='),preparationEnd=source.indexOf('// ==== end inventory preparation admission ====',preparation);
+ if(preparation<0||preparationEnd<0)throw Error('Actual post-getter admission boundary missing');
+ fs.writeFileSync(path.join(work,'InventoryPreparationUnderTest.inc'),source.slice(preparation,preparationEnd));
+ const operations=source.slice(source.indexOf('std::vector<InventoryApply::Operation> Operations('),source.indexOf('// ==== inventory apply state ===='));
+ const lastGetter=operations.lastIndexOf('object.Get('),validation=operations.indexOf('ValidatePreparation(scope);'),lookup=operations.indexOf('addition->form = RE::TESForm::LookupByID('),identity=operations.indexOf('scope->identity->');
+ if(lastGetter<0||!(lastGetter<validation&&validation<lookup&&lookup<identity))throw Error('Descriptor lifecycle validation must follow every getter and precede native lookup/dereference');
  const platform=fs.readFileSync(path.join(__dirname,'../../../skyrim-platform/src/platform_se/skyrim_platform/SkyrimPlatform.cpp'),'utf8');
  const push=platform.indexOf('void SkyrimPlatform::PushAndWait('),pushEnd=platform.indexOf('\nvoid SkyrimPlatform::Push(',push);
  if(push<0||pushEnd<0)throw Error('Actual synchronous worker boundary missing');

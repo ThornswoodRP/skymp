@@ -3,6 +3,7 @@
 #include "InventoryApplyScheduler.h"
 #include "InventoryApplyPump.h"
 #include "InventoryApplyContext.h"
+#include "InventoryApplyMenus.h"
 #include "InventoryLoadEpoch.h"
 #include "GameplayMenuUnpaused.h"
 #include "PapyrusTESModPlatform.h"
@@ -52,6 +53,14 @@ struct Scope {
 };
 
 // ==== end inventory apply scope ====
+
+// ==== inventory preparation admission ====
+void ValidatePreparation(const std::shared_ptr<Scope>& scope) {
+  InventoryApplyContext::RequireUpdate();
+  if (!g_nativeCallRequirements.vm || !scope->Current())
+    throw std::logic_error("Inventory scope changed while reading descriptors");
+}
+// ==== end inventory preparation admission ====
 
 std::recursive_mutex scopesMutex;
 std::unordered_map<uint32_t, std::weak_ptr<Scope>> scopes;
@@ -128,6 +137,10 @@ std::vector<InventoryApply::Operation> Operations(Napi::Value value, const std::
     if (!object.Get("name").IsString()) throw std::invalid_argument("Invalid inventory name");
     addition->name = object.Get("name").As<Napi::String>().Utf8Value();
     if (addition->name.find('\0') != std::string::npos) throw std::invalid_argument("Invalid inventory name");
+    // Descriptor getters can synchronously load/cancel/replace the world.
+    // Revalidate after the LAST getter, before looking up forms or using the
+    // old scope's raw actor identity to plan a refresh.
+    ValidatePreparation(scope);
     addition->form = RE::TESForm::LookupByID(addition->baseId);
     addition->enchantment = addition->enchantmentId ? RE::TESForm::LookupByID<RE::EnchantmentItem>(addition->enchantmentId) : nullptr;
     addition->poison = addition->poisonId ? RE::TESForm::LookupByID<RE::AlchemyItem>(addition->poisonId) : nullptr;
@@ -145,7 +158,7 @@ std::vector<InventoryApply::Operation> Operations(Napi::Value value, const std::
         auto held = weak.lock();
         if (!held || !held->Current()) return UnitResult::Cancelled;
         auto ui = RE::UI::GetSingleton();
-        if (!ui || ui->GameIsPaused()) return UnitResult::Deferred;
+        if (!ui || ui->GameIsPaused() || InventoryApplyMenus::Blocks(held->referenceId, [ui](const char* name) {return ui->IsMenuOpen(name);})) return UnitResult::Deferred;
         // Runtime forms and reference IDs can be reused. Re-resolve every
         // unit and reject a replacement rather than dereferencing old forms.
         if (RE::TESForm::LookupByID(addition->baseId) != addition->form ||
@@ -165,7 +178,7 @@ std::vector<InventoryApply::Operation> Operations(Napi::Value value, const std::
         auto held = weak.lock();
         if (!held || !held->Current()) return UnitResult::Cancelled;
         auto ui = RE::UI::GetSingleton();
-        if (!ui || ui->GameIsPaused()) return UnitResult::Deferred;
+        if (!ui || ui->GameIsPaused() || InventoryApplyMenus::Blocks(held->referenceId, [ui](const char* name) {return ui->IsMenuOpen(name);})) return UnitResult::Deferred;
         // Exactly CallNative.cpp's Actor.QueueNiNodeUpdate operation, inline
         // and budgeted here instead of creating another per-item queue task.
         held->identity->As<RE::Actor>()->DoReset3D(false);

@@ -1,4 +1,5 @@
 import { createInventoryApply, cancelInventoryApply, getInventoryQueueFence, on, printConsole } from "skyrimPlatform";
+import { ownerInventoryMenuBlocked } from "./inventoryMenus";
 
 export interface InventoryAddition {
   baseId: number;
@@ -54,6 +55,7 @@ on("update", () => {
   applications.set(id, apply);
   if (!apply.scope.isCurrent()) { apply.scope.cancel(); return; }
   if (apply.prepared || !apply.scope.isReady() || !apply.queued()) return;
+  if (id === 0x14 && ownerInventoryMenuBlocked()) return;
   try {
     const additions = apply.prepare();
     if (!apply.scope.isCurrent() || applications.get(id) !== apply) return;
