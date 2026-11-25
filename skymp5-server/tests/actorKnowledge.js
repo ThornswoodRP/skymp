@@ -63,7 +63,7 @@ assert.deepEqual(mp.get(actor, 'thornswoodCharacter'), property.replacement);
 assert.deepEqual(mp.get(actor, 'inventory'), inventory);
 assert.deepEqual(spells(), [0x12fcc, 0x12fcd]);
 assert.deepEqual(mp.getActorLearnedSpells(actor), [0x12fcc, 0x12fcd, ability]);
-assert.equal(mp.get(actor, '_skympAuthoritativeSpells'), true);
+assert.throws(() => mp.get(actor, '_skympAuthoritativeSpells'), /doesn't exist/);
 assert.equal(commit(), false, 'replay refuses both state and spell changes');
 assert.equal(commit({expected: property.replacement,
   expectedSpells: spells(), replacementSpells: [0x12fcc, ability]}), false,
