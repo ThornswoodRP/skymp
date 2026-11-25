@@ -15,11 +15,11 @@
 // their TypeScript types taken off (node's module.stripTypeScriptTypes, Node
 // 22.13 or newer, or the typescript package), over stand-in references.
 //
-//   1. a chopping block and a vein streamed with no list are left to Skyrim,
-//      as before (a chair and a lever stay so throughout);
+//   1. furniture always waits for the server; a vein streamed with no list
+//      stays local until the server names it;
 //   2. the packet blocks the block and the vein already streamed;
 //   3. one streamed after the packet is blocked as it streams;
-//   4. a chair, a lever, a bench, a door and a locked chest are as before;
+//   4. chairs and benches wait, while levers and locked chests remain local;
 //   5. a later list without a base hands its references back to Skyrim;
 //   6. a packet of another type, or a list that is not numbers, changes nothing;
 //   7. the press on a blocked block is still sent to the server.
@@ -186,7 +186,7 @@ const door = ref(0xa005, DOOR);
 const chest = ref(0xa006, CHEST, true);
 [block1, vein1, chair, lever, forge, door, chest].forEach(function (r) { Ex.dealWithRef(r, r.getBaseObject()); });
 
-yes('1. with no list, a chopping block and a vein are left to Skyrim', block1.blocked === false && vein1.blocked === false);
+yes('1. with no list, furniture waits for the server and a vein stays local', block1.blocked === true && vein1.blocked === false);
 yes('the activation service listens for the server\'s packets', typeof handlers.customPacketMessage === 'function');
 
 packet({ customPacketType: 'serverFirstBases', bases: [0x7022e, 0x1000a] });
@@ -199,7 +199,7 @@ Ex.dealWithRef(block2, BLOCK);
 Ex.dealWithRef(vein2, VEIN);
 yes('3. a block and a vein streamed after the list are blocked as they stream', block2.blocked === true && vein2.blocked === true);
 
-yes('4. a chair and a lever are still Skyrim\'s', chair.blocked === false && lever.blocked === false);
+yes('4. a chair waits for the server while a lever stays local', chair.blocked === true && lever.blocked === false);
 yes('4. a bench and a door still wait for the server', forge.blocked === true && door.blocked === true);
 yes('4. a locked chest is still Skyrim\'s until it is open', chest.blocked === false);
 
@@ -276,8 +276,8 @@ netStorage.serverAddress = { hostName: 'test.invalid', port: 1 };
 pending = 'disconnect';
 handlers['on:tick']();
 pending = undefined;
-yes('8. disconnect reconnects with no previous list or leftover block',
-  connections === 1 && block1.blocked === false && vein1.blocked === false && forge.blocked === true);
+yes('8. disconnect clears the old list while preserving furniture defaults',
+  connections === 1 && block1.blocked === true && vein1.blocked === false && forge.blocked === true);
 
 const newVein = ref(0xa008, VEIN);
 Ex.dealWithRef(newVein, VEIN);
