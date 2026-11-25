@@ -82,6 +82,7 @@ export interface ScampServer {
     isDead: boolean; isDisabled: boolean; isHuman: boolean; isConnected: boolean;
     profileId: number;
     isServerControlled: boolean; lifeGeneration: number; difficultyTier: number;
+    isEssential: boolean; isProtected: boolean; isUnique: boolean;
     /** Process-local body revision, stable at death; revoked by revival, reload or ownership changes. */
     runtimeLifeIdentity: string;
     meleeReach: number; meleeAllowance: number;

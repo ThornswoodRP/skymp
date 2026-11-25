@@ -1956,6 +1956,23 @@ Napi::Value ScampServer::GetNpcAIState(const Napi::CallbackInfo& info)
     result.Set("isHuman", actor.IsCreatedAsPlayer() || actor.GetProfileId() >= 0);
     result.Set("isConnected", actor.GetUserId() != Networking::InvalidUserId);
     result.Set("isServerControlled", actor.IsServerControlled());
+    const auto npcLookup =
+      partOne->GetEspm().GetBrowser().LookupById(actor.GetBaseId());
+    const auto npc = espm::Convert<espm::NPC_>(npcLookup.rec);
+    if (!npc)
+      throw std::runtime_error("NPC safety flags unavailable");
+    const auto npcData = npc->GetData(world.GetEspmCache());
+    const auto inherited = EvaluateTemplate<espm::NPC_::UseBaseData>(
+      &world, actor.GetBaseId(), actor.GetTemplateChain(),
+      [](const espm::LookupResult&, const espm::NPC_::Data& data) {
+        return std::array<bool, 3>{ data.isEssential, data.isProtected,
+                                   data.isUnique };
+      });
+    // Cleanup is conservative: either the actor's authored base or its
+    // effective template may protect it. Unreadable inheritance throws.
+    result.Set("isEssential", npcData.isEssential || inherited[0]);
+    result.Set("isProtected", npcData.isProtected || inherited[1]);
+    result.Set("isUnique", npcData.isUnique || inherited[2]);
     const auto savedLife = nlohmann::json::parse(
       actor.GetDynamicFields().GetValueDump("_skympNpcLifeGeneration"));
     if (!savedLife.is_null() && (!savedLife.is_number_integer() || savedLife < 0 ||

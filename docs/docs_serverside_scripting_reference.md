@@ -39,6 +39,28 @@ mp.makeProperty("playerLevel", {
 });
 ```
 
+## Runtime god mode
+
+`mp.get(actorId, "isGodMode")` returns a boolean. The server gamemode may
+set it with `mp.set(actorId, "isGodMode", true | false)` after applying its
+own authorization policy. No client message sets this property.
+
+While enabled, health decreases are refused before they are sent or applied,
+including direct percentage writes and direct death calls. Healing still
+works. Enabling the mode on a dead or respawning actor throws and does not
+resurrect it. A new runtime actor identity revokes it, and it is not saved.
+
+A valid damaging weapon or spell hit by a protected actor is lethal. The
+normal hit ownership, range, equipment and timing checks still apply; zero
+damage and healing do not become lethal. The gamemode's existing dying/death
+policy still runs. Client flight, needs and visual behavior are separate
+gamemode responsibilities.
+
+`getNpcAIState()` also includes the NPC safety flags `isEssential`,
+`isProtected` and `isUnique`, conservatively combining the authored base and
+effective Base Data template. Unreadable inheritance throws. A script performing a broad NPC action must
+check these together with profile, connection and server-ownership state.
+
 ## mp.makeEventSource()
 
 Creates a new event source allowing you to catch specific game situations and pass them to a server as events. See [Events System](docs_events_system.md) for more information.

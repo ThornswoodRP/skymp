@@ -1777,6 +1777,10 @@ void ActionListener::OnSpellHit(MpActor* aggressor,
 
   targetActorValues.healthPercentage = CalculateCurrentHealthPercentage(
     *targetActorPtr, damage, targetActorValues.healthPercentage, nullptr);
+  // A staff mode changes the result of a valid damaging hit, never its
+  // ownership, range or equipment checks, nor a healing/zero-damage spell.
+  if (damage > 0.f && aggressor->IsGodMode())
+    targetActorValues.healthPercentage = 0.f;
 
   static const auto kHealthAvFilter =
     std::vector<espm::ActorValue>{ espm::ActorValue::Health };
@@ -1894,6 +1898,8 @@ void ActionListener::OnWeaponHit(MpActor* aggressor,
   float outBaseHealth = 0.f;
   currentActorValues.healthPercentage = CalculateCurrentHealthPercentage(
     targetActor, damage, healthPercentage, &outBaseHealth);
+  if (damage > 0.f && aggressor->IsGodMode())
+    currentActorValues.healthPercentage = 0.f;
 
   currentActorValues.healthPercentage =
     currentActorValues.healthPercentage < 0.f

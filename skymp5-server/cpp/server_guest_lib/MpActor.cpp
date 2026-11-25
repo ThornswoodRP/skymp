@@ -100,6 +100,7 @@ struct MpActor::Impl
   uint64_t runtimeIdentity = 0;
   uint64_t runtimeLifeIdentity = 0;
   bool hostedAuthorityReleased = false;
+  uint64_t godModeRuntime = 0;
 };
 
 namespace {
@@ -1241,6 +1242,19 @@ void MpActor::ResolveSnippet(uint32_t snippetIdx, VarValue v)
   }
 }
 
+bool MpActor::IsGodMode() const noexcept
+{
+  return pImpl->godModeRuntime != 0 &&
+    pImpl->godModeRuntime == GetRuntimeIdentity();
+}
+
+void MpActor::SetGodMode(bool value)
+{
+  if (value && (IsDead() || pImpl->isRespawning || !GetRuntimeIdentity()))
+    throw std::invalid_argument("Cannot protect a dead or unavailable actor");
+  pImpl->godModeRuntime = value ? GetRuntimeIdentity() : 0;
+}
+
 void MpActor::SetPercentage(espm::ActorValue av, float percentage)
 {
   if (IsDead() || pImpl->isRespawning) {
@@ -1249,6 +1263,11 @@ void MpActor::SetPercentage(espm::ActorValue av, float percentage)
   // Thornswood #1626. The actor's own machine reported this zero, so a death
   // the gamemode refuses is answered with the health it kept.
   bool tellKeptHealth = false;
+  if (av == espm::ActorValue::Health && IsGodMode() &&
+      percentage < ChangeForm().actorValues.healthPercentage) {
+    percentage = ChangeForm().actorValues.healthPercentage;
+    tellKeptHealth = true;
+  }
   if (av == espm::ActorValue::Health && percentage <= 0.f) {
     const auto keepAlive = GetParent()->LookupFormById(GetFormId());
     const auto runtimeIdentity = GetRuntimeIdentity();
@@ -1292,12 +1311,16 @@ void MpActor::SetPercentage(espm::ActorValue av, float percentage)
   }
 }
 
-void MpActor::SetPercentages(const ActorValues& actorValues,
+void MpActor::SetPercentages(const ActorValues& requestedActorValues,
                              MpActor* aggressor)
 {
   if (IsDead() || pImpl->isRespawning) {
     return;
   }
+  ActorValues actorValues = requestedActorValues;
+  if (IsGodMode())
+    actorValues.healthPercentage = std::max(
+      actorValues.healthPercentage, ChangeForm().actorValues.healthPercentage);
   if (actorValues.healthPercentage <= 0.f) {
     Kill(aggressor);
     return;
@@ -1376,6 +1399,9 @@ void MpActor::NetSetPercentages(
   if (aggressor && keepAggressor.get() != aggressor) return;
   const auto aggressorRuntime = aggressor ? aggressor->GetRuntimeIdentity() : 0;
   ActorValues actorValues = requestedActorValues;
+  if (IsGodMode())
+    actorValues.healthPercentage = std::max(
+      actorValues.healthPercentage, ChangeForm().actorValues.healthPercentage);
   // Thornswood #1626. A write that would kill asks the gamemode first, before
   // the zero goes to any machine. A refusal sends the health it kept instead.
   if (actorValues.healthPercentage <= 0.f && !IsDead() &&
@@ -2082,6 +2108,8 @@ std::optional<float> MpActor::AskBeforeDeath(MpActor* killer)
 
 void MpActor::Kill(MpActor* killer, bool shouldTeleport)
 {
+  if (IsGodMode())
+    return;
   spdlog::trace("MpActor::Kill {:x} - killer is {:x}", GetFormId(),
                 killer ? killer->GetFormId() : 0);
 
@@ -2369,6 +2397,8 @@ void MpActor::SetRespawnTime(float time)
 
 void MpActor::SetIsDead(bool isDead)
 {
+  if (isDead && IsGodMode())
+    return;
   const auto formId = GetFormId();
   const auto keepAlive = GetParent() ? GetParent()->LookupFormById(formId) : nullptr;
   spdlog::trace("MpActor::SetIsDead {:x} - isDead: {}", formId, isDead);
