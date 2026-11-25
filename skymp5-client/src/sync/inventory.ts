@@ -778,6 +778,14 @@ export const applyInventory = (
   enableCrashProtection: boolean,
   ignoreWorn = false
 ): boolean => {
+  // Inventory::Entry stores a uint32 count. Refuse the whole target before
+  // changing anything; in particular, an infinite count must not enter the
+  // per-piece native queue below.
+  if (newInventory.entries.some((e) =>
+    !e || !Number.isInteger(e.count) || e.count < 0 || e.count > 0xffffffff)) {
+    printConsole("Refused inventory with an invalid item count");
+    return false;
+  }
   resetInventoryBase(refr);
   // Thornswood #1649: every brewed bottle the server sends exists here, under
   // the server's id, before the pack is compared with it.
@@ -928,11 +936,6 @@ export const applyInventory = (
       absCount = 1;
       oneStepCount = e.count;
     } else {
-      if (absCount > 1000) {
-        absCount = 1;
-        oneStepCount = 1;
-      }
-
       if (e.count > 1 && Ammo.from(Game.getFormEx(e.baseId))) {
         absCount = 1;
         oneStepCount = e.count;
