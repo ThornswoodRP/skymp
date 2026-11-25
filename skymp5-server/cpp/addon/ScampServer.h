@@ -67,6 +67,7 @@ public:
   Napi::Value CompareAndSetInventory(const Napi::CallbackInfo& info);
   Napi::Value CompareAndSetInventoryAndProperty(const Napi::CallbackInfo& info);
   Napi::Value CompareAndSetActorProperty(const Napi::CallbackInfo& info);
+  Napi::Value CompareAndSetActorPropertyAndSpells(const Napi::CallbackInfo& info);
   Napi::Value CompareAndSetInventoryImpl(const Napi::CallbackInfo& info,
                                          bool withProperty);
   Napi::Value GetInventoryReceipt(const Napi::CallbackInfo& info);

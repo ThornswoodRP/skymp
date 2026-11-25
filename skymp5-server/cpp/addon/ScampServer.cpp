@@ -138,6 +138,7 @@ Napi::Object ScampServer::Init(Napi::Env env, Napi::Object exports)
       InstanceMethod("place", &ScampServer::Place),
       InstanceMethod("lookupEspmRecordById",
                      &ScampServer::LookupEspmRecordById),
+      InstanceMethod("compareAndSetActorPropertyAndSpells", &ScampServer::CompareAndSetActorPropertyAndSpells),
       InstanceMethod("getEspmLoadOrder", &ScampServer::GetEspmLoadOrder),
       InstanceMethod("getNeighborsByPosition",
                      &ScampServer::GetNeighborsByPosition),
@@ -773,6 +774,57 @@ Napi::Value ScampServer::CompareAndSetActorProperty(const Napi::CallbackInfo& in
     if (!actor.HasRuntimeIdentity(entryRuntime))return Napi::Boolean::New(info.Env(), false);
     return Napi::Boolean::New(info.Env(), actor.CompareAndSetActorProperty(
       static_cast<int32_t>(profile), property));
+  } catch (const std::exception& error) {
+    throw Napi::Error::New(info.Env(), error.what());
+  }
+}
+
+Napi::Value ScampServer::CompareAndSetActorPropertyAndSpells(const Napi::CallbackInfo& info)
+{
+  try {
+    const auto id = InventoryActorId(info[0]);
+    const auto entryRuntime = partOne->worldState.GetFormAt<MpActor>(id).GetRuntimeIdentity();
+    const auto profile = NapiHelper::ExtractDouble(info[1], "expectedProfileId");
+    if (!std::isfinite(profile) || std::floor(profile) != profile || profile <= 0 || profile > 2147483647)
+      throw std::runtime_error("Actor profile must be a positive int32 integer");
+    const auto input = NapiHelper::ExtractObject(info[2], "property");
+    const auto runtime = NapiHelper::ExtractString(input.Get("expectedRuntimeIdentity"), "expectedRuntimeIdentity", std::nullopt, {1,20});
+    if (runtime.front() == '0' || !std::all_of(runtime.begin(), runtime.end(), [](char c) {return c >= '0' && c <= '9';}))
+      throw std::runtime_error("Invalid actor runtime identity");
+    const auto runtimeValue = std::stoull(runtime);
+    const auto name = NapiHelper::ExtractString(input.Get("name"), "property.name", GetPropertyAlphabet(), {1,128});
+    const auto life = NapiHelper::ExtractDouble(input.Get("expectedLifeGeneration"), "lifeGeneration");
+    if (!std::isfinite(life) || std::floor(life) != life || life < 0 || life > 9007199254740991.0)
+      throw std::runtime_error("Actor lifeGeneration must be a nonnegative safe integer");
+    const MpObjectReference::InventoryPropertyChange property{
+      name, NapiHelper::Stringify(info.Env(), input.Get("expected")),
+      NapiHelper::Stringify(info.Env(), input.Get("replacement")), static_cast<uint64_t>(life), runtimeValue};
+    const auto spells = [&](const char* key) {
+      const auto value = input.Get(key);
+      if (!value.IsArray()) throw std::runtime_error("Learned spells must be an array");
+      const auto array = value.As<Napi::Array>();
+      if (array.Length() > 4096) throw std::runtime_error("Too many learned spells");
+      std::vector<uint32_t> ids;
+      ids.reserve(array.Length());
+      for (uint32_t i = 0; i < array.Length(); ++i) {
+        const auto number = NapiHelper::ExtractDouble(array.Get(i), key);
+        if (!std::isfinite(number) || std::floor(number) != number || number <= 0 || number >= 0xff000000)
+          throw std::runtime_error("Invalid base spell id");
+        ids.push_back(static_cast<uint32_t>(number));
+      }
+      return ids;
+    };
+    const auto expectedSpells = spells("expectedSpells");
+    const auto replacementSpells = spells("replacementSpells");
+    static const auto standard = PropertyBindingFactory().CreateStandardPropertyBindings();
+    const auto found = gamemodeApiState.createdProperties.find(name);
+    if (name.front() == '_' || standard.count(name) || found == gamemodeApiState.createdProperties.end() || found->second.isVisibleByNeighbors)
+      throw std::runtime_error("Knowledge requires a registered custom property hidden from neighbors");
+    const bool visibleByOwner = found->second.isVisibleByOwner;
+    auto& actor = partOne->worldState.GetFormAt<MpActor>(id);
+    if (!actor.HasRuntimeIdentity(entryRuntime)) return Napi::Boolean::New(info.Env(), false);
+    return Napi::Boolean::New(info.Env(), actor.CompareAndSetActorPropertyAndSpells(
+      static_cast<int32_t>(profile), property, expectedSpells, replacementSpells, visibleByOwner));
   } catch (const std::exception& error) {
     throw Napi::Error::New(info.Env(), error.what());
   }

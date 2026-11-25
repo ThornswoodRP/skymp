@@ -433,6 +433,71 @@ TEST_CASE("Failed saves do not advance receipt acknowledgement",
   server.Tick();
   REQUIRE(server.worldState.GetSavedInventoryReceipt(actor) == receipt);
 }
+TEST_CASE("Character knowledge CAS commits history and active spells together",
+          "[actor-knowledge][espm]")
+{
+  PartOne server;
+  AttachSkyrimFiles(server);
+  auto storage = std::make_shared<ControlledFileStorage>();
+  server.AttachSaveStorage(storage);
+  auto& actor = CreateHuman(server);
+  actor.AddSpell(0x12fcd);
+  const auto inventory = actor.GetInventory().ToJson();
+  MpObjectReference::InventoryPropertyChange change{
+    "thornswoodCharacter", "null", "{\"history\":[\"Flames\"],\"profession\":\"Hunter\"}"};
+  change.expectedRuntimeIdentity = actor.GetRuntimeIdentity();
+  SECTION("Success is one matching live and queued snapshot") {
+    REQUIRE(actor.CompareAndSetActorPropertyAndSpells(42, change, {0x12fcd}, {}, true));
+    REQUIRE(actor.GetSpellList().empty());
+    REQUIRE(actor.HasAuthoritativeSpellList());
+    REQUIRE(actor.GetDynamicFields().GetValueDump(change.name) == change.replacementDump);
+    REQUIRE(actor.GetInventory().ToJson() == inventory);
+    server.Tick();
+    REQUIRE(static_cast<bool>(storage->completion));
+    const auto found = std::find_if(storage->pending.begin(), storage->pending.end(),
+      [](const auto& form) { return form && form->profileId == 42; });
+    REQUIRE(found != storage->pending.end());
+    REQUIRE((*found)->learnedSpells.Count() == 0);
+    REQUIRE((*found)->dynamicFields.GetValueDump(change.name) == change.replacementDump);
+    REQUIRE((*found)->dynamicFields.GetValueDump("_skympAuthoritativeSpells") == "true");
+  }
+  SECTION("Stale spell set refuses the entire change") {
+    REQUIRE_FALSE(actor.CompareAndSetActorPropertyAndSpells(42, change, {}, {}, true));
+    REQUIRE(actor.GetSpellList() == std::vector<uint32_t>{0x12fcd});
+    REQUIRE_FALSE(actor.HasAuthoritativeSpellList());
+    REQUIRE(actor.GetDynamicFields().GetValueDump(change.name) == "null");
+  }
+  SECTION("Stale property refuses the entire change") {
+    change.expectedDump = "{}";
+    REQUIRE_FALSE(actor.CompareAndSetActorPropertyAndSpells(42, change, {0x12fcd}, {}, true));
+    REQUIRE(actor.GetSpellList() == std::vector<uint32_t>{0x12fcd});
+    REQUIRE_FALSE(actor.HasAuthoritativeSpellList());
+  }
+  SECTION("Stale runtime refuses the entire change") {
+    change.expectedRuntimeIdentity = actor.GetRuntimeIdentity() + 1;
+    REQUIRE_FALSE(actor.CompareAndSetActorPropertyAndSpells(42, change, {0x12fcd}, {}, true));
+    REQUIRE(actor.GetSpellList() == std::vector<uint32_t>{0x12fcd});
+    REQUIRE_FALSE(actor.HasAuthoritativeSpellList());
+  }
+  SECTION("Stale life refuses the entire change") {
+    change.expectedLifeGeneration = 1;
+    REQUIRE_FALSE(actor.CompareAndSetActorPropertyAndSpells(42, change, {0x12fcd}, {}, true));
+    REQUIRE(actor.GetSpellList() == std::vector<uint32_t>{0x12fcd});
+    REQUIRE_FALSE(actor.HasAuthoritativeSpellList());
+  }
+  SECTION("Wrong profile refuses the entire change") {
+    REQUIRE_FALSE(actor.CompareAndSetActorPropertyAndSpells(43, change, {0x12fcd}, {}, true));
+    REQUIRE(actor.GetSpellList() == std::vector<uint32_t>{0x12fcd});
+    REQUIRE_FALSE(actor.HasAuthoritativeSpellList());
+  }
+  SECTION("Invalid replacement refuses before any mutation") {
+    REQUIRE_THROWS(actor.CompareAndSetActorPropertyAndSpells(42, change, {0x12fcd}, {0xff000001}, true));
+    REQUIRE(actor.GetSpellList() == std::vector<uint32_t>{0x12fcd});
+    REQUIRE_FALSE(actor.HasAuthoritativeSpellList());
+    REQUIRE(actor.GetDynamicFields().GetValueDump(change.name) == "null");
+  }
+}
+
 TEST_CASE("Metadata CAS stages its save before changing live progress",
           "[inventory-receipt][actor-metadata]")
 {

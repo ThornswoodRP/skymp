@@ -47,6 +47,11 @@ public:
   bool HasRuntimeIdentity(uint64_t expected) const;
   bool CompareAndSetActorProperty(int32_t expectedProfileId,
     const InventoryPropertyChange& property);
+  bool CompareAndSetActorPropertyAndSpells(int32_t expectedProfileId,
+    const InventoryPropertyChange& property,
+    const std::vector<uint32_t>& expectedSpells,
+    const std::vector<uint32_t>& replacementSpells, bool visibleByOwner);
+  bool HasAuthoritativeSpellList() const;
 
   bool IsServerControlled() const
   {

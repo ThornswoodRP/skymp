@@ -65,6 +65,17 @@ export interface ScampServer {
     property: {name: string; expected: unknown; replacement: unknown;
       expectedLifeGeneration: number; expectedRuntimeIdentity: string}): boolean;
   getInventoryReceipt(formId: number): string;
+  /** Atomically queues the complete property and learned-spell set, and opts
+   * this character into server enforcement of that active spell list. Both
+   * property values are capped at 1 MiB; spell arrays are unique sets of at
+   * most 4096 valid base SPEL IDs. The registered property may be owner-visible
+   * but not neighbor-visible. True means committed live and queued, not a disk
+   * acknowledgement. Publication failure after commit is logged, never refused.
+   */
+  compareAndSetActorPropertyAndSpells(formId: number, expectedProfileId: number,
+    property: {name: string; expected: unknown; replacement: unknown;
+      expectedLifeGeneration: number; expectedRuntimeIdentity: string;
+      expectedSpells: number[]; replacementSpells: number[]}): boolean;
   getSavedInventoryReceipt(formId: number): string;
   prepareNpcLoad(): number;
   loadNpcBatch(cursor: number, limit: number): {
