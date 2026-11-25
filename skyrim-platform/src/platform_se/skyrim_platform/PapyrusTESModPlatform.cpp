@@ -664,19 +664,16 @@ RE::ExtraDataList* CreateExtraDataList()
 }
 }
 
-void TESModPlatform::AddItemEx(
+// ==== inventory add operation ====
+namespace {
+bool AddItemExWork(
   IVM* vm, StackID stackId, RE::StaticFunctionTag*,
   RE::TESObjectREFR* containerRefr, RE::TESForm* item, int32_t countDelta,
   float health, RE::EnchantmentItem* enchantment, int32_t maxCharge,
   bool removeEnchantmentOnUnequip, float chargePercent,
   FixedString textDisplayData, int32_t soul, RE::AlchemyItem* poison,
-  int32_t poisonCount)
+  int32_t poisonCount, bool worn, bool wornLeft, bool immediate, const std::function<bool()>& isCurrent)
 {
-  // Consume the next-item flags even when this call is rejected while paused.
-  const bool worn = g_worn;
-  const bool wornLeft = g_wornLeft;
-  g_worn = false;
-  g_wornLeft = false;
   auto markType = [](RE::BaseExtraList::PresenceBitfield* presence,
                      uint32_t type, bool bCleared) {
     uint32_t index = (type >> 3);
@@ -707,17 +704,25 @@ void TESModPlatform::AddItemEx(
 
   auto ui = RE::UI::GetSingleton();
   if (!containerRefr || !item || !ui || ui->GameIsPaused())
-    return;
+    return false;
 
   const auto refrId = containerRefr->GetFormID();
   const auto inventoryEpoch = InventoryLoadEpoch::Capture();
 
   auto boundObject = item->As<RE::TESBoundObject>();
   if (!boundObject) {
-    return;
+    return false;
   }
 
   auto queuedExtra = std::make_shared<RE::ExtraDataList*>(nullptr);
+  auto applied = std::make_shared<bool>(false);
+  auto dispatch = [immediate, isCurrent](auto task) {
+    if (immediate) {
+      if (!isCurrent || isCurrent()) task(Viet::Void());
+    } else {
+      g_nativeCallRequirements.gameThrQ->AddTask(task);
+    }
+  };
 
   const bool isShieldLike =
     (item->formType == RE::FormType::Armor &&
@@ -730,7 +735,7 @@ void TESModPlatform::AddItemEx(
     (item->formType == RE::FormType::Armor && !isShieldLike) ||
     isTorch;
 
-  g_nativeCallRequirements.gameThrQ->AddTask([=](Viet::Void) {
+  dispatch([=](Viet::Void) {
     if (!InventoryLoadEpoch::IsCurrent(inventoryEpoch)) return;
     if (containerRefr != RE::TESForm::LookupByID<RE::TESObjectREFR>(refrId))
       return;
@@ -739,7 +744,7 @@ void TESModPlatform::AddItemEx(
     if (item->formType != RE::FormType::Ammo && (health > 1 || enchantment || chargePercent > 0 ||
         strlen(textDisplayData.data()) > 0 || (soul > 0 && soul <= 5) ||
         poison)) {
-      extraList = CreateExtraDataList();
+      extraList = TESModPlatform::CreateExtraDataList();
 
       auto extraList_ = reinterpret_cast<void*>(extraList);
 
@@ -814,7 +819,13 @@ void TESModPlatform::AddItemEx(
                                 nullptr);
     }
     *queuedExtra = optExtraList;
+    *applied = true;
   });
+
+  // An inline add can synchronously trigger death/destruction callbacks.
+  // Stop before reading the actor/item again to plan its equip. The old
+  // queued route still plans exactly as before, before its add executes.
+  if (immediate && isCurrent && !isCurrent()) return *applied;
 
   const bool needEquipWeap =
     (worn || wornLeft) && item->formType == RE::FormType::Weapon;
@@ -861,14 +872,14 @@ void TESModPlatform::AddItemEx(
         }
 
         if (countDelta > 0) {
-          g_nativeCallRequirements.gameThrQ->AddTask([=](Viet::Void) {
+          dispatch([=](Viet::Void) {
             if (!InventoryLoadEpoch::IsCurrent(inventoryEpoch)) return;
             if (actor != (void*)RE::TESForm::LookupByID(refrId))
               return;
             s->EquipObject(actor, boundObject, *queuedExtra, 1, slot);
           });
         } else if (countDelta < 0)
-          g_nativeCallRequirements.gameThrQ->AddTask([=](Viet::Void) {
+          dispatch([=](Viet::Void) {
             if (!InventoryLoadEpoch::IsCurrent(inventoryEpoch)) return;
             if (actor != (void*)RE::TESForm::LookupByID(refrId))
               return;
@@ -878,7 +889,39 @@ void TESModPlatform::AddItemEx(
     }
   }
 
+  return *applied;
 }
+
+}
+void TESModPlatform::AddItemEx(
+  IVM* vm, StackID stackId, RE::StaticFunctionTag*,
+  RE::TESObjectREFR* containerRefr, RE::TESForm* item, int32_t countDelta,
+  float health, RE::EnchantmentItem* enchantment, int32_t maxCharge,
+  bool removeEnchantmentOnUnequip, float chargePercent,
+  FixedString textDisplayData, int32_t soul, RE::AlchemyItem* poison,
+  int32_t poisonCount)
+{
+  // Consume the next-item flags even when this call is rejected while paused.
+  const bool worn = g_worn;
+  const bool wornLeft = g_wornLeft;
+  g_worn = false;
+  g_wornLeft = false;
+  AddItemExWork(vm, stackId, nullptr, containerRefr, item, countDelta, health, enchantment, maxCharge, removeEnchantmentOnUnequip, chargePercent, textDisplayData, soul, poison, poisonCount, worn, wornLeft, false, {});
+}
+
+namespace TESModPlatform {
+bool AddItemExImmediate(
+  IVM* vm, StackID stackId, RE::StaticFunctionTag*,
+  RE::TESObjectREFR* containerRefr, RE::TESForm* item, int32_t countDelta,
+  float health, RE::EnchantmentItem* enchantment, int32_t maxCharge,
+  bool removeEnchantmentOnUnequip, float chargePercent,
+  FixedString textDisplayData, int32_t soul, RE::AlchemyItem* poison,
+  int32_t poisonCount, bool worn, bool wornLeft, const std::function<bool()>& isCurrent)
+{
+  return AddItemExWork(vm, stackId, nullptr, containerRefr, item, countDelta, health, enchantment, maxCharge, removeEnchantmentOnUnequip, chargePercent, textDisplayData, soul, poison, poisonCount, worn, wornLeft, true, isCurrent);
+}
+}
+// ==== end inventory add operation ====
 
 void TESModPlatform::UpdateEquipment(IVM* vm, StackID stackId,
                                      RE::StaticFunctionTag*, RE::Actor* actor,

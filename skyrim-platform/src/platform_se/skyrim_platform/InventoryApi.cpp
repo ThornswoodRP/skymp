@@ -1,4 +1,5 @@
 #include "InventoryApi.h"
+#include "InventoryApplyApi.h"
 #include "CallNativeApi.h"
 #include "NullPointerException.h"
 #include "InventoryQueueFence.h"
@@ -739,6 +740,7 @@ Napi::Value InventoryApi::CreateMadeEnchantment(const Napi::CallbackInfo& info)
 
 void InventoryApi::Register(Napi::Env env, Napi::Object& exports)
 {
+  InventoryApplyApi::Register(env, exports);
   exports.Set("createMadePotion",
               Napi::Function::New(
                 env, NapiHelper::WrapCppExceptions(CreateMadePotion)));

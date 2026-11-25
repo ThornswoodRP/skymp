@@ -108,6 +108,11 @@ public:
     if (found != byReference.end() && (!identity || (*found->second)->identity == identity))
       (*found->second)->Cancel();
   }
+  std::shared_ptr<Job> ReferenceBarrier(uint32_t referenceId) const {
+    std::lock_guard<std::recursive_mutex> lock(mutex);
+    auto found = byReference.find(referenceId);
+    return found == byReference.end() ? nullptr : *found->second;
+  }
   void CancelAll() {
     std::lock_guard<std::recursive_mutex> lock(mutex);
     for (const auto& job : jobs) job->Cancel();
@@ -165,7 +170,7 @@ public:
         job->state.store(State::Uncertain, std::memory_order_release);
       }
       job->running.store(false, std::memory_order_release);
-      if (job->cancelRequested.load(std::memory_order_acquire) && job->GetState() == State::Cancelled)
+      if (job->cancelRequested.load(std::memory_order_acquire) && job->GetState() != State::Uncertain)
         job->state.store(State::Cancelled, std::memory_order_release);
       if (job->GetState() != State::Pending) Erase(job);
       if (deferred) break;

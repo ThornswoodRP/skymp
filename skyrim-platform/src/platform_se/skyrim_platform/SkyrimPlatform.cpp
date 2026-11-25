@@ -14,6 +14,7 @@
 #include "HttpClient.h"
 #include "HttpClientApi.h"
 #include "InventoryApi.h"
+#include "InventoryApplyApi.h"
 #include "BookTextApi.h"
 #include "LoadGameApi.h"
 #include "MagicApi.h"
@@ -126,6 +127,7 @@ private:
     const bool startupLoad = tickId == 1;
     const bool loadNeeded = startupLoad || hotReload;
     if (loadNeeded) {
+      InventoryApplyApi::CancelAll();
       ClearState();
       const auto started = std::chrono::steady_clock::now();
       for (auto& fileDir : fileDirs) {

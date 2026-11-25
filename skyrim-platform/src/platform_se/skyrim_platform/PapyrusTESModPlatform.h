@@ -83,6 +83,17 @@ void AddItemEx(IVM* vm, StackID stackId, RE::StaticFunctionTag*,
                FixedString textDisplayData, int32_t soul,
                RE::AlchemyItem* poison, int32_t poisonCount);
 
+// Inventory pump only: performs the same unit and equip work inline on the
+// game thread, checking its cancellation scope before either mutation.
+bool AddItemExImmediate(IVM* vm, StackID stackId, RE::StaticFunctionTag*,
+               RE::TESObjectREFR* containerRefr, RE::TESForm* item,
+               int32_t countDelta, float health,
+               RE::EnchantmentItem* enchantment, int32_t maxCharge,
+               bool removeEnchantmentOnUnequip, float chargePercent,
+               FixedString textDisplayData, int32_t soul,
+               RE::AlchemyItem* poison, int32_t poisonCount,
+               bool worn, bool wornLeft, const std::function<bool()>& isCurrent);
+
 void UpdateEquipment(IVM* vm, StackID stackId, RE::StaticFunctionTag*,
                      RE::Actor* containerRefr, RE::TESForm* item,
                      bool leftHand);

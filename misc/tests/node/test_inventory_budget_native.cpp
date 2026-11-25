@@ -1,4 +1,5 @@
 #include "../../../skyrim-platform/src/platform_se/skyrim_platform/InventoryApplyScheduler.h"
+#include "../../../skyrim-platform/src/platform_se/skyrim_platform/InventoryApplyPump.h"
 #include "../../../skyrim-platform/src/platform_se/skyrim_platform/InventoryQueueFence.h"
 #include "../../../viet/include/TaskQueue.h"
 #include <cassert>
@@ -148,15 +149,41 @@ int main() {
   Viet::TaskQueue<> queue;
   uint32_t queuedAdds = 0;
   auto large = scheduler.Submit(0x14, 13, {Units(100000, [&](uint32_t n) { queuedAdds += n; return UnitResult::Ran; })}, [] { return true; });
-  std::function<void(const Viet::Void&)> pump;
-  pump = [&](const Viet::Void&) { scheduler.Tick(); if (scheduler.HasPending()) queue.AddTask(pump); };
-  queue.AddTask(pump);
+  uint32_t callbacksQueued = 0;
+  Pump pump(scheduler, [&](std::function<void()> task) {
+    ++callbacksQueued;
+    queue.AddTask([task](const Viet::Void&) {task();});
+  });
+  pump.Queue(); pump.Queue(); pump.Queue();
+  assert(callbacksQueued == 1);
   bool unrelated = false;
   queue.AddTask([&](const Viet::Void&) { unrelated = true; });
   auto position = CreateInventoryQueueFence(queue);
   queue.Update({});
-  assert(unrelated && position() && queuedAdds == 16 && large->GetState() == State::Pending);
+  assert(unrelated && position() && queuedAdds == 16 && large->GetState() == State::Pending && callbacksQueued == 2);
   while (large->GetState() == State::Pending) queue.Update({});
   assert(queuedAdds == 100000 && large->GetState() == State::Drained);
+  // Retired pump tickets cannot act on a new load's jobs. The old and new
+  // callbacks may both occupy the queue, but only one can tick this frame.
+  uint32_t replacedAdds = 0;
+  auto retired = scheduler.Submit(0x14, 21, {Units(100, [&](uint32_t) {++replacedAdds; return UnitResult::Ran;})}, [] {return true;});
+  pump.Queue(); pump.Cancel();
+  auto fresh = scheduler.Submit(0x14, 22, {Units(100, [&](uint32_t) {++replacedAdds; return UnitResult::Ran;})}, [] {return true;});
+  pump.Queue(); queue.Update({});
+  assert(retired->GetState() == State::Cancelled && replacedAdds == 16 && fresh->GetState() == State::Pending);
+  pump.Cancel(); queue.Update({});
+  assert(replacedAdds == 16 && fresh->GetState() == State::Cancelled);
+  bool rejectQueue = true;
+  Pump failure(scheduler, [&](std::function<void()> task) {
+    if (rejectQueue) throw std::runtime_error("queue allocation fixture");
+    queue.AddTask([task](const Viet::Void&) {task();});
+  });
+  auto rejectedPump = scheduler.Submit(0x14, 23, {Units(1, [&](uint32_t) {++replacedAdds; return UnitResult::Ran;})}, [] {return true;});
+  try {failure.Queue(); assert(false);} catch (const std::runtime_error&) {}
+  assert(rejectedPump->GetState() == State::Cancelled && replacedAdds == 16);
+  rejectQueue = false;
+  auto recoveredPump = scheduler.Submit(0x14, 24, {Units(1, [&](uint32_t) {++replacedAdds; return UnitResult::Ran;})}, [] {return true;});
+  failure.Queue(); queue.Update({});
+  assert(recoveredPump->GetState() == State::Drained && replacedAdds == 17);
   std::cout << "inventory scheduler: count/time/fairness/FIFO/cancel/uncertainty controls passed\n";
 }
