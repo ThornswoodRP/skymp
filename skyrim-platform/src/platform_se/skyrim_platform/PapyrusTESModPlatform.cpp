@@ -744,7 +744,7 @@ bool AddItemExWork(
     if (item->formType != RE::FormType::Ammo && (health > 1 || enchantment || chargePercent > 0 ||
         strlen(textDisplayData.data()) > 0 || (soul > 0 && soul <= 5) ||
         poison)) {
-      extraList = TESModPlatform::CreateExtraDataList();
+      extraList = CreateExtraDataList();
 
       auto extraList_ = reinterpret_cast<void*>(extraList);
 

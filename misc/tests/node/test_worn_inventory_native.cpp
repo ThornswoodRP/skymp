@@ -95,14 +95,16 @@ struct Queue {
   void flush() { native.Update({}); }
 } queue;
 struct Requirements { Queue* gameThrQ = &queue; } g_nativeCallRequirements;
-namespace TESModPlatform {
-bool g_worn = false, g_wornLeft = false;
+namespace {
+thread_local bool g_worn = false, g_wornLeft = false;
 RE::ExtraDataList* CreateExtraDataList() { return new RE::ExtraDataList; }
+}
+namespace TESModPlatform {
 void AddItemEx(IVM*, StackID, RE::StaticFunctionTag*, RE::TESObjectREFR*, RE::TESForm*, int32_t, float, RE::EnchantmentItem*, int32_t, bool, float, FixedString, int32_t, RE::AlchemyItem*, int32_t);
 }
 #include "WornInventoryUnderTest.inc"
 void add(RE::Actor& actor, RE::TESForm& item, bool worn, bool left = false, const char* name = "", int count = 1, float health = 1) {
-  TESModPlatform::g_worn = worn; TESModPlatform::g_wornLeft = left;
+  g_worn = worn; g_wornLeft = left;
   TESModPlatform::AddItemEx(nullptr, 0, nullptr, &actor, &item, count, health, nullptr, 0, false, 0, {name}, 0, nullptr, 0);
 }
 int main() {
