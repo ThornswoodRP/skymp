@@ -39,6 +39,31 @@ mp.makeProperty("playerLevel", {
 });
 ```
 
+## Atomic inventory and worn names
+
+`mp.compareAndSetActorInventoryAndEquipment(actorId, expectedProfileId, change)`
+compares the complete current inventory and equipment record, then changes
+only their entry names in one live commit and one queued character snapshot.
+The `change` contains `expectedInventory`, `replacementInventory`,
+`expectedEquipment`, `replacementEquipment`, `expectedLifeGeneration` and
+`expectedRuntimeIdentity`. Obtain the snapshots with `mp.get`, the life from
+`mp.getNpcAIState`, and the process-local identity from
+`mp.getActorRuntimeIdentity` before preparing the replacement.
+
+The profile must be the current positive human profile. Stale profile, life,
+runtime, inventory or equipment returns false. Every snapshot must round-trip
+exactly through the native representation and fit within 128 KiB of serialized
+JSON. Counts, order, item bases, all other extras, equipped spells and the
+equipment counter remain equal. A changed worn name must identify one carried
+stack by its original extras and match that same stack's replacement name.
+This operation neither mints items nor edits the inventory receipt.
+
+All allocations and the matching full save are prepared before either live
+field changes. True means both fields are committed live and queued together;
+it is not a durable storage acknowledgement. Publication failure after commit
+is logged and returns true. Do not compensate with a second write or an
+add/remove loop. Unavailable bindings have no equivalent two-write fallback.
+
 ## Atomic character knowledge
 
 `mp.compareAndSetActorPropertyAndSpells(actorId, expectedProfileId, change)`

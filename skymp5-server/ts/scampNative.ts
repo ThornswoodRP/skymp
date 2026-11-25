@@ -17,7 +17,18 @@ export interface InventorySnapshot {
     removeEnchantmentOnUnequip?: boolean; chargePercent?: number;
     name?: string; soul?: number; poisonId?: number; poisonCount?: number;
     worn?: boolean; wornLeft?: boolean;
+    made?: {name: string; poison: boolean; effects: {
+      effectId: number; magnitude: number; area: number; duration: number}[]};
+    madeEnchantment?: {weapon: boolean; effects: {
+      effectId: number; magnitude: number; area: number; duration: number}[]};
+    npcEquipment?: boolean;
   }[];
+}
+
+export interface EquipmentSnapshot {
+  inv: InventorySnapshot;
+  leftSpell?: number; rightSpell?: number; voiceSpell?: number;
+  instantSpell?: number; numChanges: number;
 }
 
 export interface SaveCompletionResult {
@@ -76,6 +87,17 @@ export interface ScampServer {
     property: {name: string; expected: unknown; replacement: unknown;
       expectedLifeGeneration: number; expectedRuntimeIdentity: string;
       expectedSpells: number[]; replacementSpells: number[]}): boolean;
+  /** Queues one NAME-only inventory/equipment snapshot. All counts, extras,
+   * equipped spells and the equipment counter must stay equal. Every changed
+   * worn name must match exactly one corresponding carried stack. Each input
+   * snapshot is capped at 128 KiB; no inventory receipt is edited. True means
+   * committed live and queued, not a durable acknowledgement. A publication
+   * error after the indivisible commit is logged and still returns true.
+   */
+  compareAndSetActorInventoryAndEquipment(formId: number, expectedProfileId: number,
+    change: {expectedInventory: InventorySnapshot; replacementInventory: InventorySnapshot;
+      expectedEquipment: EquipmentSnapshot; replacementEquipment: EquipmentSnapshot;
+      expectedLifeGeneration: number; expectedRuntimeIdentity: string}): boolean;
   getSavedInventoryReceipt(formId: number): string;
   prepareNpcLoad(): number;
   loadNpcBatch(cursor: number, limit: number): {

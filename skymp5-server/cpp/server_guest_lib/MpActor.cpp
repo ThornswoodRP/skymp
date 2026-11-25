@@ -344,6 +344,114 @@ bool MpActor::CompareAndSetActorPropertyAndSpells(int32_t expectedProfileId,
   return true;
 }
 
+bool MpActor::CompareAndSetActorInventoryAndEquipment(
+  int32_t expectedProfileId, const InventoryEquipmentChange& change)
+{
+  constexpr uint64_t kMaxLife = 9007199254740991;
+  if (expectedProfileId <= 0 || GetProfileId() != expectedProfileId ||
+      blockSaving || !HasRuntimeIdentity(change.expectedRuntimeIdentity)) {
+    return false;
+  }
+  const auto life = nlohmann::json::parse(
+    GetDynamicFields().GetValueDump("_skympNpcLifeGeneration"));
+  if (!life.is_null() &&
+      (!life.is_number_integer() || life < 0 || life > kMaxLife)) {
+    throw std::runtime_error("Invalid persisted actor lifeGeneration");
+  }
+  if (change.expectedLifeGeneration > kMaxLife ||
+      change.expectedLifeGeneration != (life.is_null() ? 0 : life.get<uint64_t>()) ||
+      GetInventory().ToJson() != change.expectedInventory.ToJson() ||
+      GetEquipment() != change.expectedEquipment) {
+    return false;
+  }
+  ValidateTransactionInventory(change.expectedInventory);
+  ValidateTransactionInventory(change.replacementInventory);
+  ValidateTransactionInventory(change.expectedEquipment.inv);
+  ValidateTransactionInventory(change.replacementEquipment.inv);
+  auto expectedInventory = change.expectedInventory.ToJson();
+  auto replacementInventory = change.replacementInventory.ToJson();
+  auto expectedEquipment = change.expectedEquipment.ToJson();
+  auto replacementEquipment = change.replacementEquipment.ToJson();
+  const auto namesOnly = [](auto before, auto after) {
+    if (before["entries"].size() != after["entries"].size()) {
+      return false;
+    }
+    for (size_t i = 0; i < before["entries"].size(); ++i) {
+      before["entries"][i].erase("name");
+      after["entries"][i].erase("name");
+    }
+    return before == after;
+  };
+  auto expectedEquipmentFields = expectedEquipment;
+  auto replacementEquipmentFields = replacementEquipment;
+  expectedEquipmentFields.erase("inv");
+  replacementEquipmentFields.erase("inv");
+  if (!namesOnly(expectedInventory, replacementInventory) ||
+      !namesOnly(expectedEquipment["inv"], replacementEquipment["inv"]) ||
+      expectedEquipmentFields != replacementEquipmentFields) {
+    throw std::runtime_error("Equipment repair can change only entry names");
+  }
+  const auto identity = [](auto entry) {
+    entry.erase("count");
+    entry.erase("worn");
+    entry.erase("wornLeft");
+    return entry;
+  };
+  std::vector<uint32_t> used(change.expectedInventory.entries.size(), 0);
+  for (size_t i = 0; i < change.expectedEquipment.inv.entries.size(); ++i) {
+    const auto& before = change.expectedEquipment.inv.entries[i];
+    const auto& after = change.replacementEquipment.inv.entries[i];
+    bool carriedNameChanged = false;
+    for (size_t j = 0; j < change.expectedInventory.entries.size(); ++j) {
+      if (change.expectedInventory.entries[j].name != change.replacementInventory.entries[j].name &&
+          identity(expectedInventory["entries"][j]) ==
+            identity(expectedEquipment["inv"]["entries"][i])) {
+        carriedNameChanged = true;
+        break;
+      }
+    }
+    if (before.name == after.name && !carriedNameChanged) {
+      continue;
+    }
+    size_t matches = 0, matched = 0;
+    for (size_t j = 0; j < change.expectedInventory.entries.size(); ++j) {
+      const auto& carried = change.expectedInventory.entries[j];
+      if (carried.count - used[j] >= before.count &&
+          identity(expectedInventory["entries"][j]) ==
+            identity(expectedEquipment["inv"]["entries"][i])) {
+        ++matches;
+        matched = j;
+      }
+    }
+    if (matches != 1 ||
+        change.replacementInventory.entries[matched].name != after.name) {
+      throw std::runtime_error("Equipment repair must name the same carried item");
+    }
+    used[matched] += before.count;
+  }
+  if (expectedInventory == replacementInventory &&
+      expectedEquipment == replacementEquipment) {
+    return false;
+  }
+  auto nextInventory = change.replacementInventory;
+  auto nextEquipment = change.replacementEquipment;
+  auto snapshot = GetChangeForm();
+  snapshot.inv = nextInventory;
+  snapshot.equipment = nextEquipment;
+  snapshot.baseContainerAdded = true;
+  auto world = GetParent();
+  if (!world || !world->RequestPreparedSave(*this, std::move(snapshot))) {
+    return false;
+  }
+  CommitPreparedInventoryAndEquipment(std::move(nextInventory), std::move(nextEquipment));
+  try {
+    SendInventoryUpdate();
+  } catch (const std::exception& error) {
+    spdlog::error("Equipment repair {:x} publication failed: {}", GetFormId(), error.what());
+  }
+  return true;
+}
+
 void MpActor::MarkHostAuthorityReleased() noexcept
 {
   // Do not rearm a dead creature until a new host accepts authority.

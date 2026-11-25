@@ -599,3 +599,150 @@ TEST_CASE("Transaction preflight uses the exact native serialized byte bound",
   snapshot.entries[0].name.value() += "x";
   REQUIRE_THROWS(MpObjectReference::ValidateTransactionInventory(snapshot));
 }
+
+TEST_CASE("Equipment repair commits only names in one fenced saved snapshot",
+          "[equipment-repair][espm]")
+{
+  PartOne server;
+  AttachSkyrimFiles(server);
+  auto storage = std::make_shared<ControlledFileStorage>();
+  server.AttachSaveStorage(storage);
+  auto& actor = CreateHuman(server);
+  auto before = actor.GetInventory();
+  before.entries[1].name = "Keepsake (25%)";
+  before.entries[1].health = 1.4f;
+  before.entries[1].madeEnchantment = Inventory::MadeEnchantment{
+    true, {{0x6789, 5.f, 0, 10}}};
+  before.entries[1].poisonId = 0x4567;
+  before.entries[1].poisonCount = 2;
+  before.entries[1].npcEquipment = false;
+  actor.SetInventory(before);
+  Equipment worn;
+  worn.inv.entries.push_back(before.entries[1]);
+  worn.inv.entries[0].count = 1;
+  worn.inv.entries[0].SetWorn(Inventory::Worn::Right);
+  worn.numChanges = 8;
+  actor.SetEquipment(worn);
+  auto after = before;
+  after.entries[1].name = "Keepsake";
+  auto afterWorn = worn;
+  afterWorn.inv.entries[0].name = "Keepsake";
+  MpActor::InventoryEquipmentChange change{
+    before, after, worn, afterWorn, 0, actor.GetRuntimeIdentity()};
+  bool committed = false;
+
+  SECTION("Both live and persisted records change together, without a receipt edit") {
+    REQUIRE(actor.CompareAndSetActorInventoryAndEquipment(42, change));
+    committed = true;
+    REQUIRE(actor.GetInventory().ToJson() == after.ToJson());
+    REQUIRE(actor.GetEquipment() == afterWorn);
+    REQUIRE(actor.GetInventoryReceiptDump() == "null");
+    server.Tick();
+    REQUIRE(static_cast<bool>(storage->completion));
+    const auto saved = std::find_if(storage->pending.begin(), storage->pending.end(),
+      [](const auto& form) {return form && form->profileId == 42;});
+    REQUIRE(saved != storage->pending.end());
+    REQUIRE((*saved)->inv.ToJson() == after.ToJson());
+    REQUIRE((*saved)->equipment == afterWorn);
+    storage->Commit();
+    server.Tick();
+    std::vector<MpChangeForm> committed;
+    storage->database.Iterate([&](const MpChangeForm& form) {
+      if (form.profileId == 42) {committed.push_back(form);}
+    }, std::nullopt);
+    REQUIRE(committed.size() == 1);
+    REQUIRE(committed[0].inv.ToJson() == after.ToJson());
+    REQUIRE(committed[0].equipment == afterWorn);
+    PartOne restarted;
+    AttachSkyrimFiles(restarted);
+    auto reloadedStorage = std::make_shared<
+      Viet::AsyncSaveStorage<MpChangeForm, FormDesc, std::vector<FormDesc>>>(
+      std::make_shared<FileDatabase>(storage->root.string(), spdlog::default_logger()),
+      spdlog::default_logger(), "file");
+    restarted.AttachSaveStorage(reloadedStorage);
+    auto& reloaded = restarted.worldState.GetFormAt<MpActor>(kHuman);
+    REQUIRE(reloaded.GetInventory().ToJson() == after.ToJson());
+    REQUIRE(reloaded.GetEquipment() == afterWorn);
+    REQUIRE_FALSE(actor.CompareAndSetActorInventoryAndEquipment(42, change));
+  }
+  SECTION("Stale inventory refuses both records") {
+    change.expectedInventory.entries[0].count--;
+    REQUIRE_FALSE(actor.CompareAndSetActorInventoryAndEquipment(42, change));
+  }
+  SECTION("Stale equipment counter refuses both records") {
+    change.expectedEquipment.numChanges++;
+    REQUIRE_FALSE(actor.CompareAndSetActorInventoryAndEquipment(42, change));
+  }
+  SECTION("Wrong profile refuses both records") {
+    REQUIRE_FALSE(actor.CompareAndSetActorInventoryAndEquipment(43, change));
+  }
+  SECTION("Stale life refuses both records") {
+    change.expectedLifeGeneration++;
+    REQUIRE_FALSE(actor.CompareAndSetActorInventoryAndEquipment(42, change));
+  }
+  SECTION("Stale runtime refuses both records") {
+    change.expectedRuntimeIdentity++;
+    REQUIRE_FALSE(actor.CompareAndSetActorInventoryAndEquipment(42, change));
+  }
+  SECTION("A count edit cannot mint items") {
+    change.replacementInventory.entries[1].count++;
+    REQUIRE_THROWS(actor.CompareAndSetActorInventoryAndEquipment(42, change));
+  }
+  SECTION("Enchantment and temper changes are refused") {
+    change.replacementInventory.entries[1].enchantmentId = 999;
+    change.replacementInventory.entries[1].health = 1.f;
+    REQUIRE_THROWS(actor.CompareAndSetActorInventoryAndEquipment(42, change));
+  }
+  SECTION("Equipment spell changes are refused") {
+    change.replacementEquipment.leftSpell = 0x12fcd;
+    REQUIRE_THROWS(actor.CompareAndSetActorInventoryAndEquipment(42, change));
+  }
+  SECTION("Equipment names must match the same repaired carried entry") {
+    change.replacementEquipment.inv.entries[0].name = "Another piece";
+    REQUIRE_THROWS(actor.CompareAndSetActorInventoryAndEquipment(42, change));
+  }
+  SECTION("Leaving a worn name stale refuses the entire repair") {
+    change.replacementEquipment = change.expectedEquipment;
+    REQUIRE_THROWS(actor.CompareAndSetActorInventoryAndEquipment(42, change));
+  }
+  if (!committed) {
+    REQUIRE(actor.GetInventory().ToJson() == before.ToJson());
+    REQUIRE(actor.GetEquipment() == worn);
+  }
+}
+
+TEST_CASE("Equipment repair stages allocation before publishing either field",
+          "[equipment-repair]")
+{
+  struct Actor : MpActor {
+    using MpActor::MpActor;
+    bool failSnapshot = false;
+    void SuspendSaving() {blockSaving = true;}
+    MpChangeForm GetChangeForm() const override {
+      if (failSnapshot) {throw std::bad_alloc();}
+      return MpActor::GetChangeForm();
+    }
+  };
+  PartOne server;
+  auto owned = std::make_unique<Actor>(
+    LocationalData{{1, 1, 1}, {}, FormDesc::Tamriel()},
+    server.CreateFormCallbacks(), 0x7);
+  auto& actor = *owned;
+  server.worldState.AddForm(std::move(owned), kHuman);
+  actor.RegisterProfileId(42);
+  const auto before = InitialInventory();
+  actor.SetInventory(before);
+  auto after = before; after.entries[1].name = "Repaired";
+  const auto equipment = actor.GetEquipment();
+  MpActor::InventoryEquipmentChange change{
+    before, after, equipment, equipment, 0, actor.GetRuntimeIdentity()};
+  actor.failSnapshot = true;
+  REQUIRE_THROWS_AS(actor.CompareAndSetActorInventoryAndEquipment(42, change), std::bad_alloc);
+  REQUIRE(actor.GetInventory().ToJson() == before.ToJson());
+  REQUIRE(actor.GetEquipment() == equipment);
+  actor.failSnapshot = false;
+  actor.SuspendSaving();
+  REQUIRE_FALSE(actor.CompareAndSetActorInventoryAndEquipment(42, change));
+  REQUIRE(actor.GetInventory().ToJson() == before.ToJson());
+  REQUIRE(actor.GetEquipment() == equipment);
+}
