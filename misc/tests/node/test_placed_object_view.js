@@ -3,7 +3,7 @@
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
-const ts = require('typescript');
+const ts = require('../../../skymp5-client/node_modules/typescript');
 const root = path.resolve(__dirname, '../../../skymp5-client/src');
 function method(file, name, env) {
   const source = fs.readFileSync(path.join(root, file), 'utf8');
