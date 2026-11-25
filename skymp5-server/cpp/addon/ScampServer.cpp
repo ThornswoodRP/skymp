@@ -1693,6 +1693,12 @@ Napi::Value ScampServer::LookupEspmRecordById(const Napi::CallbackInfo& info)
 
       espmLookupResult.Set("fileIndex",
                            Napi::Number::New(info.Env(), lookupRes.fileIdx));
+      const auto* header = partOne->GetEspm().GetBrowser().GetFileHeader(
+        lookupRes.fileIdx);
+      if (header) {
+        espmLookupResult.Set("isLocalized", Napi::Boolean::New(
+          info.Env(), (header->GetFlags() & 0x80) != 0));
+      }
 
       espmLookupResult.Set(
         "toGlobalRecordId",

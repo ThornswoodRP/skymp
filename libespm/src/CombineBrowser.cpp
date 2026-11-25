@@ -164,6 +164,16 @@ const IdMapping* CombineBrowser::GetCombMapping(
   return pImpl->sources[fileIndex].toComb.get();
 }
 
+const RecordHeader* CombineBrowser::GetFileHeader(
+  size_t fileIndex) const noexcept
+{
+  if (fileIndex >= pImpl->sources.size()) {
+    return nullptr;
+  }
+  const auto* header = pImpl->sources[fileIndex].br->LookupById(0);
+  return header && header->GetType() == "TES4" ? header : nullptr;
+}
+
 const RawIdMapping* CombineBrowser::GetRawMapping(
   size_t fileIndex) const noexcept
 {

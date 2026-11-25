@@ -37,6 +37,10 @@ public:
   const IdMapping* GetCombMapping(size_t fileIndex) const noexcept;
   const RawIdMapping* GetRawMapping(size_t fileIndex) const noexcept;
 
+  // The actual TES4 header of one source (LookupResult::fileIdx), not the
+  // origin file of an overridden form. Null when unavailable.
+  const RecordHeader* GetFileHeader(size_t fileIndex) const noexcept;
+
   // Every source in the order it was added, with the slot the game gives it
   const LoadOrder& GetLoadOrder() const noexcept;
 
