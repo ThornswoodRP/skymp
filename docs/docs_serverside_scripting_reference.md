@@ -61,7 +61,10 @@ This operation neither mints items nor edits the inventory receipt.
 All allocations and the matching full save are prepared before either live
 field changes. True means both fields are committed live and queued together;
 it is not a durable storage acknowledgement. Publication failure after commit
-is logged and returns true. Do not compensate with a second write or an
+is logged and returns true. A reliable equipment packet refreshes nearby
+cached names at the same counter, without triggering a re-equip. The owner
+applies name changes in place through the inventory update. Do not compensate
+with a second write or an
 add/remove loop. Unavailable bindings have no equivalent two-write fallback.
 
 ## Atomic character knowledge

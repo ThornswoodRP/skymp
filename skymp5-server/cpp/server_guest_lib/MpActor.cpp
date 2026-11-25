@@ -435,6 +435,9 @@ bool MpActor::CompareAndSetActorInventoryAndEquipment(
   }
   auto nextInventory = change.replacementInventory;
   auto nextEquipment = change.replacementEquipment;
+  UpdateEquipmentMessage equipmentMessage;
+  equipmentMessage.data = nextEquipment;
+  equipmentMessage.idx = GetIdx();
   auto snapshot = GetChangeForm();
   snapshot.inv = nextInventory;
   snapshot.equipment = nextEquipment;
@@ -448,6 +451,17 @@ bool MpActor::CompareAndSetActorInventoryAndEquipment(
     SendInventoryUpdate();
   } catch (const std::exception& error) {
     spdlog::error("Equipment repair {:x} publication failed: {}", GetFormId(), error.what());
+  }
+  // Refresh cached names without changing the counter. Existing viewers do
+  // not re-equip; a later view/load receives the current matching record.
+  try {
+    for (auto listener : GetActorListeners()) {
+      if (listener->GetUserId() != Networking::InvalidUserId) {
+        listener->SendToUser(equipmentMessage, true);
+      }
+    }
+  } catch (const std::exception& error) {
+    spdlog::error("Equipment repair {:x} record publication failed: {}", GetFormId(), error.what());
   }
   return true;
 }
