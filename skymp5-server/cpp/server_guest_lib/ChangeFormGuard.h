@@ -42,6 +42,17 @@ public:
   bool blockSaving = false;
 
 protected:
+  void CommitPreparedInventoryAndEquipment(Inventory&& inventory,
+                                           Equipment&& equipment) noexcept
+  {
+    static_assert(std::is_nothrow_move_assignable_v<Inventory>);
+    static_assert(std::is_nothrow_move_assignable_v<Equipment>);
+    changeForm.inv = std::move(inventory);
+    changeForm.equipment = std::move(equipment);
+    changeForm.baseContainerAdded = true;
+    lastSaveRequest = std::chrono::system_clock::now();
+  }
+
   void CommitPreparedKnowledge(DynamicFields&& fields, LearnedSpells&& spells) noexcept
   {
     static_assert(std::is_nothrow_move_assignable_v<DynamicFields>);

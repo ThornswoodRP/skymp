@@ -149,6 +149,9 @@ const isTempered = (e: Entry): boolean => (healthOf(e) ?? 1) > 1;
 const hasLevelAdded = (named: string, plain: string): boolean =>
   named.length > plain.length &&
   named.substring(0, plain.length) === plain &&
+  // Durability is an item name, including on a tempered piece. It is never
+  // the display level the game appended to that name.
+  !/^ \(\d+%\)$/.test(named.substring(plain.length)) &&
   /^ \([^()]+\)$/.test(named.substring(plain.length));
 
 // 'aaaaaaaaaaaaaaaa' => 'aaa...'
@@ -804,19 +807,24 @@ export const applyInventory = (
     record does, and this applies with ignoreWorn). So each such pair is
     handed to renameInventoryItems, which renames the units where they lie.
     When no set of the game's lists holds exactly those units, the pair stays
-    in the diff and is applied below as any other difference. Two entries are
-    a pair only when they match in everything but the name (what is worn
-    too, unless ignoreWorn).
+    in the diff and is applied below as any other difference. Rename sources
+    match in everything but the name (what is worn too, unless ignoreWorn).
+    Whole source counts may converge on one target. Identical native name
+    changes are batched so the game's complete extra lists stay in place.
   */
-  const renamed = new Set<Entry>();
-  diff.forEach((added) => {
-    if (added.count <= 0 || (enableCrashProtection && renamed.size > 0)) {
-      return;
-    }
-    const removed = diff.find((x) =>
-      x.count === -added.count && !renamed.has(x) && !namesEqual(x, added) &&
+  const planned = new Set<Entry>();
+  const plannedTargets = new Set<Entry>();
+  const renames = new Map<string, {
+    baseId: number; from: string; to: string; repairOnly: boolean;
+    parts: { added: Entry; removed: Entry; count: number }[];
+  }>();
+  const candidatesFor = (added: Entry): Entry[] => diff.filter((x) =>
+      x.count < 0 && !planned.has(x) && !namesEqual(x, added) &&
       inventoryEntriesEqualExceptName(x, added, ignoreWorn));
-    if (!removed) {
+  const plan = (added: Entry, sources: Entry[], repair = false): void => {
+    // A repair can squash several old conditions into one target count.
+    // Plan only whole source differences whose total exactly matches it.
+    if (!sources.length || sources.reduce((sum, x) => sum - x.count, 0) !== added.count) {
       return;
     }
     const f = Game.getFormEx(added.baseId);
@@ -827,16 +835,61 @@ export const applyInventory = (
     // of the piece, getDiff hands back the server's spelling ("loxsword" for
     // the game's "loxsword (Legendary)", none for the game's "Iron Sword"),
     // and the game renames by its own.
-    const held = actual.entries.find((x) => inventoryEntriesEqual(x, removed, true));
-    const from = (held || removed).name || "";
     const to = added.name ? cropName(added.name) : f.getName();
-    if (renameInventoryItems(refr.getFormID(), added.baseId, from, to, added.count)) {
-      renamed.add(added);
-      renamed.add(removed);
-    }
+    sources.forEach((removed) => {
+      const held = actual.entries.find((x) => inventoryEntriesEqual(x, removed, true));
+      const from = (held || removed).name || "";
+      const key = JSON.stringify([added.baseId, from, to]);
+      let batch = renames.get(key);
+      if (!batch) {
+        batch = { baseId: added.baseId, from, to, repairOnly: repair, parts: [] };
+        renames.set(key, batch);
+      }
+      batch.repairOnly = batch.repairOnly && repair;
+      batch.parts.push({ added, removed, count: -removed.count });
+      planned.add(removed);
+    });
+    plannedTargets.add(added);
+  };
+  // Reserve each condition-to-bare-name group before a generic rename can
+  // consume one of its equal-count sources under another custom name.
+  diff.filter((x) => x.count > 0).forEach((added) => {
+    const sources = candidatesFor(added).filter((removed) => {
+      const stripped = removed.name?.replace(isTempered(removed)
+        ? / \(\d+%\)(?= \([^()]+\)$|$)/ : / \(\d+%\)$/, "");
+      return stripped !== removed.name && namesEqual({ ...removed, name: stripped }, added);
+    });
+    plan(added, sources, true);
   });
-  if (renamed.size > 0) {
-    diff = diff.filter((e) => !renamed.has(e));
+  diff.filter((x) => x.count > 0 && !plannedTargets.has(x)).forEach((added) => {
+    const candidates = candidatesFor(added);
+    const exact = candidates.find((x) => x.count === -added.count);
+    plan(added, exact ? [exact] : candidates);
+  });
+  let renamed = false;
+  for (const batch of Array.from(renames.values())) {
+    const count = batch.parts.reduce((sum, part) => sum + part.count, 0);
+    if (!renameInventoryItems(refr.getFormID(), batch.baseId, batch.from, batch.to, count)) {
+      const sourceCount = actual.entries.filter((x) =>
+        x.baseId === batch.baseId && (x.name || "") === batch.from)
+        .reduce((sum, x) => sum + x.count, 0);
+      if (batch.repairOnly && sourceCount === count) {
+        // A complete condition repair must not rebuild worn gear after a
+        // transient refusal. Its next diff is read after the native queue.
+        printConsole("Equipment repair is waiting for an in-place name update");
+        return false;
+      }
+      continue;
+    }
+    batch.parts.forEach(({added, removed, count}) => {
+      added.count -= count;
+      removed.count += count;
+    });
+    renamed = true;
+    if (enableCrashProtection) { break; }
+  }
+  if (renamed) {
+    diff = diff.filter((e) => e.count !== 0);
     if (enableCrashProtection) {
       return diff.length === 0;
     }

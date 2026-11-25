@@ -137,6 +137,8 @@ function makeGame() {
   yes('a fine piece with no name is the game\'s "Iron Sword (Fine)"', eq({ health: 1.1 }, { name: 'Iron Sword (Fine)', health: 1.1 }));
   yes('a fine "Iron Sword (85%)" is the game\'s "Iron Sword (85%) (Fine)"', eq({ name: 'Iron Sword (85%)', health: 1.1 }, { name: 'Iron Sword (85%) (Fine)', health: 1.1 }));
   yes('a fine "Iron Sword (84%)" is not the game\'s "Iron Sword (85%) (Fine)"', !eq({ name: 'Iron Sword (84%)', health: 1.1 }, { name: 'Iron Sword (85%) (Fine)', health: 1.1 }));
+  yes('a raw condition suffix on tempered equipment is not a temper display level',
+    !eq({name:'Iron Sword (25%)',health:1.4},{health:1.4}));
   yes('a piece that is not tempered gets no level added, so "Iron Sword (Fine)" is not a plain one', !eq({}, { name: 'Iron Sword (Fine)' }));
   const except = inv.inventoryEntriesEqualExceptName || (() => false);
   yes('inventoryEntriesEqualExceptName finds the same piece under its new name',
@@ -187,6 +189,110 @@ function makeGame() {
   yes('of two swords, the rename asks for the name the game spells ("Iron Sword", not the server\'s none)', !!r && r[3] === 'Iron Sword');
   yes('and the worn one is the one renamed', g.lists.some((l) => l.worn && l.name === 'Iron Sword (99%)') &&
     g.lists.some((l) => !l.worn && l.name === 'Iron Sword') && !g.calls.some((c) => c[0] === 'addItemEx'));
+}
+
+// Repairing multiple conditions can merge their target diff. Each old extra
+// list must be renamed in place, including the currently worn one.
+{
+  const g = makeGame();
+  g.lists = [{baseId:SWORD,count:1,name:'Iron Sword (25%)',worn:true},
+    {baseId:SWORD,count:2,name:'Iron Sword (50%)'}];
+  g.apply([{baseId:SWORD,count:3}]);
+  yes('plain many-to-one repair uses only native renames and keeps the worn unit',
+    g.calls.filter(c=>c[0]==='rename').length===2 && !g.calls.some(c=>c[0]==='remove'||c[0]==='addItemEx') &&
+    g.lists.some(l=>l.worn&&l.name==='Iron Sword') && g.lists.reduce((n,l)=>n+l.count,0)===3);
+}
+{
+  const g = makeGame();
+  g.lists = [
+    {baseId:SWORD,count:1,name:'Iron Sword (25%)',health:1.4,worn:true},
+    {baseId:SWORD,count:2,name:'Iron Sword (50%)',health:1.4}
+  ];
+  const repaired = [{baseId:SWORD,count:1,health:1.4},{baseId:SWORD,count:2,health:1.4}];
+  g.apply(repaired);
+  yes('merged repair targets rename each old stack without taking anything away or adding it',
+    g.calls.filter(c=>c[0]==='rename').length===2 && !g.calls.some(c=>c[0]==='remove'||c[0]==='addItemEx'));
+  yes('the many-to-one repair keeps the worn piece, temper and every unit',
+    g.lists.length===2 && g.lists.some(l=>l.worn&&l.name==='Iron Sword'&&l.health===1.4) &&
+    g.lists.every(l=>l.name==='Iron Sword'&&l.health===1.4) && g.lists.reduce((n,l)=>n+l.count,0)===3);
+  g.calls.length=0;g.apply(repaired);
+  yes('the merged repair is complete on the next pass',g.calls.length===0);
+}
+{
+  const g = makeGame();
+  g.lists = [{baseId:SWORD,count:1,name:'Iron Sword (25%) (Fine)',health:1.4,worn:true},
+    {baseId:SWORD,count:2,name:'Iron Sword (50%) (Fine)',health:1.4}];
+  g.apply([{baseId:SWORD,count:3,health:1.4}]);
+  yes('rendered temper suffixes keep the same in-place repair path',
+    g.calls.filter(c=>c[0]==='rename').length===2 && !g.calls.some(c=>c[0]==='remove'||c[0]==='addItemEx') &&
+    g.lists.some(l=>l.worn&&l.name==='Iron Sword'&&l.health===1.4));
+}
+{
+  const g = makeGame();
+  g.lists = [{baseId:SWORD,count:1,name:'Aldis Blade (25%)',health:1.6,worn:true},
+    {baseId:SWORD,count:2,name:'Aldis Blade (25%)',health:1.4}];
+  g.apply([{baseId:SWORD,count:1,name:'Aldis Blade',health:1.6},
+    {baseId:SWORD,count:2,name:'Aldis Blade',health:1.4}]);
+  yes('same names across different temper extras batch one full native rename',
+    g.calls.filter(c=>c[0]==='rename').length===1 && !g.calls.some(c=>c[0]==='remove'||c[0]==='addItemEx') &&
+    g.lists.some(l=>l.worn&&l.health===1.6&&l.name==='Aldis Blade') &&
+    g.lists.some(l=>!l.worn&&l.health===1.4&&l.count===2&&l.name==='Aldis Blade'));
+}
+
+// The game cannot rename in place: the old way.
+{
+  const g=makeGame();
+  g.lists=[{baseId:SWORD,count:1,name:'Aldis Blade (25%)',worn:true},
+    {baseId:SWORD,count:2,name:'Aldis Blade (50%)'}];
+  const before=JSON.stringify(g.lists),target=[{baseId:SWORD,count:3,name:'Aldis Blade'}];
+  g.renameWorks=false;
+  const applied=g.apply(target);
+  yes('a refused complete repair stays pending instead of rebuilding worn equipment',
+    applied===false&&JSON.stringify(g.lists)===before&&!g.calls.some(c=>c[0]==='remove'||c[0]==='addItemEx'));
+  g.renameWorks=true;g.calls.length=0;g.apply(target);
+  yes('pending complete repairs retry safely when the native lists are ready',
+    g.lists.some(l=>l.worn&&l.name==='Aldis Blade')&&g.lists.reduce((n,l)=>n+l.count,0)===3&&
+    !g.calls.some(c=>c[0]==='remove'||c[0]==='addItemEx'));
+}
+
+// The game cannot rename a subset of one extra list in place: the old way.
+{
+  const g=makeGame();
+  g.lists=[{baseId:DAGGER,count:3,name:'Steel Dagger (60%)'}];
+  const desired=[{baseId:DAGGER,count:2,name:'Steel Dagger (60%)'},{baseId:DAGGER,count:1}];
+  g.apply(desired);
+  yes('repairing one of a larger extra list to sound still uses the established split path',
+    g.calls.some(c=>c[0]==='rename')&&g.calls.some(c=>c[0]==='remove')&&g.calls.some(c=>c[0]==='addItemEx')&&
+    g.lists.some(l=>l.name==='Steel Dagger (60%)'&&l.count===2)&&g.lists.some(l=>l.name==='Steel Dagger'&&l.count===1));
+  g.calls.length=0;g.apply(desired);
+  yes('the partial repair-to-sound split completes without a retry loop',g.calls.length===0);
+}
+
+// The game cannot rename in place: the old way.
+for (const reverse of [false,true]) {
+  const g=makeGame();
+  g.lists=[{baseId:SWORD,count:1,name:'Aldis Blade (25%)',health:1.4,worn:true},
+    {baseId:SWORD,count:1,name:'Aldis Blade (50%)',health:1.4},
+    {baseId:SWORD,count:1,name:'Brenna Blade (75%)',health:1.4}];
+  const targets=[{baseId:SWORD,count:2,name:'Aldis Blade',health:1.4},
+    {baseId:SWORD,count:1,name:'Brenna Blade',health:1.4}];
+  g.apply(reverse?targets.reverse():targets);
+  yes('mixed custom repair groups preserve worn identity regardless of target order '+reverse,
+    g.lists.some(l=>l.worn&&l.name==='Aldis Blade') &&
+    g.lists.filter(l=>l.name==='Aldis Blade').reduce((n,l)=>n+l.count,0)===2 &&
+    g.lists.filter(l=>l.name==='Brenna Blade').reduce((n,l)=>n+l.count,0)===1);
+  yes('mixed custom repair groups never fall back to removal/addition '+reverse,
+    !g.calls.some(c=>c[0]==='remove'||c[0]==='addItemEx'));
+}
+{
+  const g=makeGame();
+  g.lists=[{baseId:SWORD,count:1,name:'Aldis Blade (25%)',worn:true},
+    {baseId:SWORD,count:1,name:'Aldis Blade (50%)'},
+    {baseId:SWORD,count:1,name:'Old Custom'}];
+  g.apply([{baseId:SWORD,count:1,name:'New Custom'},{baseId:SWORD,count:2,name:'Aldis Blade'}]);
+  yes('an unrelated rename cannot consume a source reserved for a repair group',
+    g.lists.some(l=>l.worn&&l.name==='Aldis Blade')&&g.lists.some(l=>l.name==='New Custom')&&
+    !g.calls.some(c=>c[0]==='remove'||c[0]==='addItemEx'));
 }
 
 // The game cannot rename in place: the old way.

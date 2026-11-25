@@ -52,6 +52,17 @@ public:
     const std::vector<uint32_t>& expectedSpells,
     const std::vector<uint32_t>& replacementSpells, bool visibleByOwner);
   bool HasAuthoritativeSpellList() const;
+  struct InventoryEquipmentChange
+  {
+    Inventory expectedInventory;
+    Inventory replacementInventory;
+    Equipment expectedEquipment;
+    Equipment replacementEquipment;
+    uint64_t expectedLifeGeneration;
+    uint64_t expectedRuntimeIdentity;
+  };
+  bool CompareAndSetActorInventoryAndEquipment(int32_t expectedProfileId,
+    const InventoryEquipmentChange& change);
 
   bool IsServerControlled() const
   {
