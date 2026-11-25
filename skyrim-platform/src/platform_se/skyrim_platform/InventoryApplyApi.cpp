@@ -242,10 +242,12 @@ Napi::Value Create(const Napi::CallbackInfo& info) {
   }));
   object.Set("cancel", Napi::Function::New(info.Env(), [scope](const Napi::CallbackInfo&) { scope->Cancel(); }));
   object.Set("submit", Napi::Function::New(info.Env(), NapiHelper::WrapCppExceptions([scope](const Napi::CallbackInfo& call) -> Napi::Value {
-    std::lock_guard<std::recursive_mutex> lock(scope->mutex);
-    if (call.Length() != 1 || !g_nativeCallRequirements.vm || scope->job || !scope->Current() || !scope->Ready()) throw std::logic_error("Inventory scope is not ready");
+    if (call.Length() != 1 || !g_nativeCallRequirements.vm || !scope->Current() || !scope->Ready()) throw std::logic_error("Inventory scope is not ready");
+    // Napi property reads can invoke JS getters and re-enter lifecycle APIs.
+    // Parse outside the scope lock, then revalidate before publishing work.
     auto operations = Operations(call[0], scope);
-    if (!scope->Current()) throw std::logic_error("Inventory scope changed during preparation");
+    std::lock_guard<std::recursive_mutex> lock(scope->mutex);
+    if (!g_nativeCallRequirements.vm || scope->job || !scope->Current() || !scope->Ready()) throw std::logic_error("Inventory scope changed during preparation");
     std::weak_ptr<Scope> weak = scope;
     scope->job = scheduler.Submit(scope->referenceId, reinterpret_cast<uintptr_t>(scope->identity), std::move(operations), [weak] {
       auto held = weak.lock(); return held && held->Current();
