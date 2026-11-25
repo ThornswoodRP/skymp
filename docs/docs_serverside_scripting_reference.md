@@ -39,6 +39,36 @@ mp.makeProperty("playerLevel", {
 });
 ```
 
+## Atomic character knowledge
+
+`mp.compareAndSetActorPropertyAndSpells(actorId, expectedProfileId, change)`
+compares and replaces a complete custom property and the actor's complete
+learned-spell set in one live commit and one queued character snapshot.
+`change` contains `name`, `expected`, `replacement`, `expectedLifeGeneration`,
+`expectedRuntimeIdentity`, `expectedSpells` and `replacementSpells`.
+Use the current process-local identity from `mp.getActorRuntimeIdentity()`.
+Read the complete stored spell set with `mp.getActorLearnedSpells(actorId)`.
+Papyrus `GetSpellCount` and `GetNthSpell` omit inherited entries even when
+explicitly stored, so their result is not a complete compare-and-set fence.
+
+The registered custom property may be visible to its owner, but must be
+hidden from neighbors. Native underscore-prefixed properties are forbidden.
+Each serialized property value is limited to 1 MiB. Spell arrays are sets
+of at most 4096 unique, valid base SPEL form IDs; order does not matter.
+Preserve unrelated abilities and other learned entries in the replacement.
+
+A stale profile, runtime, life, property or learned set returns `false`
+without changing either value. Invalid input throws before the commit.
+`true` means the live state matches a queued snapshot, not that storage has
+acknowledged it. Owner updates and spell-book changes are published after
+the commit; transport failures are logged and do not change its result.
+
+The same snapshot enables authoritative spell-list enforcement for this
+character. Ordinary inherited spells also require explicit membership.
+Inherited abilities and powers retain their normal rules. Equipment, cast
+and spell-hit paths enforce membership independently of the legacy
+`equipmentSpellCheckEnabled` setting. The policy persists across reloads.
+
 ## Runtime god mode
 
 `mp.get(actorId, "isGodMode")` returns a boolean. The server gamemode may

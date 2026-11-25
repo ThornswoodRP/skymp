@@ -43,6 +43,7 @@
 #include "UpdateMovementMessage.h"
 #include "UpdateAnimationMessage.h"
 #include "HostStopMessage.h"
+#include "UpdatePropertyMessage.h"
 
 // for PlaceAtMe used in MpActor::DropItem
 #include "script_classes/PapyrusObjectReference.h"
@@ -266,6 +267,80 @@ bool MpActor::CompareAndSetActorProperty(int32_t expectedProfileId,
   auto world = GetParent();
   if (!world || !world->RequestPreparedSave(*this, std::move(snapshot))) return false;
   CommitPreparedDynamicFields(std::move(nextFields));
+  return true;
+}
+
+bool MpActor::HasAuthoritativeSpellList() const
+{
+  return GetDynamicFields().GetValueDump("_skympAuthoritativeSpells") == "true";
+}
+
+bool MpActor::CompareAndSetActorPropertyAndSpells(int32_t expectedProfileId,
+  const InventoryPropertyChange& property,
+  const std::vector<uint32_t>& expectedSpells,
+  const std::vector<uint32_t>& replacementSpells, bool visibleByOwner)
+{
+  constexpr size_t maxBytes = 1024 * 1024;
+  constexpr uint64_t maxLife = 9007199254740991;
+  if (property.name.empty() || property.name.size() > 128 ||
+      property.name.front() == '_' || property.expectedDump.size() > maxBytes ||
+      property.replacementDump.size() > maxBytes)
+    throw std::runtime_error("Invalid character knowledge property");
+  auto world = GetParent();
+  if (!world) return false;
+  const auto checkedSpells = [&](const std::vector<uint32_t>& ids) {
+    if (ids.size() > 4096) throw std::runtime_error("Too many learned spells");
+    LearnedSpells result;
+    for (auto id : ids) {
+      if (!id || id >= 0xff000000 ||
+          !espm::Convert<espm::SPEL>(world->GetEspm().GetBrowser().LookupById(id).rec))
+        throw std::runtime_error("Learned spells require valid base SPEL records");
+      if (result.IsSpellLearned(id)) throw std::runtime_error("Duplicate learned spell");
+      result.LearnSpell(id);
+    }
+    return result;
+  };
+  const auto expectedLearned = checkedSpells(expectedSpells);
+  auto nextLearned = checkedSpells(replacementSpells);
+  const auto expected = nlohmann::json::parse(property.expectedDump);
+  const auto replacement = nlohmann::json::parse(property.replacementDump).dump();
+  if (replacement.size() > maxBytes) throw std::runtime_error("Character knowledge property too large");
+  const auto life = nlohmann::json::parse(GetDynamicFields().GetValueDump("_skympNpcLifeGeneration"));
+  if (!life.is_null() && (!life.is_number_integer() || life < 0 || life > maxLife))
+    throw std::runtime_error("Invalid persisted actor lifeGeneration");
+  if (expectedProfileId <= 0 || GetProfileId() != expectedProfileId || blockSaving ||
+      !property.expectedRuntimeIdentity || !HasRuntimeIdentity(*property.expectedRuntimeIdentity) ||
+      property.expectedLifeGeneration > maxLife ||
+      property.expectedLifeGeneration != (life.is_null() ? 0 : life.get<uint64_t>()) ||
+      ChangeForm().learnedSpells != expectedLearned ||
+      nlohmann::json::parse(GetDynamicFields().GetValueDump(property.name)) != expected)
+    return false;
+  auto nextFields = GetDynamicFields();
+  nextFields.SetValueDump(property.name, replacement);
+  nextFields.SetValueDump("_skympAuthoritativeSpells", "true");
+  auto message = PreparePropertyMessage_(this, property.name.c_str(), replacement);
+  auto snapshot = GetChangeForm();
+  snapshot.dynamicFields = nextFields;
+  snapshot.learnedSpells = nextLearned;
+  if (!world->RequestPreparedSave(*this, std::move(snapshot))) return false;
+  CommitPreparedKnowledge(std::move(nextFields), std::move(nextLearned));
+  // Publication is best effort after the indivisible live/save commit. A
+  // transport error cannot turn a completed transaction into a false refusal.
+  try {
+    if (visibleByOwner) GetActorToSendTo().SendToUser(message, true);
+    for (auto id : expectedSpells) {
+      if (!ChangeForm().learnedSpells.IsSpellLearned(id))
+        SpSnippet("Actor", "RemoveSpell", {SpSnippetObjectArgument{SpSnippet::MakeLongFormId(world, id), "Spell"}}, GetFormId())
+          .Execute(this, SpSnippetMode::kNoReturnResult);
+    }
+    for (auto id : replacementSpells) {
+      if (!expectedLearned.IsSpellLearned(id))
+        SpSnippet("Actor", "AddSpell", {SpSnippetObjectArgument{SpSnippet::MakeLongFormId(world, id), "Spell"}, false}, GetFormId())
+          .Execute(this, SpSnippetMode::kNoReturnResult);
+    }
+  } catch (const std::exception& error) {
+    spdlog::error("Knowledge commit {:x} publication failed: {}", GetFormId(), error.what());
+  }
   return true;
 }
 
@@ -1514,6 +1589,9 @@ const bool& MpActor::IsRespawning() const
 
 bool MpActor::IsSpellLearned(const uint32_t spellId) const
 {
+  if (HasAuthoritativeSpellList() &&
+      SpellTypeOf(GetParent(), spellId) == espm::SPEL::SpellType::Spell)
+    return ChangeForm().learnedSpells.IsSpellLearned(spellId);
   return ChangeForm().learnedSpells.IsSpellLearned(spellId) ||
     IsSpellLearnedFromBase(spellId);
 }

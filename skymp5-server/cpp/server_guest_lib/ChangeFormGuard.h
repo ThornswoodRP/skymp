@@ -42,6 +42,15 @@ public:
   bool blockSaving = false;
 
 protected:
+  void CommitPreparedKnowledge(DynamicFields&& fields, LearnedSpells&& spells) noexcept
+  {
+    static_assert(std::is_nothrow_move_assignable_v<DynamicFields>);
+    static_assert(std::is_nothrow_move_assignable_v<LearnedSpells>);
+    changeForm.dynamicFields = std::move(fields);
+    changeForm.learnedSpells = std::move(spells);
+    lastSaveRequest = std::chrono::system_clock::now();
+  }
+
   // Call only after queuing the matching full snapshot. Nothing after queue
   // publication may allocate or fail before the live state matches it.
   void CommitPreparedDynamicFields(DynamicFields&& fields) noexcept

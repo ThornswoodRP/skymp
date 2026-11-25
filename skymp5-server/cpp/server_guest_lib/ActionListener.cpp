@@ -401,7 +401,8 @@ void ActionListener::OnUpdateEquipment(const RawMessageData& rawMsgData,
   //
   // equipmentSlotCheckEnabled: see further down. That one is the gear strip.
   const bool tsSpellCheck =
-    !actor->GetParent() || actor->GetParent()->equipmentSpellCheckEnabled;
+    actor->HasAuthoritativeSpellList() || !actor->GetParent() ||
+    actor->GetParent()->equipmentSpellCheckEnabled;
 
   if (tsSpellCheck && leftSpell > 0 && !actor->IsSpellLearned(leftSpell)) {
     spdlog::warn("ActionListener::OnUpdateEquipment {:x} - rejected equipment "
@@ -1606,6 +1607,12 @@ void ActionListener::OnHit(const RawMessageData& rawMsgData,
   const auto equipment = aggressor->GetEquipment();
 
   if (isSourceSpell && equipment.IsSpellEquipped(hitData.source)) {
+    if (aggressor->HasAuthoritativeSpellList() &&
+        !aggressor->IsSpellLearned(hitData.source)) {
+      spdlog::warn("ActionListener::OnHit {:x} - spell {:x} is not active",
+                   aggressor->GetFormId(), hitData.source);
+      return;
+    }
     OnSpellHit(aggressor, targetRef, hitData);
     return;
   }
@@ -1690,6 +1697,16 @@ void ActionListener::OnSpellCast(const RawMessageData& rawMsgData,
   }
 
   const auto equipment = caster->GetEquipment();
+
+  // A profession change can revoke a spell that remains in hand. Enforce
+  // the current authoritative set even when legacy equipment checks are off.
+  // An interruption stops an old cast and applies no new spell effects.
+  if (!spellCastData.interruptCast && caster->HasAuthoritativeSpellList() &&
+      !caster->IsSpellLearned(spellCastData.spell)) {
+    spdlog::warn("ActionListener::OnSpellCast {:x} - spell {:x} is not active",
+                 caster->GetFormId(), spellCastData.spell);
+    return;
+  }
 
   if (equipment.IsSpellEquipped(spellCastData.spell) == false) {
     spdlog::info("ActionListener::OnSpellCast - spell {0:x} not "

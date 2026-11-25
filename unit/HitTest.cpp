@@ -245,3 +245,47 @@ TEST_CASE("checking weapon cooldown", "[Hit]")
   p.DestroyActor(0xff000000);
   DoDisconnect(p, 0);
 }
+
+TEST_CASE("An authoritative active list gates hits from stale equipped spells",
+          "[authoritative-spells][espm]")
+{
+  auto& p = GetPartOne();
+  constexpr uint32_t attackerId = 0xff000a98, targetId = 0xff000a99,
+                     flames = 0x12fcd;
+  DoConnect(p, 0);
+  p.CreateActor(attackerId, { 0, 0, 0 }, 0, 0x3c);
+  p.CreateActor(targetId, { 0, 0, 0 }, 0, 0x3c);
+  p.SetUserActor(0, attackerId);
+  auto& attacker = p.worldState.GetFormAt<MpActor>(attackerId);
+  auto& target = p.worldState.GetFormAt<MpActor>(targetId);
+  p.worldState.equipmentSpellCheckEnabled = false;
+  Equipment equipment;
+  equipment.leftSpell = flames;
+  attacker.SetEquipment(equipment);
+  bool allowed = false;
+  SECTION("Removed ordinary spell")
+  {
+    attacker.SetPropertyValueDump("_skympAuthoritativeSpells", "true", false,
+                                  false);
+  }
+  SECTION("Active learned spell")
+  {
+    attacker.SetPropertyValueDump("_skympAuthoritativeSpells", "true", false,
+                                  false);
+    attacker.AddSpell(flames);
+    allowed = true;
+  }
+  SECTION("Legacy spell list") { allowed = true; }
+  RawMessageData raw;
+  raw.userId = 0;
+  HitMessage hit;
+  hit.data.aggressor = 0x14;
+  hit.data.target = targetId;
+  hit.data.source = flames;
+  p.GetActionListener().OnHit(raw, hit);
+  const auto health = target.GetChangeForm().actorValues.healthPercentage;
+  p.DestroyActor(attackerId);
+  p.DestroyActor(targetId);
+  DoDisconnect(p, 0);
+  REQUIRE((health < 1.f) == allowed);
+}
