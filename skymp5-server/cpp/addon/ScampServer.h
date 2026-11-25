@@ -74,6 +74,7 @@ public:
   Napi::Value GetInventoryReceipt(const Napi::CallbackInfo& info);
   Napi::Value GetSavedInventoryReceipt(const Napi::CallbackInfo& info);
   Napi::Value Place(const Napi::CallbackInfo& info);
+  Napi::Value PlaceDisabledFurniture(const Napi::CallbackInfo& info);
   Napi::Value LookupEspmRecordById(const Napi::CallbackInfo& info);
   Napi::Value GetNeighborsByPosition(const Napi::CallbackInfo& info);
   Napi::Value GetAllForms(const Napi::CallbackInfo& info);

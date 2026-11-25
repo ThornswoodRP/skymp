@@ -82,6 +82,9 @@ export interface ScampServer {
       expectedLifeGeneration: number; expectedRuntimeIdentity: string;
       expectedSpells: number[]; replacementSpells: number[]}): boolean;
   getSavedInventoryReceipt(formId: number): string;
+  /** Finds or queues a disabled furniture reference with its hidden marker
+   * set. Bind the returned reference durably before positioning and enabling. */
+  placeDisabledFurniture(baseId: number, placementMarker: string): number;
   prepareNpcLoad(): number;
   loadNpcBatch(cursor: number, limit: number): {
     nextCursor: number;

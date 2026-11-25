@@ -99,6 +99,10 @@ public:
     uint32_t baseId, std::string baseType,
     std::optional<NiPoint3> primitiveBoundsDiv2 = std::nullopt);
 
+  static constexpr const char* kFurniturePlacementMarker =
+    "thornswoodFurniturePlacement";
+  void PrepareFurniturePlacement(const std::string& marker);
+
   const NiPoint3& GetPos() const;
   const NiPoint3& GetAngle() const;
   const FormDesc& GetCellOrWorld() const;

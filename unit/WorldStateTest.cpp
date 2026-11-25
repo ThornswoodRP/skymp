@@ -10,6 +10,54 @@
 
 using Catch::Matchers::ContainsSubstring;
 
+extern espm::Loader& GetEspmLoader();
+
+TEST_CASE("Staged furniture stays disabled through a save and reload",
+          "[WorldState]")
+{
+  constexpr auto marker = "12345678-1234-1234-1234-123456789abc";
+  constexpr uint32_t stool = 0x74ec6;
+  constexpr uint32_t tamriel = 0x3c;
+  PartOne first;
+  first.AttachEspm(&GetEspmLoader());
+  auto object = std::make_unique<MpObjectReference>(
+    LocationalData{ { 0, 0, 0 }, { 0, 0, 0 }, FormDesc::Tamriel() },
+    first.CreateFormCallbacks(), stool, "FURN");
+  object->PrepareFurniturePlacement(marker);
+  const auto id = first.worldState.GenerateFormId();
+  first.worldState.AddForm(std::move(object), id);
+  auto& created = first.worldState.GetFormAt<MpObjectReference>(id);
+  REQUIRE(first.worldState.FindFurniturePlacement(stool, marker) == id);
+  REQUIRE(created.IsDisabled());
+  REQUIRE_THROWS(created.PrepareFurniturePlacement(marker));
+  created.ForceSubscriptionsUpdate();
+  REQUIRE(first.worldState.GetGrids().count(tamriel) == 0);
+
+  simdjson::dom::parser parser;
+  const auto serialized = MpChangeForm::ToJson(created.GetChangeForm()).dump();
+  auto json = parser.parse(serialized).value();
+  const auto saved = MpChangeForm::JsonToChangeForm(json);
+  REQUIRE(saved.isDisabled);
+  REQUIRE(saved.dynamicFields.GetValueDump(
+            MpObjectReference::kFurniturePlacementMarker) ==
+          nlohmann::json(marker).dump());
+
+  PartOne recovered;
+  recovered.AttachEspm(&GetEspmLoader());
+  recovered.worldState.LoadChangeForm(saved, recovered.CreateFormCallbacks());
+  auto& staged = recovered.worldState.GetFormAt<MpObjectReference>(id);
+  REQUIRE(recovered.worldState.FindFurniturePlacement(stool, marker) == id);
+  REQUIRE(staged.IsDisabled());
+  REQUIRE(staged.GetDynamicFields().GetValueDump(
+            MpObjectReference::kFurniturePlacementMarker) ==
+          nlohmann::json(marker).dump());
+  staged.SetPos({ 10, 20, 30 });
+  REQUIRE(recovered.worldState.GetGrids().count(tamriel) == 0);
+  staged.Enable();
+  REQUIRE_FALSE(staged.IsDisabled());
+  REQUIRE(recovered.worldState.GetGrids().count(tamriel) == 1);
+}
+
 TEST_CASE("AddForm failures", "[WorldState]")
 {
   WorldState worldState;

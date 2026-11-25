@@ -77,6 +77,9 @@ public:
                bool skipChecks = false,
                const MpChangeForm* optionalChangeFormToApply = nullptr);
 
+  uint32_t FindFurniturePlacement(uint32_t baseId,
+                                  const std::string& marker) const;
+
   void LoadChangeForm(const MpChangeForm& changeForm,
                       const FormCallbacks& callbacks);
 
