@@ -140,6 +140,7 @@ class RemoteServerBase {
   cancelOwnerSpawn() {}
 }
 stubs.RemoteServerBase = RemoteServerBase;
+stubs.cancelAllInventoryApplications = () => {};
 const RemoteServerUnderTest = new Function(...Object.keys(stubs), compile(remoteClass))(...Object.values(stubs));
 const ragdollService = new stubs.RagdollService({ Game }, controller);
 const remoteServer = new RemoteServerUnderTest();

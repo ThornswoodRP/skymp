@@ -1,3 +1,4 @@
+import { requestInventoryApply, InventoryAddition } from "./inventoryApplyCoordinator";
 import {
   getExtraContainerChanges,
   getContainer,
@@ -772,11 +773,12 @@ const takeAway = (refr: ObjectReference, entries: Entry[]): void => {
   });
 };
 
-export const applyInventory = (
+const prepareInventory = (
   refr: ObjectReference,
   newInventory: Inventory,
   enableCrashProtection: boolean,
-  ignoreWorn = false
+  ignoreWorn: boolean,
+  additions: InventoryAddition[]
 ): boolean => {
   // Inventory::Entry stores a uint32 count. Refuse the whole target before
   // changing anything; in particular, an infinite count must not enter the
@@ -912,102 +914,57 @@ export const applyInventory = (
   takeAway(refr, diff.filter((e) => e.count < 0));
 
   diff.filter((e) => e.count > 0).forEach((e) => {
-    let absCount = Math.abs(e.count);
-
-    let queueNiNodeUpdateNeeded = false;
-
-    const worn = !!e.worn;
-    const wornLeft = !!e.wornLeft;
-
-    let oneStepCount = e.count / absCount;
-
     const f = Game.getFormEx(e.baseId);
     if (!f) {
+      res = false;
       return printConsole(`Bad form ID ${e.baseId.toString(16)}`);
     }
     const type = f.getType();
-    // For misc items, potions and ingredients we don't want to split them into multiple items
-    // This was made to fix a performance issue with users having 10000+ of misc items (i.e. gold)
-    if (
-      type === FormType.Misc ||
-      type === FormType.Potion ||
-      type === FormType.Ingredient
-    ) {
-      absCount = 1;
-      oneStepCount = e.count;
-    } else {
-      if (e.count > 1 && Ammo.from(Game.getFormEx(e.baseId))) {
-        absCount = 1;
-        oneStepCount = e.count;
-        if (e.count > 60000) {
-          // Why would actor have 60k arrows?
-          e.count = 1;
-        }
-      }
-    }
-
-    for (let i = 0; i < absCount; ++i) {
-      if (worn || wornLeft) {
-        TESModPlatform.pushWornState(!!worn, !!wornLeft);
-        queueNiNodeUpdateNeeded = true;
-      }
-
-      let addItemExArgs: [
-        ObjectReference,
-        Form,
-        number,
-        number,
-        Enchantment | null,
-        number,
-        boolean,
-        number,
-        string,
-        number,
-        Potion | null,
-        number,
-      ];
-
-      addItemExArgs = [
-        refr,
-        f,
-        oneStepCount,
-        e.health ? e.health : 1,
-        e.enchantmentId
-          ? Enchantment.from(Game.getFormEx(e.enchantmentId))
-          : null,
-        e.maxCharge ? e.maxCharge : 0,
-        !!e.removeEnchantmentOnUnequip,
-        e.chargePercent ? e.chargePercent : 0,
-        e.name ? cropName(e.name) : f.getName(),
-        e.soul ? e.soul : 0,
-        e.poisonId ? Potion.from(Game.getFormEx(e.poisonId)) : null,
-        e.poisonCount ? e.poisonCount : 0
-      ];
-
-      const argsToPrint = addItemExArgs.map((arg) => {
-        if (arg instanceof ObjectReference) {
-          return `ObjectReference(${arg.getFormID().toString(16)})`;
-        } else if (arg instanceof Form) {
-          return `Form(${arg.getFormID().toString(16)})`;
-        } else {
-          return JSON.stringify(arg);
-        }
-      });
-
-      printConsole(
-        `TESModPlatform.addItemEx(${argsToPrint.join(", ")})`
-      );
-
-      TESModPlatform.addItemEx(...addItemExArgs);
-    }
-
-    if (queueNiNodeUpdateNeeded) {
-      const ac = Actor.from(refr);
-      if (ac) {
-        ac.queueNiNodeUpdate();
-      }
-    }
+    const bulk = type === FormType.Misc || type === FormType.Potion ||
+      type === FormType.Ingredient || !!Ammo.from(f);
+    // Gear keeps one native extra list per piece. Bulk forms retain their
+    // existing path, splitting only at AddItemEx's actual signed int32 limit.
+    additions.push({
+      baseId: e.baseId, count: e.count,
+      quantityPerUnit: bulk ? Math.min(e.count, 0x7fffffff) : 1,
+      health: e.health || 1, enchantmentId: e.enchantmentId || 0,
+      maxCharge: e.maxCharge || 0,
+      removeEnchantmentOnUnequip: !!e.removeEnchantmentOnUnequip,
+      chargePercent: e.chargePercent || 0,
+      name: e.name ? cropName(e.name) : f.getName(), soul: e.soul || 0,
+      poisonId: e.poisonId || 0, poisonCount: e.poisonCount || 0,
+      worn: !!e.worn, wornLeft: !!e.wornLeft,
+    });
   });
+  if (additions.length) printConsole(`Inventory application: ${additions.length} addition descriptors queued`);
 
   return res;
+};
+
+
+export const applyInventory = (
+  refr: ObjectReference,
+  newInventory: Inventory,
+  enableCrashProtection: boolean,
+  ignoreWorn = false
+): boolean => {
+  // Validate the entire target before creating/replacing a scope or changing
+  // base containers/runtime forms. A maximum uint32 count is still compact.
+  if (!newInventory || !Array.isArray(newInventory.entries) || newInventory.entries.some((e) =>
+    !e || !Number.isInteger(e.count) || e.count < 0 || e.count > 0xffffffff)) {
+    printConsole("Refused inventory with an invalid item count");
+    return false;
+  }
+  const copy = JSON.parse(JSON.stringify(newInventory)) as Inventory;
+  const signature = JSON.stringify([copy, enableCrashProtection, ignoreWorn]);
+  const id = refr.getFormID();
+  return requestInventoryApply(id, signature, () => {
+    // SP native wrappers expire across updates. Resolve the same native scope
+    // in the current preparation update, never retain the caller's wrapper.
+    const current = ObjectReference.from(Game.getFormEx(id));
+    if (!current) throw new Error("Inventory reference disappeared");
+    const additions: InventoryAddition[] = [];
+    prepareInventory(current, copy, enableCrashProtection, ignoreWorn, additions);
+    return additions;
+  });
 };

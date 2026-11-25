@@ -66,6 +66,7 @@ function fixture(options = {}) {
       if (name.endsWith('/clientListener')) return {ClientListener: class {}};
       if (name.endsWith('/worldViewMisc')) return {remoteIdToLocalId: id => id};
       if (name.endsWith('/equipment')) return {isBadMenuShown: () => state.paused};
+      if (name.endsWith('/inventoryApplyCoordinator')) return {inventoryApplyFence: () => Object.assign(sp.getInventoryQueueFence(), {isCurrent:()=>true})};
       if (name.endsWith('/inventory')) return {
         getInventory(player) { player.getBaseObject(); return actual; },
         getDiff(expected, got) { return {entries: JSON.stringify(expected) === JSON.stringify(got) ? [] : expected.entries}; },
@@ -118,7 +119,7 @@ function noExpired(f) {
   await check('the furniture reference is reacquired after waiting for its pack', async () => {
     const f = fixture({current: true});
     // Isolate the caller's reference lifetime from the separate player bug.
-    f.service.packBeforeBench = () => f.sp.Utility.wait(0.1);
+    f.service.packBeforeBench = async () => {await f.sp.Utility.wait(0.1); return true;};
     f.open(); await f.advance(); noExpired(f);
     assert.equal(f.opens.length, 1);
     assert.equal(f.applies.length, 0);

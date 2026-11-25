@@ -13,6 +13,7 @@ import { getMovement } from "../sync/movementGet";
 import { lastTryHost, tryHost } from "./hostAttempts";
 import { ModelApplyUtils } from "./modelApplyUtils";
 import { localIdToRemoteId } from "./worldViewMisc";
+import { cancelInventoryApplication } from "../sync/inventoryApplyCoordinator";
 import { SpApiInteractor } from "../services/spApiInteractor";
 import { WorldCleanerService } from "../services/services/worldCleanerService";
 import { GamemodeUpdateService } from "../services/services/gamemodeUpdateService";
@@ -343,6 +344,7 @@ export class FormView {
   }
 
   destroy(): void {
+    cancelInventoryApplication(this.refrId);
     this.isOnScreen = false;
     this.spawnMoment = 0;
     const refrId = this.refrId;

@@ -115,12 +115,22 @@ function makeGame() {
       },
     },
   };
-  const sandbox = { exports: {}, require: (m) => (m === 'skyrimPlatform' ? sp : {}) };
+  const nativeApply = require('./inventory_apply_fixture').install(sp, pc);
+  const sandbox = { exports: {}, require: (m) => m === 'skyrimPlatform' ? sp : m === './inventoryApplyCoordinator' ? nativeApply.coordinator : {} };
   sandbox.module = { exports: sandbox.exports };
   vm.runInNewContext(js, sandbox);
   game.inv = sandbox.exports;
   game.pc = pc;
-  game.apply = (entries) => game.inv.applyInventory(pc, { entries }, false, true);
+  game.beginApply = (entries) => game.inv.applyInventory(pc, { entries }, false, true);
+  game.nativeApply = nativeApply;
+  game.advance = nativeApply.advance;
+  game.applyAndDrain = (entries) => {
+    const before = nativeApply.creations;
+    const accepted = game.beginApply(entries);
+    if (nativeApply.creations === before) return accepted;
+    nativeApply.drain();
+    return game.inv.getDiff({entries}, game.inv.getInventory(pc), true).entries.length === 0;
+  };
   return game;
 }
 
@@ -151,7 +161,7 @@ function makeGame() {
   const g = makeGame();
   if (typeof g.inv.inventoryEntriesEqualExceptName === 'function') {
     g.lists = [{ baseId: SWORD, count: 1, name: 'Iron Sword (85%)', worn: true }, { baseId: GOLD, count: 40 }];
-    g.apply([{ baseId: SWORD, count: 1, name: 'Iron Sword (84%)' }, { baseId: GOLD, count: 40 }]);
+    g.applyAndDrain([{ baseId: SWORD, count: 1, name: 'Iron Sword (84%)' }, { baseId: GOLD, count: 40 }]);
     const renames = g.calls.filter((c) => c[0] === 'rename');
     yes('a worn sword renamed by the server is renamed in the game, once, asked ' + renames.length,
       renames.length === 1 && renames[0][1] === 0x14 && renames[0][2] === SWORD &&
@@ -159,7 +169,7 @@ function makeGame() {
     yes('nothing is taken away or added for it', !g.calls.some((c) => c[0] === 'addItemEx'));
     yes('it is still worn and now reads 84%', g.lists.some((l) => l.baseId === SWORD && l.worn && l.name === 'Iron Sword (84%)'));
     g.calls.length = 0;
-    g.apply([{ baseId: SWORD, count: 1, name: 'Iron Sword (84%)' }, { baseId: GOLD, count: 40 }]);
+    g.applyAndDrain([{ baseId: SWORD, count: 1, name: 'Iron Sword (84%)' }, { baseId: GOLD, count: 40 }]);
     yes('the next pass finds nothing to do', g.calls.length === 0);
   } else {
     yes('a worn sword renamed by the server is renamed in the game (this inventory.ts cannot)', false);
@@ -170,11 +180,11 @@ function makeGame() {
 {
   const g = makeGame();
   g.lists = [{ baseId: SWORD, count: 1, name: 'Iron Sword', worn: true }];
-  g.apply([{ baseId: SWORD, count: 1, name: 'Iron Sword (99%)' }]);
+  g.applyAndDrain([{ baseId: SWORD, count: 1, name: 'Iron Sword (99%)' }]);
   yes('a sound sword hit for the first time is renamed "Iron Sword (99%)" and stays worn',
     g.lists.length === 1 && g.lists[0].worn && g.lists[0].name === 'Iron Sword (99%)' && !g.calls.some((c) => c[0] === 'addItemEx'));
   g.calls.length = 0;
-  g.apply([{ baseId: SWORD, count: 1 }]);
+  g.applyAndDrain([{ baseId: SWORD, count: 1 }]);
   const r = g.calls.find((c) => c[0] === 'rename');
   yes('a repair to 100% (no name on the server) renames it back to the base\'s name',
     !!r && r[3] === 'Iron Sword (99%)' && r[4] === 'Iron Sword' && g.lists[0].worn && g.lists[0].name === 'Iron Sword');
@@ -184,7 +194,7 @@ function makeGame() {
 {
   const g = makeGame();
   g.lists = [{ baseId: SWORD, count: 1, name: 'Iron Sword' }, { baseId: SWORD, count: 1, name: 'Iron Sword', worn: true }];
-  g.apply([{ baseId: SWORD, count: 1 }, { baseId: SWORD, count: 1, name: 'Iron Sword (99%)' }]);
+  g.applyAndDrain([{ baseId: SWORD, count: 1 }, { baseId: SWORD, count: 1, name: 'Iron Sword (99%)' }]);
   const r = g.calls.find((c) => c[0] === 'rename');
   yes('of two swords, the rename asks for the name the game spells ("Iron Sword", not the server\'s none)', !!r && r[3] === 'Iron Sword');
   yes('and the worn one is the one renamed', g.lists.some((l) => l.worn && l.name === 'Iron Sword (99%)') &&
@@ -197,7 +207,7 @@ function makeGame() {
   const g = makeGame();
   g.lists = [{baseId:SWORD,count:1,name:'Iron Sword (25%)',worn:true},
     {baseId:SWORD,count:2,name:'Iron Sword (50%)'}];
-  g.apply([{baseId:SWORD,count:3}]);
+  g.applyAndDrain([{baseId:SWORD,count:3}]);
   yes('plain many-to-one repair uses only native renames and keeps the worn unit',
     g.calls.filter(c=>c[0]==='rename').length===2 && !g.calls.some(c=>c[0]==='remove'||c[0]==='addItemEx') &&
     g.lists.some(l=>l.worn&&l.name==='Iron Sword') && g.lists.reduce((n,l)=>n+l.count,0)===3);
@@ -209,20 +219,20 @@ function makeGame() {
     {baseId:SWORD,count:2,name:'Iron Sword (50%)',health:1.4}
   ];
   const repaired = [{baseId:SWORD,count:1,health:1.4},{baseId:SWORD,count:2,health:1.4}];
-  g.apply(repaired);
+  g.applyAndDrain(repaired);
   yes('merged repair targets rename each old stack without taking anything away or adding it',
     g.calls.filter(c=>c[0]==='rename').length===2 && !g.calls.some(c=>c[0]==='remove'||c[0]==='addItemEx'));
   yes('the many-to-one repair keeps the worn piece, temper and every unit',
     g.lists.length===2 && g.lists.some(l=>l.worn&&l.name==='Iron Sword'&&l.health===1.4) &&
     g.lists.every(l=>l.name==='Iron Sword'&&l.health===1.4) && g.lists.reduce((n,l)=>n+l.count,0)===3);
-  g.calls.length=0;g.apply(repaired);
+  g.calls.length=0;g.applyAndDrain(repaired);
   yes('the merged repair is complete on the next pass',g.calls.length===0);
 }
 {
   const g = makeGame();
   g.lists = [{baseId:SWORD,count:1,name:'Iron Sword (25%) (Fine)',health:1.4,worn:true},
     {baseId:SWORD,count:2,name:'Iron Sword (50%) (Fine)',health:1.4}];
-  g.apply([{baseId:SWORD,count:3,health:1.4}]);
+  g.applyAndDrain([{baseId:SWORD,count:3,health:1.4}]);
   yes('rendered temper suffixes keep the same in-place repair path',
     g.calls.filter(c=>c[0]==='rename').length===2 && !g.calls.some(c=>c[0]==='remove'||c[0]==='addItemEx') &&
     g.lists.some(l=>l.worn&&l.name==='Iron Sword'&&l.health===1.4));
@@ -231,7 +241,7 @@ function makeGame() {
   const g = makeGame();
   g.lists = [{baseId:SWORD,count:1,name:'Aldis Blade (25%)',health:1.6,worn:true},
     {baseId:SWORD,count:2,name:'Aldis Blade (25%)',health:1.4}];
-  g.apply([{baseId:SWORD,count:1,name:'Aldis Blade',health:1.6},
+  g.applyAndDrain([{baseId:SWORD,count:1,name:'Aldis Blade',health:1.6},
     {baseId:SWORD,count:2,name:'Aldis Blade',health:1.4}]);
   yes('same names across different temper extras batch one full native rename',
     g.calls.filter(c=>c[0]==='rename').length===1 && !g.calls.some(c=>c[0]==='remove'||c[0]==='addItemEx') &&
@@ -246,10 +256,10 @@ function makeGame() {
     {baseId:SWORD,count:2,name:'Aldis Blade (50%)'}];
   const before=JSON.stringify(g.lists),target=[{baseId:SWORD,count:3,name:'Aldis Blade'}];
   g.renameWorks=false;
-  const applied=g.apply(target);
+  const applied=g.applyAndDrain(target);
   yes('a refused complete repair stays pending instead of rebuilding worn equipment',
     applied===false&&JSON.stringify(g.lists)===before&&!g.calls.some(c=>c[0]==='remove'||c[0]==='addItemEx'));
-  g.renameWorks=true;g.calls.length=0;g.apply(target);
+  g.renameWorks=true;g.calls.length=0;g.applyAndDrain(target);
   yes('pending complete repairs retry safely when the native lists are ready',
     g.lists.some(l=>l.worn&&l.name==='Aldis Blade')&&g.lists.reduce((n,l)=>n+l.count,0)===3&&
     !g.calls.some(c=>c[0]==='remove'||c[0]==='addItemEx'));
@@ -260,11 +270,11 @@ function makeGame() {
   const g=makeGame();
   g.lists=[{baseId:DAGGER,count:3,name:'Steel Dagger (60%)'}];
   const desired=[{baseId:DAGGER,count:2,name:'Steel Dagger (60%)'},{baseId:DAGGER,count:1}];
-  g.apply(desired);
+  g.applyAndDrain(desired);
   yes('repairing one of a larger extra list to sound still uses the established split path',
     g.calls.some(c=>c[0]==='rename')&&g.calls.some(c=>c[0]==='remove')&&g.calls.some(c=>c[0]==='addItemEx')&&
     g.lists.some(l=>l.name==='Steel Dagger (60%)'&&l.count===2)&&g.lists.some(l=>l.name==='Steel Dagger'&&l.count===1));
-  g.calls.length=0;g.apply(desired);
+  g.calls.length=0;g.applyAndDrain(desired);
   yes('the partial repair-to-sound split completes without a retry loop',g.calls.length===0);
 }
 
@@ -276,7 +286,7 @@ for (const reverse of [false,true]) {
     {baseId:SWORD,count:1,name:'Brenna Blade (75%)',health:1.4}];
   const targets=[{baseId:SWORD,count:2,name:'Aldis Blade',health:1.4},
     {baseId:SWORD,count:1,name:'Brenna Blade',health:1.4}];
-  g.apply(reverse?targets.reverse():targets);
+  g.applyAndDrain(reverse?targets.reverse():targets);
   yes('mixed custom repair groups preserve worn identity regardless of target order '+reverse,
     g.lists.some(l=>l.worn&&l.name==='Aldis Blade') &&
     g.lists.filter(l=>l.name==='Aldis Blade').reduce((n,l)=>n+l.count,0)===2 &&
@@ -289,7 +299,7 @@ for (const reverse of [false,true]) {
   g.lists=[{baseId:SWORD,count:1,name:'Aldis Blade (25%)',worn:true},
     {baseId:SWORD,count:1,name:'Aldis Blade (50%)'},
     {baseId:SWORD,count:1,name:'Old Custom'}];
-  g.apply([{baseId:SWORD,count:1,name:'New Custom'},{baseId:SWORD,count:2,name:'Aldis Blade'}]);
+  g.applyAndDrain([{baseId:SWORD,count:1,name:'New Custom'},{baseId:SWORD,count:2,name:'Aldis Blade'}]);
   yes('an unrelated rename cannot consume a source reserved for a repair group',
     g.lists.some(l=>l.worn&&l.name==='Aldis Blade')&&g.lists.some(l=>l.name==='New Custom')&&
     !g.calls.some(c=>c[0]==='remove'||c[0]==='addItemEx'));
@@ -299,14 +309,14 @@ for (const reverse of [false,true]) {
 {
   const g = makeGame();
   g.lists = [{ baseId: DAGGER, count: 3, name: 'Steel Dagger (60%)' }];
-  g.apply([{ baseId: DAGGER, count: 2, name: 'Steel Dagger (60%)' }, { baseId: DAGGER, count: 1, name: 'Steel Dagger (55%)' }]);
+  g.applyAndDrain([{ baseId: DAGGER, count: 2, name: 'Steel Dagger (60%)' }, { baseId: DAGGER, count: 1, name: 'Steel Dagger (55%)' }]);
   const adds = g.calls.filter((c) => c[0] === 'addItemEx');
   const removes = g.calls.filter((c) => c[0] === 'remove');
   yes('one of a stack of three renamed: no list holds exactly one, so one is taken away from that stack and one added',
     g.calls.some((c) => c[0] === 'rename') && adds.length === 1 && adds[0][2] === 1 && adds[0][3] === 'Steel Dagger (55%)' &&
     removes.length === 1 && JSON.stringify(removes[0].slice(1)) === JSON.stringify([DAGGER, [0], [1], 0]));
   g.calls.length = 0;
-  g.apply([{ baseId: DAGGER, count: 2, name: 'Steel Dagger (60%)' }, { baseId: DAGGER, count: 1, name: 'Steel Dagger (55%)' }]);
+  g.applyAndDrain([{ baseId: DAGGER, count: 2, name: 'Steel Dagger (60%)' }, { baseId: DAGGER, count: 1, name: 'Steel Dagger (55%)' }]);
   yes('and then nothing is left to do', g.calls.length === 0);
 }
 
@@ -314,13 +324,13 @@ for (const reverse of [false,true]) {
 {
   const g = makeGame();
   g.lists = [{ baseId: LOX, count: 1, name: 'loxsword (Legendary)', health: 1.6, worn: true }];
-  g.apply([{ baseId: LOX, count: 1, name: 'loxsword', health: 1.6 }]);
+  g.applyAndDrain([{ baseId: LOX, count: 1, name: 'loxsword', health: 1.6 }]);
   yes('a legendary "loxsword" the game shows as "loxsword (Legendary)" is left alone', g.calls.length === 0);
   g.lists = [{ baseId: SWORD, count: 1, name: 'Iron Sword (Fine)', health: 1.1 }];
-  g.apply([{ baseId: SWORD, count: 1, health: 1.1 }]);
+  g.applyAndDrain([{ baseId: SWORD, count: 1, health: 1.1 }]);
   yes('a fine sword with no name the game shows as "Iron Sword (Fine)" is left alone', g.calls.length === 0);
   g.lists = [{ baseId: SWORD, count: 1, name: 'Iron Sword' }];
-  g.apply([{ baseId: SWORD, count: 1 }]);
+  g.applyAndDrain([{ baseId: SWORD, count: 1 }]);
   yes('a plain sword the game names "Iron Sword" is left alone', g.calls.length === 0);
 }
 

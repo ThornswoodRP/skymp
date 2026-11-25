@@ -5,7 +5,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
 const ts = require('../../../skymp5-client/node_modules/typescript');
-const source = fs.readFileSync(path.join(__dirname, '../../../skymp5-client/src/services/services/remoteServer.ts'), 'utf8');
+const source = fs.readFileSync(process.env.REMOTE_SERVER || path.join(__dirname, '../../../skymp5-client/src/services/services/remoteServer.ts'), 'utf8');
 const js = ts.transpileModule(source, {compilerOptions: {module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2018}}).outputText;
 const invSource = fs.readFileSync(path.join(__dirname, '../../../skymp5-client/src/sync/inventory.ts'), 'utf8');
 const invSandbox = {exports: {}, require: () => ({Game: {getFormEx: id => ({getName: () => 'base' + id})}})};
@@ -22,6 +22,7 @@ function fixture(save = false, options = {}) {
   const items = new Map(), worn = new Set(), jobs = [], onceHandlers = {update: [], tick: []}, onHandlers = {update: []};
   const hands = new Map(); let equipFailures = options.equipFailures || 0;
   let rejectedAdds = options.rejectedAdds || 0, positionX = options.pos?.[0] ?? 1, cellId = options.sourceCell || 9;
+  let activeBatch, applyAttempts = 0;
   let partialThrow = !!options.partialThrow;
   const spellWrites = []; let basePrepared = !!options.basePrepared;
   if (options.initialWorn) for (const id of options.initialWorn) worn.add(id);
@@ -51,6 +52,21 @@ function fixture(save = false, options = {}) {
   })});
   const applyInventory = (_actor, expected) => {
     if (paused || rejectedAdds-- > 0) return; // Native rejects before enqueueing, not at execution.
+    applyAttempts++;
+    if (options.nativeContinuation) {
+      const differences = diff(expected, inventory(), true).entries;
+      const batch = activeBatch = {done: differences.length === 0};
+      const issue = i => {
+        const e = differences[i];
+        jobs.push({at: frame + (i ? options.nativeContinuation : 2), run: () => {
+          const count = (items.get(e.baseId) || 0) + e.count;
+          if (count > 0) items.set(e.baseId, count); else items.delete(e.baseId);
+          if (i + 1 < differences.length) issue(i + 1); else batch.done = true;
+        }});
+      };
+      if (differences.length) issue(0);
+      return;
+    }
     for (const e of diff(expected, inventory(), true).entries) {
       jobs.push({at: frame + (options.nativeDelay || 2), run: () => {
         const count = (items.get(e.baseId) || 0) + e.count; if (count > 0) items.set(e.baseId, count); else {items.delete(e.baseId);worn.delete(e.baseId);}
@@ -89,6 +105,7 @@ function fixture(save = false, options = {}) {
       if (name === 'skyrimPlatform') return sp;
       if (name.endsWith('/clientListener')) return {ClientListener: class {}};
       if (name.endsWith('/idManager')) return {IdManager};
+      if (name.endsWith('/inventoryApplyCoordinator')) return {inventoryApplyPending: () => !!activeBatch && !activeBatch.done, inventoryApplyFence: () => {const position=sp.getInventoryQueueFence(),batch=activeBatch;return Object.assign(() => position() && (!batch || batch.done), {isCurrent:()=>true});}, cancelInventoryApplication() {}, cancelAllInventoryApplications() {}};
       if (name.endsWith('/inventory')) return {acceptPreloadedInventoryBase() {basePrepared = true;}, resetInventoryBase() {baseResets++;if(basePrepared) return false; basePrepared = true; jobs.push({at: frame + (options.nativeDelay || 2), run: () => {items.clear();worn.clear();hands.clear();}});return true;}, applyInventory, getInventory: inventory, getDiff: diff, inventoryEntriesEqual: invSandbox.exports.inventoryEntriesEqual};
       if (name.endsWith('/equipment')) return {isBadMenuShown: () => false, syncSpellEquipment() {}, SpellType: {}, applyEquipment: () => {removals++; items.clear(); worn.clear();}};
       if (name.endsWith('/appearance')) return {applyAppearanceToPlayer() {appearanceApplies++;worn.clear();}};
@@ -120,10 +137,17 @@ function fixture(save = false, options = {}) {
       for (let k = 0; k < 8; k++) await Promise.resolve();
     }
   };
-  return {spawn, emit, advance, move: x => {positionX = x;}, changeCell: id => {cellId = id;}, recreate: () => new sandbox.exports.RemoteServer(sp, controller), get diagnostic() {return typeof sp.storage.ownerOutfitDiagnostic === 'string' ? JSON.parse(sp.storage.ownerOutfitDiagnostic) : undefined;}, get baseResets() {return baseResets;}, get appearanceApplies() {return appearanceApplies;}, get initialInventory() {return initialInventory;}, get firstMoveInventory() {return firstMoveInventory;}, get opens() {return opens;}, items, worn, hands, spellWrites, get settling() {return sp.storage.ownerInventorySettling === true;}, get removals() {return removals;}};
+  return {spawn, emit, advance, get applyAttempts() {return applyAttempts;}, move: x => {positionX = x;}, changeCell: id => {cellId = id;}, recreate: () => new sandbox.exports.RemoteServer(sp, controller), get diagnostic() {return typeof sp.storage.ownerOutfitDiagnostic === 'string' ? JSON.parse(sp.storage.ownerOutfitDiagnostic) : undefined;}, get baseResets() {return baseResets;}, get appearanceApplies() {return appearanceApplies;}, get initialInventory() {return initialInventory;}, get firstMoveInventory() {return firstMoveInventory;}, get opens() {return opens;}, items, worn, hands, spellWrites, get settling() {return sp.storage.ownerInventorySettling === true;}, get removals() {return removals;}};
 }
 
 (async () => {
+  const continued = fixture(false, {nativeContinuation: 120}); continued.spawn(true);
+  await continued.advance(100);
+  assert.equal(continued.opens, 0, 'creation must not open at an initial queue fence while native continuation remains');
+  assert.equal(continued.applyAttempts, 1, 'owner must not rediff/reapply a partial multi-frame native job');
+  await continued.advance(400);
+  assert.equal(continued.opens, 1, 'whole-job completion releases creation after exact outfit checks');
+  assert.equal(continued.items.get(100), 1); assert.equal(continued.items.get(101), 1);
   const rejected = fixture(true, {rejectedAdds: 1}); rejected.spawn(true); await rejected.advance(300);
   assert.equal(rejected.opens, 1, 'a silently rejected native add must retry after its queue completes');
   assert.equal(rejected.items.get(100), 1); assert.equal(rejected.items.get(101), 1);

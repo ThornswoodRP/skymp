@@ -26,6 +26,7 @@ import { setActorValuePercentage } from '../../sync/actorvalues';
 import { applyAppearanceToPlayer } from '../../sync/appearance';
 import { applyEquipment, isBadMenuShown, syncSpellEquipment, SpellType } from '../../sync/equipment';
 import { Inventory, acceptPreloadedInventoryBase, applyInventory, getDiff, getInventory, inventoryEntriesEqual, resetInventoryBase } from '../../sync/inventory';
+import { inventoryApplyPending, inventoryApplyFence, cancelInventoryApplication, cancelAllInventoryApplications } from '../../sync/inventoryApplyCoordinator';
 import { Movement, Transform } from '../../sync/movement';
 import { learnSpells, removeAllSpells } from '../../sync/spell';
 import { ModelApplyUtils } from '../../view/modelApplyUtils';
@@ -108,6 +109,7 @@ let pcInvAppliedSig = '';
 let pcInvReportedSig = '';
 
 on('update', () => {
+  if (inventoryApplyPending(0x14)) { return; }
   if (storage['ownerInventorySettling'] === true) { return; }
   if (isBadMenuShown() || Ui.isMenuOpen('RaceSex Menu')) {
     return;
@@ -222,6 +224,9 @@ export class RemoteServer extends ClientListener {
     this.numSetInventory++;
 
     const msg = event.message;
+    if (JSON.stringify(this.ownerInventory) !== JSON.stringify(msg.inventory)) {
+      cancelInventoryApplication(0x14);
+    }
     this.ownerInventory = msg.inventory;
     this.ownerInventoryIsSnapshot = false;
     const epoch = this.ownerSpawnEpoch;
@@ -259,7 +264,7 @@ export class RemoteServer extends ClientListener {
 
       // THORNSWOOD PATCH (Thornswood #3159). See packBeforeBench.
       if (refr.getBaseObject()?.getType() === FormType.Furniture) {
-        await this.packBeforeBench();
+        if (!await this.packBeforeBench()) { return; }
         if (epoch !== this.ownerSpawnEpoch) { return; }
         // SP3 wrappers expire on Papyrus updates. Keep the id across the
         // inventory wait, then resolve again in the current update.
@@ -348,34 +353,42 @@ export class RemoteServer extends ClientListener {
     the owner's inventory is settling at a spawn, while a menu is open, or with
     no pack from the server yet. The bench then opens as it always did.
   */
-  private async packBeforeBench(): Promise<void> {
+  private async packBeforeBench(): Promise<boolean> {
     if (!Game.getPlayer() || !getPcInventory() || storage['ownerInventorySettling'] === true || isBadMenuShown() || Utility.isInMenuMode()) {
-      return;
+      return !getPcInventory();
     }
     const epoch = this.ownerSpawnEpoch;
-    await this.inventoryQueueRan();
+    if (!await this.inventoryQueueRan()) return false;
     if (epoch !== this.ownerSpawnEpoch || storage['ownerInventorySettling'] === true || isBadMenuShown() || Utility.isInMenuMode()) {
-      return;
+      return false;
     }
     // A native player wrapper cannot cross that await. The server may have
     // sent a newer pack while the queue drained, so read both again.
     const pc = Game.getPlayer();
     const inv = getPcInventory();
-    if (!pc || !inv) { return; }
+    if (!pc || !inv) { return false; }
     if (getDiff(inv, getInventory(pc), true).entries.length === 0) {
-      return;
+      return true;
     }
     // The periodic apply waits its five seconds from this one.
     pcInvLastApply = Date.now();
     applyInventory(pc, inv, false, true);
-    await this.inventoryQueueRan();
+    if (!await this.inventoryQueueRan()) return false;
+    if (epoch !== this.ownerSpawnEpoch || storage['ownerInventorySettling'] === true || isBadMenuShown() || Utility.isInMenuMode()) return false;
+    const current = Game.getPlayer();
+    const latest = getPcInventory();
+    // A drained/cancelled/uncertain job is not a successful reconciliation.
+    // Do not open a bench on an old target or a still different actual pack.
+    return !!current && !!latest && latest === inv && getDiff(latest, getInventory(current), true).entries.length === 0;
   }
 
-  private async inventoryQueueRan(): Promise<void> {
-    const ran = this.sp.getInventoryQueueFence();
-    while (!ran()) {
+  private async inventoryQueueRan(): Promise<boolean> {
+    const ran = inventoryApplyFence(0x14);
+    const epoch = this.ownerSpawnEpoch;
+    while (epoch === this.ownerSpawnEpoch && ran.isCurrent() && !ran()) {
       await Utility.wait(0.05);
     }
+    return epoch === this.ownerSpawnEpoch && ran.isCurrent() && ran();
   }
 
   private onTeleportMessage(event: ConnectionMessage<TeleportMessage> | ConnectionMessage<TeleportMessage2>): void {
@@ -698,7 +711,7 @@ export class RemoteServer extends ClientListener {
         // Even a partial apply that throws may have queued earlier entries.
         // Fence those entries before the next diff so they cannot duplicate.
         try { applyInventory(pc, inv, false, true); }
-        finally { this.ownerInventoryPending = this.sp.getInventoryQueueFence(); }
+        finally { this.ownerInventoryPending = inventoryApplyFence(0x14); }
         return false;
       }
       let ready = true;
@@ -1025,6 +1038,8 @@ export class RemoteServer extends ClientListener {
     const msg = event.message;
 
     const i = this.getIdManager().getId(msg.idx);
+    const destroyed = this.worldModel.forms[i];
+    cancelInventoryApplication(i === this.worldModel.playerCharacterFormIdx ? 0x14 : remoteIdToLocalId(destroyed?.refrId ?? 0));
     this.worldModel.forms[i] = undefined;
     getViewFromStorage()?.syncFormArray(this.worldModel);
 
@@ -1218,6 +1233,8 @@ export class RemoteServer extends ClientListener {
       return;
     }
 
+    cancelInventoryApplication(id === this.worldModel.playerCharacterFormIdx ? 0x14 : remoteIdToLocalId(form.refrId ?? 0));
+
     if (msg.tChangeValues) {
       this.onChangeValuesMessage({ message: msg.tChangeValues });
     }
@@ -1252,6 +1269,7 @@ export class RemoteServer extends ClientListener {
   }
 
   private handleConnectionAccepted(): void {
+    cancelAllInventoryApplications();
     this.cancelOwnerSpawn();
     // THORNSWOOD. A new connection starts at 0, as the server does when it
     // attaches the character (PartOne::SetUserActor).
@@ -1289,6 +1307,7 @@ export class RemoteServer extends ClientListener {
   }
 
   private cancelOwnerSpawn(): void {
+    cancelInventoryApplication(0x14);
     this.ownerSpawnEpoch++;
     this.raceMenuRequest++;
     this.raceMenuRequested = false;

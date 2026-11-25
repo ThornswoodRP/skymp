@@ -1,5 +1,6 @@
 import { ClientListener, CombinedController, Sp } from "./clientListener";
 import { Inventory } from "../../sync/inventory";
+import { cancelAllInventoryApplications } from "../../sync/inventoryApplyCoordinator";
 import { ChangeFormNpc } from "skyrimPlatform";
 import { logError } from "../../logging";
 
@@ -10,6 +11,7 @@ export class LoadGameService extends ClientListener {
     }
 
     public loadGame(pos: number[], rot: number[], worldOrCell: number, changeFormNpc?: ChangeFormNpc, loadOrder?: string[], time?: { seconds: number, minutes: number, hours: number }, inventory?: Inventory, lightLoadOrder?: string[]) {
+        cancelAllInventoryApplications();
         // THORNSWOOD PATCH. The flag goes up before the call, not after.
         //
         // sp.loadGame does not return and then load later. The load happens
