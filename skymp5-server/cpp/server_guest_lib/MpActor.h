@@ -174,6 +174,10 @@ public:
   void SetPercentages(const ActorValues& actorValues,
                       MpActor* aggressor = nullptr);
   void SetPercentage(espm::ActorValue av, float percentage);
+  // Runtime-only server authority. A new actor lifetime revokes protection;
+  // enabling it on a dead actor is an error, never a resurrection.
+  bool IsGodMode() const noexcept;
+  void SetGodMode(bool value);
   void NetSendChangeValues(
     const ActorValues& actorValues,
     const std::optional<std::vector<espm::ActorValue>>& avFilter);
