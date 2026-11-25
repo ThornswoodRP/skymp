@@ -1,5 +1,5 @@
 'use strict';
-// Thornswood #2146. The client stopped applying an inventory difference that
+// Thornswood #2146 and #4626. The client stopped applying an inventory difference that
 // came back three times in a row instead of finding why applying did not
 // close it. This loads the real inventory.ts over a stand-in game inventory
 // and checks the two causes are gone:
@@ -25,6 +25,7 @@ function yes(what, cond) {
 }
 
 const SWORD = 0x12eb7, BOOTS = 0x12e4b, GOLD = 0xf;
+const ENCHANTMENT = 0x1234, POISON = 0x2345;
 const NAMES = { [SWORD]: 'Iron Sword', [BOOTS]: 'Boots', [GOLD]: 'Gold' };
 const FormType = { Misc: 32, Potion: 46, Ingredient: 30, Weapon: 41, Armor: 26 };
 const BASE = 7;
@@ -35,7 +36,7 @@ const BASE = 7;
 // hold (addItemEx with a negative count) takes plain units first and never a
 // worn list: one choice the game can make, and the one that kept the boots.
 function makeGame() {
-  const game = { lists: [], base: {}, loose: {}, calls: [], wornState: null, console: [] };
+  const game = { lists: [], base: {}, loose: {}, calls: [], wornState: null, console: [], nodeUpdates: 0 };
   class Form {
     constructor(id) { this.id = id; }
     getFormID() { return this.id; }
@@ -57,9 +58,9 @@ function makeGame() {
   };
   const sp = {
     Form, ObjectReference, FormType,
-    Game: { getFormEx: (id) => (NAMES[id] ? new Form(id) : null) },
-    Ammo: { from: () => null }, Actor: { from: (r) => r && Object.assign(r, { queueNiNodeUpdate() {} }) },
-    Enchantment: { from: () => null }, Potion: { from: () => null },
+    Game: { getFormEx: (id) => (NAMES[id] || id === ENCHANTMENT || id === POISON ? new Form(id) : null) },
+    Ammo: { from: () => null }, Actor: { from: (r) => r && Object.assign(r, { queueNiNodeUpdate() { game.nodeUpdates++; } }) },
+    Enchantment: { from: f => f }, Potion: { from: f => f },
     printConsole: (...a) => { game.console.push(a.join(' ')); },
     storage: { basesResetExists: true, basesReset: new Set([BASE]) },
     getContainer: (id) => (id === BASE
@@ -79,6 +80,12 @@ function makeGame() {
         if (l.name) extras.push({ type: 'TextDisplayData', name: l.name });
         if (l.health) extras.push({ type: 'Health', health: l.health });
         if (l.worn) extras.push({ type: 'Worn' });
+        if (l.wornLeft) extras.push({ type: 'WornLeft' });
+        if (l.enchantmentId) extras.push({ type: 'Enchantment', enchantmentId: l.enchantmentId,
+          maxCharge: l.maxCharge, removeOnUnequip: l.removeEnchantmentOnUnequip });
+        if (l.chargePercent) extras.push({ type: 'Charge', charge: l.chargePercent });
+        if (l.soul) extras.push({ type: 'Soul', soul: l.soul });
+        if (l.poisonId) extras.push({ type: 'Poison', poisonId: l.poisonId, count: l.poisonCount });
         e.extendDataList.push(extras);
       }
       for (const k of Object.keys(game.loose)) entry(Number(k)).countDelta += game.loose[k];
@@ -99,8 +106,9 @@ function makeGame() {
     TESModPlatform: {
       resetContainer() {},
       pushWornState(worn, wornLeft) { game.wornState = { worn, wornLeft }; },
-      addItemEx(refr, f, count, health, ench, maxCharge, rm, charge, name) {
+      addItemEx(refr, f, count, health, ench, maxCharge, rm, charge, name, soul, poison, poisonCount) {
         const worn = !!(game.wornState && game.wornState.worn);
+        const wornLeft = !!(game.wornState && game.wornState.wornLeft);
         game.wornState = null;
         game.calls.push(['addItemEx', f.getFormID(), count, name, health, worn]);
         if (count > 0) {
@@ -108,6 +116,11 @@ function makeGame() {
           const l = { baseId: f.getFormID(), count, name };
           if (health > 1) l.health = Math.fround(health);
           if (worn) l.worn = true;
+          if (wornLeft) l.wornLeft = true;
+          if (ench) Object.assign(l, { enchantmentId: ench.getFormID(), maxCharge, removeEnchantmentOnUnequip: rm });
+          if (charge) l.chargePercent = charge;
+          if (soul) l.soul = soul;
+          if (poison) Object.assign(l, { poisonId: poison.getFormID(), poisonCount });
           game.lists.push(l);
           return;
         }
@@ -216,6 +229,96 @@ function makeGame() {
   g.apply([]);
   yes('and the next pass, reading the lists again, takes both away',
     g.lists.length === 0 && g.calls.filter((c) => c[0] === 'remove').length === 1);
+}
+
+// Thornswood #4626: weapon/armor differences above 1000 must close in the
+// same apply, without silently replacing the requested count with one.
+for (const baseId of [SWORD, BOOTS]) {
+  for (const count of [1000, 1001, 2048]) {
+    const g = makeGame();
+    const name = `${NAMES[baseId]} (75%)`;
+    const server = [{ baseId, count, name, health: Math.fround(1.4) }];
+    g.apply(server);
+    yes(`${NAMES[baseId]} difference ${count} closes in one pass`,
+      g.diff(server).length === 0 && g.lists.reduce((n, l) => n + l.count, 0) === count);
+    yes(`${NAMES[baseId]} difference ${count} retains each name and temper`,
+      g.lists.every(l => l.name === name && l.health === Math.fround(1.4)));
+    g.calls.length = 0;
+    g.apply(server);
+    yes(`${NAMES[baseId]} difference ${count} has no second-pass add or removal`,
+      g.calls.length === 0);
+  }
+}
+
+// Extra lists and per-call worn flags follow the established native contract;
+// a large difference must not drop or merge their distinct identities.
+{
+  const g = makeGame();
+  const server = [{ baseId: SWORD, count: 1001, name: 'Charged Sword (75%)',
+    health: Math.fround(1.4), enchantmentId: ENCHANTMENT, maxCharge: 200,
+    removeEnchantmentOnUnequip: true, chargePercent: 37, soul: 3,
+    poisonId: POISON, poisonCount: 2 },
+    { baseId: SWORD, count: 1, name: 'Left Sword', wornLeft: true },
+    { baseId: BOOTS, count: 1, name: 'Other Boots', worn: true }];
+  g.apply(server);
+  const large = g.lists.filter(l => l.name === 'Charged Sword (75%)');
+  yes('large enchanted/poisoned differences close with every extra unchanged',
+    g.diff(server).length === 0 && large.length === 1001 &&
+    large.every(l => !l.wornLeft && !l.worn &&
+      l.enchantmentId === ENCHANTMENT && l.maxCharge === 200 && l.removeEnchantmentOnUnequip &&
+      l.chargePercent === 37 && l.poisonId === POISON && l.poisonCount === 2 && l.soul === 3));
+  yes('the next entry consumes only its own worn state and queues each changed mesh once',
+    g.lists.some(l => l.name === 'Left Sword' && l.wornLeft && !l.worn) &&
+    g.lists.filter(l => l.baseId === BOOTS).every(l => l.worn && !l.wornLeft) &&
+    g.nodeUpdates === 2 && g.wornState === null);
+  g.calls.length = 0;
+  g.apply(server);
+  yes('a settled extra-bearing difference schedules no second-pass mutation', g.calls.length === 0);
+}
+
+// The existing admin grant cap is a workload control, not a native runtime
+// performance claim. Every requested unit must be queued by this one apply.
+{
+  const g = makeGame();
+  const server = [{ baseId: SWORD, count: 100000 }];
+  g.apply(server);
+  const adds = g.calls.filter(c => c[0] === 'addItemEx');
+  yes('the 100000-piece grant schedules all units in the first pass',
+    adds.length === 100000 && adds.every(c => c[2] === 1));
+  yes('the 100000-piece grant closes the actual inventory difference', g.diff(server).length === 0);
+  yes('unworn large grants do not queue equipment updates', g.nodeUpdates === 0 && g.wornState === null);
+}
+{
+  const g = makeGame();
+  const server = [{ baseId: GOLD, count: 100000 }];
+  g.apply(server);
+  yes('the existing misc-item bulk path still uses one unchanged native count',
+    g.calls.length === 1 && g.calls[0][0] === 'addItemEx' && g.calls[0][2] === 100000 &&
+    g.diff(server).length === 0);
+}
+
+// Malformed wire targets cannot partially mutate a preceding valid entry.
+for (const count of [Infinity, NaN, -1, 1.5, 0x100000000, '1001', null, undefined]) {
+  const g = makeGame();
+  const before = [{ baseId: BOOTS, count: 1, name: 'Keep these boots', worn: true }];
+  g.lists = before.map(l => ({ ...l }));
+  const result = g.apply([{ baseId: SWORD, count: 2 }, { baseId: BOOTS, count }]);
+  yes(`invalid target count ${String(count)} refuses before any inventory mutation`,
+    result === false && g.calls.length === 0 && g.nodeUpdates === 0 &&
+    JSON.stringify(g.lists) === JSON.stringify(before));
+}
+{
+  const g = makeGame();
+  let result;
+  try { result = g.apply([{ baseId: SWORD, count: 2 }, null]); } catch (_) { result = 'threw'; }
+  yes('a null wire entry refuses without throwing or changing earlier valid items',
+    result === false && g.calls.length === 0 && g.lists.length === 0);
+}
+{
+  const g = makeGame();
+  g.base[SWORD] = 0xffffffff;
+  yes('the canonical uint32 maximum remains valid when already held',
+    g.apply([{ baseId: SWORD, count: 0xffffffff }]) === true && g.calls.length === 0);
 }
 
 // The give-up counter is gone from remoteServer.ts.
