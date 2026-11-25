@@ -7,7 +7,7 @@
 > of upstream's
 > [`2849e676`](https://github.com/skyrim-multiplayer/skymp/commit/2849e676)
 > (5 October 2026). Every change at once:
-> [2849e676...thornswood/engine-changes](https://github.com/EvilPatrick06/skymp/compare/2849e676...thornswood/engine-changes).
+> [2849e676...thornswood/engine-changes](https://github.com/ThornswoodRP/skymp/compare/2849e676...thornswood/engine-changes).
 > The licences are upstream's and unchanged: the GNU GPL version 3 for
 > `skymp5-client`, `skyrim-platform` and `skymp5-front`, and the GNU AGPL
 > version 3 for `skymp5-server`, each the `LICENSE` file in its folder. Which
