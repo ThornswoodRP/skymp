@@ -450,10 +450,14 @@ VarValue PapyrusObjectReference::SetAngle(
 {
   auto selfRefr = GetFormPtr<MpObjectReference>(self);
   if (selfRefr && arguments.size() >= 3) {
+    const auto before = selfRefr->GetAngle();
     selfRefr->SetAngle(
       { static_cast<float>(static_cast<double>(arguments[0].CastToFloat())),
         static_cast<float>(static_cast<double>(arguments[1].CastToFloat())),
         static_cast<float>(static_cast<double>(arguments[2].CastToFloat())) });
+    if (before != selfRefr->GetAngle()) {
+      selfRefr->SendPlacedTransform();
+    }
   }
   return VarValue::None();
 }
@@ -752,6 +756,7 @@ VarValue PapyrusObjectReference::MoveTo(VarValue self,
     _thisObjectReference->SetCellOrWorld(objectReference->GetCellOrWorld());
     _thisObjectReference->SetAngle(rotation);
     _thisObjectReference->SetPos(dest);
+    _thisObjectReference->SendPlacedTransform();
   }
   return VarValue::None();
 }
