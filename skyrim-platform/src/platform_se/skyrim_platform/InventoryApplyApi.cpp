@@ -8,6 +8,7 @@
 
 #include <cmath>
 #include <limits>
+#include <set>
 
 extern CallNativeApi::NativeCallRequirements g_nativeCallRequirements;
 
@@ -53,6 +54,8 @@ struct Scope {
 
 std::recursive_mutex scopesMutex;
 std::unordered_map<uint32_t, std::weak_ptr<Scope>> scopes;
+std::mutex environmentsMutex;
+std::set<napi_env> environments;
 InventoryApply::Pump pump(scheduler, [](std::function<void()> task) {
   auto queue = g_nativeCallRequirements.gameThrQ;
   if (!queue) throw std::runtime_error("Inventory game queue is unavailable");
@@ -276,5 +279,21 @@ void InventoryApplyApi::Register(Napi::Env env, Napi::Object& exports) {
     CancelReference(Uint32(info[0], true));
     return info.Env().Undefined();
   })));
-  env.AddCleanupHook([] { CancelAll(); });
+  // Native exports are registered again for plugin loads/reloads. Keep one
+  // cleanup hook per actual environment rather than retaining a new closure
+  // on every reload until process exit.
+  std::lock_guard<std::mutex> lock(environmentsMutex);
+  const auto nativeEnv = static_cast<napi_env>(env);
+  if (environments.insert(nativeEnv).second) {
+    try {
+      env.AddCleanupHook([nativeEnv] {
+        CancelAll();
+        std::lock_guard<std::mutex> lock(environmentsMutex);
+        environments.erase(nativeEnv);
+      });
+    } catch (...) {
+      environments.erase(nativeEnv);
+      throw;
+    }
+  }
 }
