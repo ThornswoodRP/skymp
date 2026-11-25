@@ -13,7 +13,9 @@ const mp = new addon.ScampServer(JSON.stringify({port:0,maxPlayers:2,offlineMode
   loadOrder:installed.loadOrder,logLevel:'error'}));
 mp._setSelf(mp);mp.attachSaveStorage();
 assert.equal(typeof mp.compareAndSetActorInventoryAndEquipment,'function','native atomic repair method exists');
-const actor = mp.createActor(0x7,[1,1,1],0,0x3c,42);
+// Zero requests a runtime actor. 0x7 is the NPC_ base record, so assigning it
+// as a placed ACHR id cannot exercise the ordinary death/revival path.
+const actor = mp.createActor(0,[1,1,1],0,0x3c,42);
 mp.set(actor,'inventory',{entries:[{baseId:0x12eb7,count:2,name:'Keepsake (25%)',health:1.4,chargePercent:0.5}]});
 mp.set(actor,'equipment',{inv:{entries:[{baseId:0x12eb7,count:1,name:'Keepsake (25%)',health:1.4,chargePercent:0.5,worn:true}]}});
 const inventory=mp.get(actor,'inventory'),equipment=mp.get(actor,'equipment');
