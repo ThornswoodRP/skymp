@@ -127,6 +127,36 @@ TEST_CASE("IsLightPlugin is the game's rule", "[LightPlugins]")
   REQUIRE_FALSE(espm::IsLightPlugin("esl", 0));
 }
 
+TEST_CASE("Lookup localization follows the winning plugin header", "[LocalizedNames]")
+{
+  for (bool localized : { false, true }) {
+    DYNAMIC_SECTION("override localized = " << localized)
+    {
+      Plugins p;
+      p.Add("Base.esm", Tes4(localized ? 0 : 0x80, {}) +
+        Group("MISC", Record("MISC", 0, 0x800,
+          Field("EDID", Z("WorkshopToken")) + Field("FULL", Id(0x4a2e)))));
+      // Both representations occupy four bytes. Individual-record flags
+      // deliberately disagree with the plugin's localization flag.
+      p.Add("Override.esp", Tes4(localized ? 0x80 : 0, { "Base.esm" }) +
+        Group("MISC", Record("MISC", localized ? 0 : 0x80, 0x800,
+          Field("EDID", Z("WorkshopToken")) +
+          Field("FULL", localized ? Id(0x4a2e) : Z("Ink")))));
+      auto br = p.combiner.Combine();
+      const auto winning = br->LookupById(0x800);
+      REQUIRE(winning.rec);
+      REQUIRE(winning.fileIdx == 1);
+      const auto* header = br->GetFileHeader(winning.fileIdx);
+      REQUIRE(header);
+      REQUIRE(header->GetType() == "TES4");
+      REQUIRE(bool(header->GetFlags() & 0x80) == localized);
+      REQUIRE(bool(winning.rec->GetFlags() & 0x80) != localized);
+      REQUIRE_FALSE(br->GetFileHeader(2));
+      REQUIRE_FALSE(br->GetFileHeader(static_cast<size_t>(-1)));
+    }
+  }
+}
+
 TEST_CASE("PluginSlot gives the ids the game gives", "[LightPlugins]")
 {
   using espm::PluginSlot;

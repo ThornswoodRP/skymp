@@ -177,6 +177,20 @@ non-deleted NAVM identities belonging to that cell or world. Read each record's
 NVNM field with `lookupEspmRecordById`. It does not supply pathfinding or alter
 the older FindNavMeshes API.
 
+## ESPM name provenance
+
+`mp.lookupEspmRecordById(formId)` includes `isLocalized: boolean` when the
+winning plugin's TES4 header is available. This is the localization flag
+(`0x80`) on that file's header, including when the file overrides a form
+from a different master. Individual record flags do not identify localized
+strings. A missing header leaves the property absent; missing records still
+return an empty lookup result.
+
+In a localized plugin, a FULL field is a string-table ID, even when its bytes
+happen to be printable. Use a decoded name or an editor-ID fallback rather
+than interpreting those bytes as text. A proven unlocalized FULL can contain
+short ordinary text of the same byte length.
+
 ## mp.clear()
 
 Clears added properties and event sources.
