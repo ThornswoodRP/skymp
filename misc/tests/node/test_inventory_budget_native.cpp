@@ -101,6 +101,49 @@ int main() {
   scheduler.CancelAll(); scheduler.Tick();
   assert(paused->GetState() == State::Cancelled);
 
+  // Deferred work rotates before yielding. Two blocked references cannot
+  // starve the active one behind them, even across successive updates.
+  auto pausedA = scheduler.Submit(0x14, 14, {Units(10, [](uint32_t) { return UnitResult::Deferred; })}, [] { return true; });
+  auto pausedB = scheduler.Submit(0x15, 15, {Units(10, [](uint32_t) { return UnitResult::Deferred; })}, [] { return true; });
+  uint32_t available = 0;
+  auto active = scheduler.Submit(0x16, 16, {Units(1, [&](uint32_t) { ++available; return UnitResult::Ran; })}, [] { return true; });
+  scheduler.Tick(); scheduler.Tick(); scheduler.Tick();
+  assert(available == 1 && active->GetState() == State::Drained);
+  assert(pausedA->GetState() == State::Pending && pausedB->GetState() == State::Pending);
+  scheduler.CancelAll(); scheduler.Tick();
+
+  // A reentrant game callback cannot execute the same still-pending unit.
+  uint32_t reentrant = 0;
+  auto nested = scheduler.Submit(0x14, 17, {Units(1, [&](uint32_t) {
+    ++reentrant;
+    const auto ignored = scheduler.Tick();
+    assert(ignored.mutations == 0 && ignored.visits == 0);
+    return UnitResult::Ran;
+  })}, [] { return true; });
+  scheduler.Tick();
+  assert(reentrant == 1 && nested->GetState() == State::Drained && !scheduler.HasPending());
+
+  // An exceptional clock/infrastructure callback cannot leave Tick latched.
+  bool throwClock = true;
+  Scheduler clockFailure([&]() -> uint64_t { if (throwClock) throw std::runtime_error("clock fixture"); return 0; });
+  uint32_t afterClockFailure = 0;
+  auto clockJob = clockFailure.Submit(0x14, 18, {Units(1, [&](uint32_t) { ++afterClockFailure; return UnitResult::Ran; })}, [] { return true; });
+  try { clockFailure.Tick(); assert(false); } catch (const std::runtime_error&) {}
+  throwClock = false; clockFailure.Tick();
+  assert(afterClockFailure == 1 && clockJob->GetState() == State::Drained);
+
+  // The Tick guard must not block legitimate cancellation or new references
+  // submitted by a game callback; both remain inside the shared budget.
+  std::shared_ptr<Job> callbackJob, submitted;
+  uint32_t callbackUnits = 0;
+  callbackJob = scheduler.Submit(0x14, 19, {Units(10, [&](uint32_t) {
+    ++callbackUnits; callbackJob->Cancel();
+    submitted = scheduler.Submit(0x15, 20, {Units(1, [&](uint32_t) { ++callbackUnits; return UnitResult::Ran; })}, [] { return true; });
+    return UnitResult::Ran;
+  })}, [] { return true; });
+  const auto callbackFrame = scheduler.Tick();
+  assert(callbackFrame.mutations == 2 && callbackUnits == 2 && callbackJob->GetState() == State::Cancelled && submitted->GetState() == State::Drained);
+
   // Old queue position fences/unrelated tasks run between native chunks.
   Viet::TaskQueue<> queue;
   uint32_t queuedAdds = 0;

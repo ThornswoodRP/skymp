@@ -119,6 +119,9 @@ public:
 
   TickResult Tick() {
     std::lock_guard<std::recursive_mutex> lock(mutex);
+    if (ticking) return {};
+    ticking = true;
+    struct ResetTick { bool& flag; ~ResetTick() { flag = false; } } reset{ticking};
     TickResult result;
     size_t budgetSkips = 0;
     const auto started = now();
@@ -186,6 +189,7 @@ private:
     }
   }
   Clock now;
+  bool ticking = false;
   mutable std::recursive_mutex mutex;
   std::list<std::shared_ptr<Job>> jobs;
   std::unordered_map<uint32_t, std::list<std::shared_ptr<Job>>::iterator> byReference;
