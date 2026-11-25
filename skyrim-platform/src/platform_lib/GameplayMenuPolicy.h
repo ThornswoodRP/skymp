@@ -40,6 +40,7 @@ public:
     unloadEpoch.fetch_add(1, std::memory_order_release);
   }
   void Loaded(bool success) { entered.store(success, std::memory_order_release); }
+  bool HasLoadedWorld() const { return entered.load(std::memory_order_acquire); }
   void Title()
   {
     Loading(); // a title transition does not destroy an existing client

@@ -273,6 +273,10 @@ void GameplayMenuUnpaused::WorldLoaded(bool success)
   g_world.Loaded(success);
   if (!success) g_enabled.store(0, std::memory_order_release);
 }
+bool GameplayMenuUnpaused::HasLoadedWorld()
+{
+  return g_world.HasLoadedWorld();
+}
 
 void GameplayMenuUnpaused::PostLoad(void* outcome)
 {

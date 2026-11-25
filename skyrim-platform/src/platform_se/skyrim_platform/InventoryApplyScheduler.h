@@ -115,7 +115,15 @@ public:
   }
   void CancelAll() {
     std::lock_guard<std::recursive_mutex> lock(mutex);
-    for (const auto& job : jobs) job->Cancel();
+    for (auto at = jobs.begin(); at != jobs.end();) {
+      auto job = *at;
+      ++at;
+      job->Cancel();
+      // Retain a running unit's canonical barrier until it returns. Other
+      // cancelled descriptors can be released even if a load clears the
+      // queued pump and no future update ever arrives.
+      if (job->GetState() == State::Cancelled) Erase(job);
+    }
   }
   bool HasPending() const {
     std::lock_guard<std::recursive_mutex> lock(mutex);

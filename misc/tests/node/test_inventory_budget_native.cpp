@@ -1,5 +1,5 @@
 #include "../../../skyrim-platform/src/platform_se/skyrim_platform/InventoryApplyScheduler.h"
-#include "../../../skyrim-platform/src/platform_se/skyrim_platform/InventoryApplyPump.h"
+#include "InventoryPumpUnderTest.h"
 #include "../../../skyrim-platform/src/platform_se/skyrim_platform/InventoryQueueFence.h"
 #include "../../../viet/include/TaskQueue.h"
 #include <cassert>
@@ -99,7 +99,7 @@ int main() {
   auto paused = scheduler.Submit(0x14, 12, {Units(100, [](uint32_t) { return UnitResult::Deferred; })}, [] { return true; });
   const auto pausedFrame = scheduler.Tick();
   assert(pausedFrame.visits == 1 && paused->GetState() == State::Pending);
-  scheduler.CancelAll(); scheduler.Tick();
+  scheduler.CancelAll(); assert(!scheduler.HasPending()); scheduler.Tick();
   assert(paused->GetState() == State::Cancelled);
 
   // Deferred work rotates before yielding. Two blocked references cannot
@@ -144,6 +144,14 @@ int main() {
   })}, [] { return true; });
   const auto callbackFrame = scheduler.Tick();
   assert(callbackFrame.mutations == 2 && callbackUnits == 2 && callbackJob->GetState() == State::Cancelled && submitted->GetState() == State::Drained);
+  bool retainedRunning = false;
+  auto cancelAllRunning = scheduler.Submit(0x14, 25, {Units(1, [&](uint32_t) {
+    scheduler.CancelAll();
+    retainedRunning = scheduler.ReferenceBarrier(0x14) != nullptr && scheduler.HasPending();
+    return UnitResult::Ran;
+  })}, [] {return true;});
+  scheduler.Tick();
+  assert(retainedRunning && cancelAllRunning->GetState() == State::Cancelled && !scheduler.HasPending());
 
   // Old queue position fences/unrelated tasks run between native chunks.
   Viet::TaskQueue<> queue;
@@ -185,5 +193,28 @@ int main() {
   auto recoveredPump = scheduler.Submit(0x14, 24, {Units(1, [&](uint32_t) {++replacedAdds; return UnitResult::Ran;})}, [] {return true;});
   failure.Queue(); queue.Update({});
   assert(recoveredPump->GetState() == State::Drained && replacedAdds == 17);
+  // Force the exact CancelAll→Submit+Queue handoff in the real Pump::Cancel.
+  // Old ordering coalesced J behind retired P and stranded J permanently.
+  Scheduler raceScheduler([] {return uint64_t{0};});
+  Viet::TaskQueue<> raceQueue;
+  std::shared_ptr<Job> admitted;
+  uint32_t raceAdds = 0;
+  Pump* racePump = nullptr;
+  Pump raced(raceScheduler, [&](std::function<void()> task) {
+    raceQueue.AddTask([task](const Viet::Void&) {task();});
+  }, [&] {
+    raceScheduler.CancelAll();
+    admitted = raceScheduler.Submit(0x15, 27, {Units(1, [&](uint32_t) {++raceAdds;return UnitResult::Ran;})}, [] {return true;});
+    racePump->Queue();
+  });
+  racePump = &raced;
+  auto obsolete = raceScheduler.Submit(0x14, 26, {Units(100, [&](uint32_t) {++raceAdds;return UnitResult::Ran;})}, [] {return true;});
+  raced.Queue(); raced.Cancel(); raceQueue.Update({});
+  assert(obsolete->GetState() == State::Cancelled);
+  if (admitted->GetState() == State::Pending && raceAdds == 0) {
+    std::cout << "COUNTERFACTUAL old cancellation strands the newly admitted job\n";
+    return 77;
+  }
+  assert(admitted->GetState() == State::Drained && raceAdds == 1);
   std::cout << "inventory scheduler: count/time/fairness/FIFO/cancel/uncertainty controls passed\n";
 }

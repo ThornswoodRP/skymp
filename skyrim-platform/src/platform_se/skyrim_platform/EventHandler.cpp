@@ -90,15 +90,16 @@ void EventHandler::HandleSKSEMessage(SKSE::MessagingInterface::Message* msg)
       SendSimpleEventOnTick("skyrimLoaded");
     } break;
     case SKSE::MessagingInterface::kNewGame:
+      GameplayMenuUnpaused::WorldLoading();
       InventoryLoadEpoch::Advance();
       InventoryApplyApi::CancelAll();
       GameplayMenuUnpaused::WorldLoaded(true);
       SendSimpleEventOnTick("newGame");
       break;
     case SKSE::MessagingInterface::kPreLoadGame:
+      GameplayMenuUnpaused::WorldLoading();
       InventoryLoadEpoch::Advance();
       InventoryApplyApi::CancelAll();
-      GameplayMenuUnpaused::WorldLoading();
       SendSimpleEventOnTick("preLoadGame");
       break;
     case SKSE::MessagingInterface::kPostLoadGame:

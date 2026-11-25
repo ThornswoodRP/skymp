@@ -3,6 +3,7 @@
 #include "InventoryApplyScheduler.h"
 #include "InventoryApplyPump.h"
 #include "InventoryLoadEpoch.h"
+#include "GameplayMenuUnpaused.h"
 #include "PapyrusTESModPlatform.h"
 
 #include <cmath>
@@ -28,7 +29,7 @@ struct Scope {
   std::shared_ptr<Job> previous, job;
 
   bool Current() const {
-    if (cancelled.load(std::memory_order_acquire) || !InventoryLoadEpoch::IsCurrent(epoch)) return false;
+    if (cancelled.load(std::memory_order_acquire) || !InventoryLoadEpoch::IsCurrent(epoch) || !GameplayMenuUnpaused::HasLoadedWorld()) return false;
     auto held = handle.get();
     if (!held || held.get() != identity || RE::TESForm::LookupByID<RE::TESObjectREFR>(referenceId) != identity) return false;
     auto actor = identity->As<RE::Actor>();
@@ -129,6 +130,10 @@ std::vector<InventoryApply::Operation> Operations(Napi::Value value, const std::
     if (!addition->form || !addition->form->As<RE::TESBoundObject>() ||
         (addition->enchantmentId && !addition->enchantment) || (addition->poisonId && !addition->poison))
       throw std::invalid_argument("Inventory form is unavailable");
+    const auto type = addition->form->GetFormType();
+    const bool bulk = type == RE::FormType::Misc || type == RE::FormType::AlchemyItem ||
+      type == RE::FormType::Ingredient || type == RE::FormType::Ammo;
+    if (!bulk && addition->quantity != 1) throw std::invalid_argument("Inventory gear requires unit additions");
     std::weak_ptr<Scope> weak = scope;
     operations.push_back({addition->count, addition->quantity,
       addition->worn || addition->wornLeft ? 2u : 1u,
@@ -186,6 +191,10 @@ const char* StateName(const std::shared_ptr<Scope>& scope) {
 
 // ==== inventory apply factory ====
 std::shared_ptr<Scope> CreateScope(uint32_t id) {
+  // Use the existing world/loading and game-functions context authorities.
+  // The deferred preLoad JS event is too late to close native admission.
+  if (!g_nativeCallRequirements.vm || !GameplayMenuUnpaused::HasLoadedWorld())
+    throw std::logic_error("Inventory application is unavailable while loading or outside an update");
   auto reference = RE::TESForm::LookupByID<RE::TESObjectREFR>(id);
   if (!reference) throw std::invalid_argument("Inventory reference is unavailable");
   auto scope = std::make_shared<Scope>();
@@ -231,7 +240,7 @@ Napi::Value Create(const Napi::CallbackInfo& info) {
   object.Set("cancel", Napi::Function::New(info.Env(), [scope](const Napi::CallbackInfo&) { scope->Cancel(); }));
   object.Set("submit", Napi::Function::New(info.Env(), NapiHelper::WrapCppExceptions([scope](const Napi::CallbackInfo& call) -> Napi::Value {
     std::lock_guard<std::recursive_mutex> lock(scope->mutex);
-    if (call.Length() != 1 || scope->job || !scope->Current() || !scope->Ready()) throw std::logic_error("Inventory scope is not ready");
+    if (call.Length() != 1 || !g_nativeCallRequirements.vm || scope->job || !scope->Current() || !scope->Ready()) throw std::logic_error("Inventory scope is not ready");
     auto operations = Operations(call[0], scope);
     if (!scope->Current()) throw std::logic_error("Inventory scope changed during preparation");
     std::weak_ptr<Scope> weak = scope;

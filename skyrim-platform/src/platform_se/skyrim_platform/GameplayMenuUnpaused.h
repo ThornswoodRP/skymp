@@ -9,5 +9,6 @@ bool Installed();
 void RequestClient(bool requested);
 void WorldLoading();
 void WorldLoaded(bool success);
+bool HasLoadedWorld();
 void PostLoad(void* outcome);
 }

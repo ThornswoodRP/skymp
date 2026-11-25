@@ -4,6 +4,13 @@
 #include <map>
 #include "../../../skyrim-platform/src/platform_se/skyrim_platform/InventoryApplyScheduler.h"
 #include "../../../skyrim-platform/src/platform_se/skyrim_platform/InventoryLoadEpoch.h"
+#include "../../../skyrim-platform/src/platform_lib/GameplayMenuPolicy.h"
+
+namespace GameplayMenuUnpaused {
+GameplayMenuPolicy::World world;
+bool HasLoadedWorld() { return world.HasLoadedWorld(); }
+}
+struct {void* vm = reinterpret_cast<void*>(1);} g_nativeCallRequirements;
 
 namespace RE {
 struct TESObjectREFR;
@@ -45,6 +52,8 @@ std::unordered_map<uint32_t, std::weak_ptr<Scope>> scopes;
 int main() {
   RE::Actor actor;
   RE::TESForm::forms[0x14] = &actor;
+  try {CreateScope(0x14); assert(false);} catch(const std::logic_error&) {}
+  GameplayMenuUnpaused::world.Loaded(true);
   auto a = CreateScope(0x14);
   assert(a->Current() && a->Ready() && !std::strcmp(StateName(a), "preparing"));
   int mutations = 0, preparations = 0;
@@ -73,8 +82,18 @@ int main() {
   assert(!replacement->Current() && !std::strcmp(StateName(replacement), "cancelled"));
   auto corpse = CreateScope(0x14);
   assert(corpse->Current()); // Ordinary corpse inventory remains supported.
+  GameplayMenuUnpaused::world.Loading();
   InventoryLoadEpoch::Advance();
   assert(!corpse->Current());
+  // The old player pointer still exists and the deferred JS preLoad event
+  // has not run. A queued old JS apply cannot capture the NEW epoch here.
+  try {CreateScope(0x14); assert(false);} catch(const std::logic_error&) {}
+  GameplayMenuUnpaused::world.Loaded(false);
+  try {CreateScope(0x14); assert(false);} catch(const std::logic_error&) {}
+  GameplayMenuUnpaused::world.Loaded(true);
+  g_nativeCallRequirements.vm = nullptr;
+  try {CreateScope(0x14); assert(false);} catch(const std::logic_error&) {}
+  g_nativeCallRequirements.vm = reinterpret_cast<void*>(1);
   auto current = CreateScope(0x14);
   actor.slot->reference = nullptr;
   assert(!current->Current());
