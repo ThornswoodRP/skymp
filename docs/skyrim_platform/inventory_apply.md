@@ -42,6 +42,13 @@ new-game, death, plugin reload and environment cleanup cancel old work.
 Pre-load closes the existing atomic world-admission gate before advancing
 the existing inventory load epoch, before any deferred JavaScript event.
 
+The update-context guard is scoped to the real JavaScript update entry.
+Synchronous native hook callbacks explicitly disable admission even while
+the global Papyrus VM remains available. Creating/submitting inventory work
+there refuses immediately; it cannot wait for the game thread that called
+the hook. Read-only current-state checks and cancellation remain usable by
+the native pump.
+
 An operation that throws may already have changed the pack. Its job becomes
 uncertain and never replays that unit. Any later plan must first read the
 actual pack and calculate a new difference. An unavailable observation does

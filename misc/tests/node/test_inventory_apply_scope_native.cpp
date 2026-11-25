@@ -2,9 +2,11 @@
 #include <cstring>
 #include <iostream>
 #include <map>
+#include <thread>
 #include "../../../skyrim-platform/src/platform_se/skyrim_platform/InventoryApplyScheduler.h"
 #include "../../../skyrim-platform/src/platform_se/skyrim_platform/InventoryLoadEpoch.h"
 #include "../../../skyrim-platform/src/platform_lib/GameplayMenuPolicy.h"
+#include "../../../skyrim-platform/src/platform_se/skyrim_platform/InventoryApplyContext.h"
 
 namespace GameplayMenuUnpaused {
 GameplayMenuPolicy::World world;
@@ -49,7 +51,24 @@ std::unordered_map<uint32_t, std::weak_ptr<Scope>> scopes;
 #include "InventoryStateUnderTest.inc"
 #include "InventoryFactoryUnderTest.inc"
 
+namespace Napi {using Env = int;}
+struct WorkerPool {
+  void PushAndWait(const std::function<void()>& task) { std::thread worker(task); worker.join(); }
+};
+struct Engine {
+  void AcquireEnvAndCall(const std::function<void(Napi::Env)>& task) {task(0);}
+};
+struct Listener {Engine engine; Engine* GetJsEngine() {return &engine;}};
+struct Impl {WorkerPool pool; std::shared_ptr<Listener> commonExecutionListener = std::make_shared<Listener>();};
+struct SkyrimPlatform {
+  std::shared_ptr<Impl> pImpl = std::make_shared<Impl>();
+  void PushAndWait(const std::function<void(Napi::Env)>& f);
+};
+#include "InventoryPushAndWaitUnderTest.inc"
+
 int main() {
+  assert(!InventoryApplyContext::Available());
+  InventoryApplyContext::Scope updateContext(true);
   RE::Actor actor;
   RE::TESForm::forms[0x14] = &actor;
   try {CreateScope(0x14); assert(false);} catch(const std::logic_error&) {}
@@ -94,6 +113,29 @@ int main() {
   g_nativeCallRequirements.vm = nullptr;
   try {CreateScope(0x14); assert(false);} catch(const std::logic_error&) {}
   g_nativeCallRequirements.vm = reinterpret_cast<void*>(1);
+  auto hookScope = CreateScope(0x14);
+  bool rejectedHook = false;
+  uint32_t hookMutations = 0;
+  SkyrimPlatform platform;
+  hookScope->job = scheduler.Submit(0x14, reinterpret_cast<uintptr_t>(&actor), {{1, 1, 1, [&](uint32_t) {
+    ++hookMutations;
+    // Actual PushAndWait wrapper uses a worker while the game-thread Tick
+    // owns the real scheduler mutex. Global VM is deliberately still set.
+    platform.PushAndWait([&](Napi::Env) {
+      assert(g_nativeCallRequirements.vm && !InventoryApplyContext::Available());
+      try {CreateScope(0x14); assert(false);} catch(const std::logic_error&) {rejectedHook = true;}
+      try {InventoryApplyContext::RequireUpdate(); assert(false);} catch(const std::logic_error&) {}
+    });
+    return UnitResult::Ran;
+  }}}, [hookScope] {return hookScope->Current();});
+  {
+    InventoryApplyContext::Scope nativeGameThread(false);
+    scheduler.Tick(); // Scope::Current must not require a JS context here.
+  }
+  assert(rejectedHook && hookMutations == 1 && hookScope->job->GetState() == State::Drained);
+  assert(InventoryApplyContext::Available());
+  try {InventoryApplyContext::Scope tick(false); throw std::runtime_error("context reset fixture");} catch(const std::runtime_error&) {}
+  assert(InventoryApplyContext::Available());
   auto current = CreateScope(0x14);
   actor.slot->reference = nullptr;
   assert(!current->Current());

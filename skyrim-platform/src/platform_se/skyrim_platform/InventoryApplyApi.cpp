@@ -2,6 +2,7 @@
 #include "CallNativeApi.h"
 #include "InventoryApplyScheduler.h"
 #include "InventoryApplyPump.h"
+#include "InventoryApplyContext.h"
 #include "InventoryLoadEpoch.h"
 #include "GameplayMenuUnpaused.h"
 #include "PapyrusTESModPlatform.h"
@@ -194,6 +195,7 @@ const char* StateName(const std::shared_ptr<Scope>& scope) {
 
 // ==== inventory apply factory ====
 std::shared_ptr<Scope> CreateScope(uint32_t id) {
+  InventoryApplyContext::RequireUpdate();
   // Use the existing world/loading and game-functions context authorities.
   // The deferred preLoad JS event is too late to close native admission.
   if (!g_nativeCallRequirements.vm || !GameplayMenuUnpaused::HasLoadedWorld())
@@ -242,6 +244,7 @@ Napi::Value Create(const Napi::CallbackInfo& info) {
   }));
   object.Set("cancel", Napi::Function::New(info.Env(), [scope](const Napi::CallbackInfo&) { scope->Cancel(); }));
   object.Set("submit", Napi::Function::New(info.Env(), NapiHelper::WrapCppExceptions([scope](const Napi::CallbackInfo& call) -> Napi::Value {
+    InventoryApplyContext::RequireUpdate();
     if (call.Length() != 1 || !g_nativeCallRequirements.vm || !scope->Current() || !scope->Ready()) throw std::logic_error("Inventory scope is not ready");
     // Napi property reads can invoke JS getters and re-enter lifecycle APIs.
     // Parse outside the scope lock, then revalidate before publishing work.

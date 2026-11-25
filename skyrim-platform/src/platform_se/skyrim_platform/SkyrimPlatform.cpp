@@ -15,6 +15,7 @@
 #include "HttpClientApi.h"
 #include "InventoryApi.h"
 #include "InventoryApplyApi.h"
+#include "InventoryApplyContext.h"
 #include "BookTextApi.h"
 #include "LoadGameApi.h"
 #include "MagicApi.h"
@@ -429,6 +430,7 @@ SkyrimPlatform* SkyrimPlatform::GetSingleton()
 
 void SkyrimPlatform::JsTick(Napi::Env env, bool gameFunctionsAvailable)
 {
+  InventoryApplyContext::Scope inventoryContext(gameFunctionsAvailable);
   if (gameFunctionsAvailable) {
     pImpl->commonExecutionListener->GetJsEngine()->Tick();
   }
@@ -459,7 +461,13 @@ void SkyrimPlatform::PushAndWait(const std::function<void(Napi::Env)>& f)
 {
   pImpl->pool.PushAndWait([this, f] {
     auto engine = pImpl->commonExecutionListener->GetJsEngine();
-    engine->AcquireEnvAndCall(f);
+    engine->AcquireEnvAndCall([f](Napi::Env env) {
+      // A native add/equip can wait here for a JS animation hook while it
+      // still owns the scheduler lock. Such callbacks must reject inventory
+      // creation/submission instead of blocking on that game thread.
+      InventoryApplyContext::Scope inventoryContext(false);
+      f(env);
+    });
   });
 }
 
