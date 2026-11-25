@@ -228,3 +228,41 @@ TEST_CASE("An item already worn on the server's record is not asked again",
   REQUIRE(WornOf(f.actor(), kClub) == Inventory::Worn::None);
   REQUIRE(UnequipSnippetsFor(f.partOne, kClub) == 1);
 }
+
+PartOne& GetPartOne();
+
+TEST_CASE("An authoritative list gates every spell equipment slot",
+          "[authoritative-spells][espm]")
+{
+  auto& p = GetPartOne();
+  const auto oldCheck = p.worldState.equipmentSpellCheckEnabled;
+  p.worldState.equipmentSpellCheckEnabled = false;
+  for (const auto* slot : { "leftSpell", "rightSpell", "voiceSpell",
+                            "instantSpell" }) {
+    DYNAMIC_SECTION(slot) {
+      DoConnect(p, 0);
+      constexpr uint32_t id = 0xff000a97;
+      p.CreateActor(id, { 0, 0, 0 }, 0, 0x3c);
+      p.SetUserActor(0, id);
+      auto& actor = p.worldState.GetFormAt<MpActor>(id);
+      auto appearance = jAppearance["data"];
+      appearance["raceId"] = 0x13746;
+      GiveStoredAppearance(actor, appearance);
+      actor.SetPropertyValueDump("_skympAuthoritativeSpells", "true", false,
+                                  false);
+      auto update = jEquipment;
+      update["data"][slot] = 0x12fcd;
+      DoMessage(p, 0, update);
+      const auto refused = actor.GetEquipment().ToJson()[slot];
+      actor.AddSpell(0x12fcd);
+      update["data"]["numChanges"] = 1;
+      DoMessage(p, 0, update);
+      const auto allowed = actor.GetEquipment().ToJson()[slot];
+      p.DestroyActor(id);
+      DoDisconnect(p, 0);
+      REQUIRE(refused.is_null());
+      REQUIRE(allowed == 0x12fcd);
+    }
+  }
+  p.worldState.equipmentSpellCheckEnabled = oldCheck;
+}

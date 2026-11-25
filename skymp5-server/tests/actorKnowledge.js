@@ -16,16 +16,30 @@ const mp = new addon.ScampServer(JSON.stringify({port: 0, maxPlayers: 2,
 mp._setSelf(mp);
 mp.attachSaveStorage();
 const actor = mp.createActor(0x7, [1, 1, 1], 0, 0x3c, 42);
+assert.equal(typeof mp.getActorLearnedSpells, 'function');
 const register = (name, owner = true, neighbors = false) => mp.makeProperty(name, {
   isVisibleByOwner: owner, isVisibleByNeighbors: neighbors, updateOwner: '', updateNeighbor: ''});
 register('thornswoodCharacter');
 const initial = {v: 1, prof: 'mage', spellHistory: {spells: ['Flames']}};
 mp.set(actor, 'thornswoodCharacter', initial);
 const inventory = mp.get(actor, 'inventory');
+const self = {type: 'form', desc: mp.getDescFromId(actor)};
+const spells = () => {
+  const count = mp.callPapyrusFunction('method', 'Actor', 'GetSpellCount', self, []);
+  assert.equal(typeof count, 'number');
+  return Array.from({length: count}, (_, index) => {
+    const spell = mp.callPapyrusFunction('method', 'Actor', 'GetNthSpell', self, [index]);
+    assert.equal(typeof spell.desc, 'string');
+    return mp.getIdFromDesc(spell.desc);
+  }).sort((a, b) => a - b);
+};
+assert.deepEqual(spells(), []);
+assert.deepEqual(mp.getActorLearnedSpells(actor), []);
+const ability = 0x1031d3; // PCHealRateCombat is inherited by the Player base.
 const property = {name: 'thornswoodCharacter', expected: initial,
   replacement: {...initial, prof: 'hunter'}, expectedLifeGeneration: 0,
   expectedRuntimeIdentity: mp.getActorRuntimeIdentity(actor),
-  expectedSpells: [], replacementSpells: [0x12fcd, 0x12fcc]};
+  expectedSpells: [], replacementSpells: [0x12fcd, 0x12fcc, ability]};
 const commit = (change = {}, profile = 42) =>
   mp.compareAndSetActorPropertyAndSpells(actor, profile, {...property, ...change});
 for (const profile of [0, -1, 1.5, NaN, '42']) assert.throws(() => commit({}, profile));
@@ -47,11 +61,19 @@ assert.throws(() => commit({replacement: 'x'.repeat(1024 * 1024)}));
 assert.equal(commit(), true, 'owner-visible property is accepted');
 assert.deepEqual(mp.get(actor, 'thornswoodCharacter'), property.replacement);
 assert.deepEqual(mp.get(actor, 'inventory'), inventory);
+assert.deepEqual(spells(), [0x12fcc, 0x12fcd]);
+assert.deepEqual(mp.getActorLearnedSpells(actor), [0x12fcc, 0x12fcd, ability]);
 assert.equal(mp.get(actor, '_skympAuthoritativeSpells'), true);
 assert.equal(commit(), false, 'replay refuses both state and spell changes');
 assert.equal(commit({expected: property.replacement,
-  expectedSpells: [0x12fcc, 0x12fcd], replacementSpells: [0x12fcc]}), true,
-  'expected spells compare as a set, preserving the unrelated remaining spell');
+  expectedSpells: spells(), replacementSpells: [0x12fcc, ability]}), false,
+  'Papyrus-filtered lists are not full-set fences');
 assert.equal(commit({expected: property.replacement,
-  expectedSpells: [0x12fcc], replacementSpells: []}), true);
+  expectedSpells: [ability, 0x12fcc, 0x12fcd], replacementSpells: [0x12fcc, ability]}), true,
+  'expected spells compare as a set, preserving the unrelated remaining spell');
+assert.deepEqual(spells(), [0x12fcc]);
+assert.equal(commit({expected: property.replacement,
+  expectedSpells: [0x12fcc, ability], replacementSpells: [ability]}), true);
+assert.deepEqual(spells(), []);
+assert.deepEqual(mp.getActorLearnedSpells(actor), [ability]);
 console.log('PASS native character knowledge CAS validation, owner-visible state and full-set fences');

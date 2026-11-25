@@ -88,9 +88,11 @@ nlohmann::json NordAppearance()
 // Caster on user 0 with the spell in hand, a neighbour on user 1 who sees
 // them, and a listener that answers mult (0: does not touch it).
 Heard Cast(float listenerMult, std::optional<float> asked,
-           bool interruptCast = false)
+           bool interruptCast = false, bool authoritative = false,
+           bool learned = false)
 {
   PartOne& partOne = GetPartOne();
+  partOne.worldState.equipmentSpellCheckEnabled = false;
   auto listener =
     std::make_shared<DurationListener>(partOne.worldState, listenerMult);
   partOne.AddListener(listener);
@@ -98,6 +100,13 @@ Heard Cast(float listenerMult, std::optional<float> asked,
   DoConnect(partOne, 0);
   partOne.CreateActor(0xff000ABC, { 1.f, 2.f, 3.f }, 180.f, 0x3c);
   auto& caster = partOne.worldState.GetFormAt<MpActor>(0xff000ABC);
+  if (authoritative) {
+    caster.SetPropertyValueDump("_skympAuthoritativeSpells", "true", false,
+                                false);
+  }
+  if (learned) {
+    caster.AddSpell(0x12FCD);
+  }
   GiveStoredAppearance(caster, NordAppearance());
   partOne.SetUserActor(0, 0xff000ABC);
 
@@ -184,4 +193,23 @@ TEST_CASE("A duration answer that is not a number is the game's own",
   REQUIRE(event.GetDurationMult() == 1.f);
   event.SetDurationMult(0.5f);
   REQUIRE(event.GetDurationMult() == 0.5f);
+}
+
+TEST_CASE("An authoritative active list gates an already equipped cast",
+          "[authoritative-spells][espm]")
+{
+  // The spell remains in the equipment after the learned set changes. Neither
+  // a gamemode event nor a forwarded cast may make it past the active list.
+  const auto refused = Cast(2.f, 2.f, false, true, false);
+  const auto allowed = Cast(2.f, 2.f, false, true, true);
+  const auto interrupted = Cast(2.f, 2.f, true, true, false);
+  const auto legacy = Cast(2.f, 2.f, false, false, false);
+  REQUIRE(refused.casts == 0);
+  REQUIRE(refused.neighbourMult == -1.f);
+  REQUIRE(allowed.casts == 1);
+  REQUIRE(allowed.neighbourMult == 2.f);
+  // Stopping an old cast has no new effects and must still reach neighbours.
+  REQUIRE(interrupted.casts == 0);
+  REQUIRE(interrupted.neighbourMult == 0.f);
+  REQUIRE(legacy.casts == 1);
 }

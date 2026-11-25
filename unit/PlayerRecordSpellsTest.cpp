@@ -47,7 +47,7 @@ TEST_CASE("The Player record hands a person its abilities and no spells",
 }
 
 TEST_CASE("A person does not start with Flames and Healing",
-          "[Thornswood1688][espm]")
+          "[Thornswood1688][authoritative-spells][espm]")
 {
   PartOne& p = GetPartOne();
   DoConnect(p, 0);
@@ -66,6 +66,22 @@ TEST_CASE("A person does not start with Flames and Healing",
   PapyrusActor papyrusActor;
   REQUIRE_FALSE(static_cast<bool>(papyrusActor.RemoveSpell(
     actor.ToVarValue(), { SpellArg(p, kPcHealRateCombat) })));
+  actor.SetPropertyValueDump("_skympAuthoritativeSpells", "true", false, false);
+  REQUIRE(actor.IsSpellLearned(kPcHealRateCombat));
+  const auto race = p.worldState.GetEspm().GetBrowser().LookupById(actor.GetRaceId());
+  const auto raceData = espm::GetData<espm::RACE>(actor.GetRaceId(), &p.worldState);
+  size_t powers = 0;
+  for (const auto local : raceData.spells) {
+    const auto id = race.ToGlobalId(local);
+    const auto spell = espm::GetData<espm::SPEL>(id, &p.worldState);
+    if (spell.spellItem &&
+        (spell.spellItem->type == espm::SPEL::SpellType::Power ||
+         spell.spellItem->type == espm::SPEL::SpellType::LesserPower)) {
+      REQUIRE(actor.IsSpellLearned(id));
+      ++powers;
+    }
+  }
+  REQUIRE(powers > 0);
 
   p.DestroyActor(kPersonId);
   DoDisconnect(p, 0);
@@ -104,7 +120,7 @@ TEST_CASE("The server grants and takes back Flames like any other spell",
 }
 
 TEST_CASE("An NPC still holds the spells on its own base record",
-          "[Thornswood1688][espm]")
+          "[Thornswood1688][authoritative-spells][espm]")
 {
   PartOne& p = GetPartOne();
   p.worldState.AddForm(
@@ -116,6 +132,10 @@ TEST_CASE("An NPC still holds the spells on its own base record",
 
   REQUIRE(npc.IsSpellLearnedFromBase(kFlames));
   REQUIRE(npc.IsSpellLearnedFromBase(kHealing));
+  REQUIRE(npc.IsSpellLearned(kFlames));
+  npc.SetPropertyValueDump("_skympAuthoritativeSpells", "true", false, false);
+  REQUIRE_FALSE(npc.IsSpellLearned(kFlames));
+  npc.AddSpell(kFlames);
   REQUIRE(npc.IsSpellLearned(kFlames));
 
   p.worldState.DestroyForm<MpActor>(kNpcId);

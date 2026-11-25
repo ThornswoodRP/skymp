@@ -1,4 +1,4 @@
-import { Actor, ActorBase, createText, destroyText, Form, FormType, Game, Keyword, NetImmerse, ObjectReference, once, printConsole, setTextPos, setTextSize, setTextString, storage, TESModPlatform, Utility, worldPointToScreenPoint } from "skyrimPlatform";
+import { Actor, ActorBase, Cell, WorldSpace, createText, destroyText, Form, FormType, Game, Keyword, NetImmerse, ObjectReference, once, printConsole, setTextPos, setTextSize, setTextString, storage, TESModPlatform, Utility, worldPointToScreenPoint } from "skyrimPlatform";
 import { setDefaultAnimsDisabled, applyAnimation } from "../sync/animation";
 import { Appearance, applyAppearance } from "../sync/appearance";
 import { isBadMenuShown, applyEquipment } from "../sync/equipment";
@@ -488,7 +488,18 @@ export class FormView {
       this.movState.askedToHost = false;
     }
 
-    if (model.movement) {
+    if (model.placedTransform) {
+      const target = model.placedTransform;
+      if (this.lastPlacedTransform !== target || this.lastPlacedRefId !== this.refrId) {
+        const location = Game.getFormEx(target.worldOrCell);
+        // Papyrus angles are degrees; MoveTo_Impl takes native radians.
+        const [rx, ry, rz] = target.rot.map((degrees) => degrees * (Math.PI / 180));
+        TESModPlatform.moveRefrToPosition(refr, Cell.from(location), WorldSpace.from(location),
+          ...target.pos, rx, ry, rz);
+        this.lastPlacedTransform = target;
+        this.lastPlacedRefId = this.refrId;
+      }
+    } else if (model.movement) {
       let ac = Actor.from(refr);
       // THORNSWOOD (Thornswood #6247). This asked to host an actor whenever
       // 1.5 s passed without a move for it, which made every game send every
@@ -763,6 +774,8 @@ export class FormView {
   private adoptedRefrId = 0;
   private ready = false;
   private animState = this.getDefaultAnimState();
+  private lastPlacedTransform?: FormModel['placedTransform'];
+  private lastPlacedRefId?: number;
   private movState = {
     lastNumChanges: 0,
     lastApply: 0,
