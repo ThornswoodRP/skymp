@@ -216,6 +216,8 @@ jobs:
         run: node misc/tests/node/test_journal_menu_unpaused.js
       - name: The update event's Papyrus call opens its way when it ends
         run: node misc/tests/node/test_papyrus_update_way_native.js
+      - name: The Mongo readiness probe leaves its database directory alone
+        run: node misc/tests/node/test_mongo_readiness_probe.js
   save-directory-linux:
     runs-on: ubuntu-24.04
     timeout-minutes: 10
