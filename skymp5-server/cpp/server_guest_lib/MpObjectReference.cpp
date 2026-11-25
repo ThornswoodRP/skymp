@@ -249,6 +249,23 @@ MpObjectReference::MpObjectReference(
     SetPrimitive(*primitiveBoundsDiv2);
 }
 
+void MpObjectReference::PrepareFurniturePlacement(const std::string& marker)
+{
+  if (GetParent()) {
+    throw std::logic_error(
+      "A furniture placement must be prepared before adding it to the world");
+  }
+  // Init queues the first change form. Both fields must be present before
+  // that save or any subscription update can see this reference.
+  const auto value = nlohmann::json(marker).dump();
+  EditChangeForm(
+    [&](MpChangeFormREFR& changeForm) {
+      changeForm.dynamicFields.SetValueDump(kFurniturePlacementMarker, value);
+      changeForm.isDisabled = true;
+    },
+    Mode::NoRequestSave);
+}
+
 const NiPoint3& MpObjectReference::GetPos() const
 {
   return ChangeForm().position;

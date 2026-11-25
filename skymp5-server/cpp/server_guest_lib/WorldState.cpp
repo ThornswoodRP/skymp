@@ -304,6 +304,27 @@ void WorldState::AddForm(std::unique_ptr<MpForm> form, uint32_t formId,
   }
 }
 
+uint32_t WorldState::FindFurniturePlacement(uint32_t baseId,
+                                            const std::string& marker) const
+{
+  const auto dump = nlohmann::json(marker).dump();
+  uint32_t found = 0;
+  for (const auto& [id, form] : forms) {
+    const auto* ref = form->AsObjectReference();
+    if (id < 0xff000000 || !ref || ref->AsActor() || ref->IsDeleted() ||
+        ref->GetDynamicFields().GetValueDump(
+          MpObjectReference::kFurniturePlacementMarker) != dump) {
+      continue;
+    }
+    if (found || ref->GetBaseId() != baseId) {
+      throw std::runtime_error(
+        "Furniture placement marker matches an unexpected reference");
+    }
+    found = id;
+  }
+  return found;
+}
+
 void WorldState::EnsureTickAllowed() const
 {
   if (pImpl->completionPhase != Impl::CompletionPhase::Active) {

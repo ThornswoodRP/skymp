@@ -136,6 +136,8 @@ Napi::Object ScampServer::Init(Napi::Env env, Napi::Object exports)
       InstanceMethod("getSavedInventoryReceipt",
                      &ScampServer::GetSavedInventoryReceipt),
       InstanceMethod("place", &ScampServer::Place),
+      InstanceMethod("placeDisabledFurniture",
+                     &ScampServer::PlaceDisabledFurniture),
       InstanceMethod("lookupEspmRecordById",
                      &ScampServer::LookupEspmRecordById),
       InstanceMethod("getEspmLoadOrder", &ScampServer::GetEspmLoadOrder),
@@ -1642,6 +1644,61 @@ Napi::Value ScampServer::Place(const Napi::CallbackInfo& info)
     return Napi::Number::New(info.Env(), refr.GetFormId());
   } catch (std::exception& e) {
     throw Napi::Error::New(info.Env(), std::string(e.what()));
+  }
+}
+
+namespace {
+std::string FurniturePlacementMarker(const Napi::Value& input)
+{
+  auto marker = NapiHelper::ExtractString(
+    input, "placementMarker", "0123456789abcdef-", { 36, 36 });
+  for (size_t i = 0; i < marker.size(); ++i) {
+    const bool separator = i == 8 || i == 13 || i == 18 || i == 23;
+    if (separator != (marker[i] == '-')) {
+      throw std::runtime_error("Invalid furniture placement marker");
+    }
+  }
+  return marker;
+}
+}
+
+Napi::Value ScampServer::PlaceDisabledFurniture(const Napi::CallbackInfo& info)
+{
+  try {
+    const auto baseId = NapiHelper::ExtractUInt32(info[0], "baseId");
+    const auto marker = FurniturePlacementMarker(info[1]);
+
+    const auto property = gamemodeApiState.createdProperties.find(
+      MpObjectReference::kFurniturePlacementMarker);
+    if (property == gamemodeApiState.createdProperties.end() ||
+        property->second.isVisibleByOwner ||
+        property->second.isVisibleByNeighbors) {
+      throw std::runtime_error(
+        "Furniture placement requires a registered hidden marker property");
+    }
+    const auto base = partOne->GetEspm().GetBrowser().LookupById(baseId);
+    if (!base.rec) {
+      throw std::runtime_error("Furniture placement requires a furniture base");
+    }
+    const auto type = base.rec->GetType().ToString();
+    if (type != "FURN" && type != "CONT" && type != "STAT") {
+      throw std::runtime_error("Furniture placement requires a furniture base");
+    }
+    auto& world = partOne->worldState;
+    if (const auto existing = world.FindFurniturePlacement(baseId, marker)) {
+      return Napi::Number::New(info.Env(), existing);
+    }
+
+    const LocationalData origin = { { 0, 0, 0 }, { 0, 0, 0 },
+                                    FormDesc::Tamriel() };
+    auto reference = std::make_unique<MpObjectReference>(
+      origin, partOne->CreateFormCallbacks(), baseId, type);
+    reference->PrepareFurniturePlacement(marker);
+    const auto id = world.GenerateFormId();
+    world.AddForm(std::move(reference), id);
+    return Napi::Number::New(info.Env(), id);
+  } catch (const std::exception& error) {
+    throw Napi::Error::New(info.Env(), error.what());
   }
 }
 
