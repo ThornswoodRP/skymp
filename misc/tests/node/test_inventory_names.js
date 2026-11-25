@@ -240,6 +240,35 @@ function makeGame() {
 }
 
 // The game cannot rename in place: the old way.
+{
+  const g=makeGame();
+  g.lists=[{baseId:SWORD,count:1,name:'Aldis Blade (25%)',worn:true},
+    {baseId:SWORD,count:2,name:'Aldis Blade (50%)'}];
+  const before=JSON.stringify(g.lists),target=[{baseId:SWORD,count:3,name:'Aldis Blade'}];
+  g.renameWorks=false;
+  const applied=g.apply(target);
+  yes('a refused complete repair stays pending instead of rebuilding worn equipment',
+    applied===false&&JSON.stringify(g.lists)===before&&!g.calls.some(c=>c[0]==='remove'||c[0]==='addItemEx'));
+  g.renameWorks=true;g.calls.length=0;g.apply(target);
+  yes('pending complete repairs retry safely when the native lists are ready',
+    g.lists.some(l=>l.worn&&l.name==='Aldis Blade')&&g.lists.reduce((n,l)=>n+l.count,0)===3&&
+    !g.calls.some(c=>c[0]==='remove'||c[0]==='addItemEx'));
+}
+
+// The game cannot rename a subset of one extra list in place: the old way.
+{
+  const g=makeGame();
+  g.lists=[{baseId:DAGGER,count:3,name:'Steel Dagger (60%)'}];
+  const desired=[{baseId:DAGGER,count:2,name:'Steel Dagger (60%)'},{baseId:DAGGER,count:1}];
+  g.apply(desired);
+  yes('repairing one of a larger extra list to sound still uses the established split path',
+    g.calls.some(c=>c[0]==='rename')&&g.calls.some(c=>c[0]==='remove')&&g.calls.some(c=>c[0]==='addItemEx')&&
+    g.lists.some(l=>l.name==='Steel Dagger (60%)'&&l.count===2)&&g.lists.some(l=>l.name==='Steel Dagger'&&l.count===1));
+  g.calls.length=0;g.apply(desired);
+  yes('the partial repair-to-sound split completes without a retry loop',g.calls.length===0);
+}
+
+// The game cannot rename in place: the old way.
 for (const reverse of [false,true]) {
   const g=makeGame();
   g.lists=[{baseId:SWORD,count:1,name:'Aldis Blade (25%)',health:1.4,worn:true},

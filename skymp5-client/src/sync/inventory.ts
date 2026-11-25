@@ -815,13 +815,13 @@ export const applyInventory = (
   const planned = new Set<Entry>();
   const plannedTargets = new Set<Entry>();
   const renames = new Map<string, {
-    baseId: number; from: string; to: string;
+    baseId: number; from: string; to: string; repairOnly: boolean;
     parts: { added: Entry; removed: Entry; count: number }[];
   }>();
   const candidatesFor = (added: Entry): Entry[] => diff.filter((x) =>
       x.count < 0 && !planned.has(x) && !namesEqual(x, added) &&
       inventoryEntriesEqualExceptName(x, added, ignoreWorn));
-  const plan = (added: Entry, sources: Entry[]): void => {
+  const plan = (added: Entry, sources: Entry[], repair = false): void => {
     // A repair can squash several old conditions into one target count.
     // Plan only whole source differences whose total exactly matches it.
     if (!sources.length || sources.reduce((sum, x) => sum - x.count, 0) !== added.count) {
@@ -842,9 +842,10 @@ export const applyInventory = (
       const key = JSON.stringify([added.baseId, from, to]);
       let batch = renames.get(key);
       if (!batch) {
-        batch = { baseId: added.baseId, from, to, parts: [] };
+        batch = { baseId: added.baseId, from, to, repairOnly: repair, parts: [] };
         renames.set(key, batch);
       }
+      batch.repairOnly = batch.repairOnly && repair;
       batch.parts.push({ added, removed, count: -removed.count });
       planned.add(removed);
     });
@@ -858,7 +859,7 @@ export const applyInventory = (
         ? / \(\d+%\)(?= \([^()]+\)$|$)/ : / \(\d+%\)$/, "");
       return stripped !== removed.name && namesEqual({ ...removed, name: stripped }, added);
     });
-    plan(added, sources);
+    plan(added, sources, true);
   });
   diff.filter((x) => x.count > 0 && !plannedTargets.has(x)).forEach((added) => {
     const candidates = candidatesFor(added);
@@ -869,6 +870,15 @@ export const applyInventory = (
   for (const batch of Array.from(renames.values())) {
     const count = batch.parts.reduce((sum, part) => sum + part.count, 0);
     if (!renameInventoryItems(refr.getFormID(), batch.baseId, batch.from, batch.to, count)) {
+      const sourceCount = actual.entries.filter((x) =>
+        x.baseId === batch.baseId && (x.name || "") === batch.from)
+        .reduce((sum, x) => sum + x.count, 0);
+      if (batch.repairOnly && sourceCount === count) {
+        // A complete condition repair must not rebuild worn gear after a
+        // transient refusal. Its next diff is read after the native queue.
+        printConsole("Equipment repair is waiting for an in-place name update");
+        return false;
+      }
       continue;
     }
     batch.parts.forEach(({added, removed, count}) => {
