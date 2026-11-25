@@ -240,6 +240,33 @@ function makeGame() {
 }
 
 // The game cannot rename in place: the old way.
+for (const reverse of [false,true]) {
+  const g=makeGame();
+  g.lists=[{baseId:SWORD,count:1,name:'Aldis Blade (25%)',health:1.4,worn:true},
+    {baseId:SWORD,count:1,name:'Aldis Blade (50%)',health:1.4},
+    {baseId:SWORD,count:1,name:'Brenna Blade (75%)',health:1.4}];
+  const targets=[{baseId:SWORD,count:2,name:'Aldis Blade',health:1.4},
+    {baseId:SWORD,count:1,name:'Brenna Blade',health:1.4}];
+  g.apply(reverse?targets.reverse():targets);
+  yes('mixed custom repair groups preserve worn identity regardless of target order '+reverse,
+    g.lists.some(l=>l.worn&&l.name==='Aldis Blade') &&
+    g.lists.filter(l=>l.name==='Aldis Blade').reduce((n,l)=>n+l.count,0)===2 &&
+    g.lists.filter(l=>l.name==='Brenna Blade').reduce((n,l)=>n+l.count,0)===1);
+  yes('mixed custom repair groups never fall back to removal/addition '+reverse,
+    !g.calls.some(c=>c[0]==='remove'||c[0]==='addItemEx'));
+}
+{
+  const g=makeGame();
+  g.lists=[{baseId:SWORD,count:1,name:'Aldis Blade (25%)',worn:true},
+    {baseId:SWORD,count:1,name:'Aldis Blade (50%)'},
+    {baseId:SWORD,count:1,name:'Old Custom'}];
+  g.apply([{baseId:SWORD,count:1,name:'New Custom'},{baseId:SWORD,count:2,name:'Aldis Blade'}]);
+  yes('an unrelated rename cannot consume a source reserved for a repair group',
+    g.lists.some(l=>l.worn&&l.name==='Aldis Blade')&&g.lists.some(l=>l.name==='New Custom')&&
+    !g.calls.some(c=>c[0]==='remove'||c[0]==='addItemEx'));
+}
+
+// The game cannot rename in place: the old way.
 {
   const g = makeGame();
   g.lists = [{ baseId: DAGGER, count: 3, name: 'Steel Dagger (60%)' }];

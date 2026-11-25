@@ -813,19 +813,15 @@ export const applyInventory = (
     changes are batched so the game's complete extra lists stay in place.
   */
   const planned = new Set<Entry>();
+  const plannedTargets = new Set<Entry>();
   const renames = new Map<string, {
     baseId: number; from: string; to: string;
     parts: { added: Entry; removed: Entry; count: number }[];
   }>();
-  diff.forEach((added) => {
-    if (added.count <= 0) {
-      return;
-    }
-    const candidates = diff.filter((x) =>
+  const candidatesFor = (added: Entry): Entry[] => diff.filter((x) =>
       x.count < 0 && !planned.has(x) && !namesEqual(x, added) &&
       inventoryEntriesEqualExceptName(x, added, ignoreWorn));
-    const exact = candidates.find((x) => x.count === -added.count);
-    const sources = exact ? [exact] : candidates;
+  const plan = (added: Entry, sources: Entry[]): void => {
     // A repair can squash several old conditions into one target count.
     // Plan only whole source differences whose total exactly matches it.
     if (!sources.length || sources.reduce((sum, x) => sum - x.count, 0) !== added.count) {
@@ -852,6 +848,22 @@ export const applyInventory = (
       batch.parts.push({ added, removed, count: -removed.count });
       planned.add(removed);
     });
+    plannedTargets.add(added);
+  };
+  // Reserve each condition-to-bare-name group before a generic rename can
+  // consume one of its equal-count sources under another custom name.
+  diff.filter((x) => x.count > 0).forEach((added) => {
+    const sources = candidatesFor(added).filter((removed) => {
+      const stripped = removed.name?.replace(isTempered(removed)
+        ? / \(\d+%\)(?= \([^()]+\)$|$)/ : / \(\d+%\)$/, "");
+      return stripped !== removed.name && namesEqual({ ...removed, name: stripped }, added);
+    });
+    plan(added, sources);
+  });
+  diff.filter((x) => x.count > 0 && !plannedTargets.has(x)).forEach((added) => {
+    const candidates = candidatesFor(added);
+    const exact = candidates.find((x) => x.count === -added.count);
+    plan(added, exact ? [exact] : candidates);
   });
   let renamed = false;
   for (const batch of Array.from(renames.values())) {
