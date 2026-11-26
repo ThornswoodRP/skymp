@@ -65,6 +65,12 @@ if(BUILD_UNIT_TESTS AND NOT EMSCRIPTEN)
   apply_default_settings(TARGETS gameplay-menu-test)
   add_test(NAME gameplay_menu COMMAND gameplay-menu-test)
 
+  # The furniture load cancel (Thornswood #6884), run on the game's own bytes.
+  add_executable(interaction-load-patch-test "${CMAKE_SOURCE_DIR}/misc/tests/interaction_load_patch_test.cpp")
+  target_include_directories(interaction-load-patch-test PRIVATE "${CMAKE_SOURCE_DIR}/skyrim-platform/src/platform_lib")
+  apply_default_settings(TARGETS interaction-load-patch-test)
+  add_test(NAME interaction_load_patch COMMAND interaction-load-patch-test)
+
   # The private ledger writer has no game-data dependency. Exercise the
   # actual platform file/rename barriers rather than a mocked acknowledgement.
   add_executable(private-ledger-test "${CMAKE_SOURCE_DIR}/misc/tests/private_ledger_test.cpp")
