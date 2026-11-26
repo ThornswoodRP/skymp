@@ -127,6 +127,7 @@ private:
     const bool loadNeeded = startupLoad || hotReload;
     if (loadNeeded) {
       ClearState();
+      exportsThisLoad.reset();
       const auto started = std::chrono::steady_clock::now();
       for (auto& fileDir : fileDirs) {
         LoadFiles(env, GetPathsToLoad(fileDir));
@@ -334,8 +335,32 @@ private:
     }
     env.Global().Set("log", consoleApi.Get("printConsole"));
 
-    engine->RunScript(
-      env, "skyrimPlatform = addNativeExports('skyrimPlatform', {})", "");
+    /*
+      THORNSWOOD PATCH (Thornswood #6200). One skyrimPlatform for a load.
+
+      The exports were built again for every plugin, and building them is
+      what a plugin's start cost: on 26 Nov 2026 (build-1.3.129) the 1 ms
+      table plugins took 202 to 241 ms each, nearly all of it between
+      "registering browser api" and their own script, and the nine plugins
+      held the game's main thread for 2750 ms right after the data load. The
+      game read the mouse once at 14:48:07.362 and not again until 10.390,
+      which is the cursor that took a while to show, and the motion made in
+      those 3 s came in one read and threw it to a corner.
+
+      Every plugin already ends up on one object: skyrimPlatform is a global,
+      and what a plugin calls through it later goes to the last one built.
+      So it is built once per load, by the first plugin, and handed to the
+      rest. A reload builds it again (exportsThisLoad.reset() in TickImpl).
+    */
+    if (!exportsThisLoad) {
+      engine->RunScript(
+        env, "skyrimPlatform = addNativeExports('skyrimPlatform', {})", "");
+      auto exports = env.Global().Get("skyrimPlatform").As<Napi::Object>();
+      exportsThisLoad.reset(
+        new Napi::Reference<Napi::Object>(Napi::Persistent(exports)));
+    } else {
+      env.Global().Set("skyrimPlatform", exportsThisLoad->Value());
+    }
     engine->RunScript(env, scriptSrc, path.filename().string()).ToString();
   }
 
@@ -373,6 +398,8 @@ private:
   CallNativeApi::NativeCallRequirements& nativeCallRequirements;
   std::unordered_map<std::string, std::string> settingsByPluginName;
   std::unique_ptr<Napi::Reference<Napi::Object>> settingsByPluginNameCache;
+  // The skyrimPlatform every plugin of this load is handed (#6200).
+  std::unique_ptr<Napi::Reference<Napi::Object>> exportsThisLoad;
   std::function<Napi::Value(const Napi::CallbackInfo& info)> getSettings,
     setSettings;
   mutable std::unique_ptr<std::vector<std::filesystem::path>> pluginFolders;

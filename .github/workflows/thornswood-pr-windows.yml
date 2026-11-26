@@ -220,6 +220,10 @@ jobs:
         run: node misc/tests/node/test_papyrus_update_way_native.js
       - name: The Mongo readiness probe leaves its database directory alone
         run: node misc/tests/node/test_mongo_readiness_probe.js
+      - name: The mouse is traced around the data load
+        run: node misc/tests/node/test_mouse_motion_at_load.js
+      - name: The skyrimPlatform exports are built once a load, not once a plugin
+        run: node misc/tests/node/test_one_skyrim_platform_per_load.js
   save-directory-linux:
     runs-on: ubuntu-24.04
     timeout-minutes: 10
