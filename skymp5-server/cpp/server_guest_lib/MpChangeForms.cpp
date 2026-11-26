@@ -66,6 +66,14 @@ nlohmann::json MpChangeForm::ToJson(const MpChangeForm& changeForm)
 
   res["learnedSpells"] = changeForm.learnedSpells.GetLearnedSpells();
 
+  // Written only when there is one, so a save that never disenchanted reads
+  // as it did before (Thornswood #4579).
+  if (!changeForm.learnedEnchantments.empty()) {
+    res["learnedEnchantments"] = std::vector<uint32_t>(
+      changeForm.learnedEnchantments.begin(),
+      changeForm.learnedEnchantments.end());
+  }
+
   res["healthPercentage"] = changeForm.actorValues.healthPercentage;
   res["magickaPercentage"] = changeForm.actorValues.magickaPercentage;
   res["staminaPercentage"] = changeForm.actorValues.staminaPercentage;
@@ -156,6 +164,7 @@ MpChangeForm MpChangeForm::JsonToChangeForm(simdjson::dom::element& element)
   static const JsonPointer appearanceDump("appearanceDump");
   static const JsonPointer equipmentDump("equipmentDump");
   static const JsonPointer learnedSpells("learnedSpells");
+  static const JsonPointer learnedEnchantments("learnedEnchantments");
   static const JsonPointer dynamicFields("dynamicFields");
   static const JsonPointer healthPercentage("healthPercentage");
   static const JsonPointer magickaPercentage("magickaPercentage");
@@ -266,6 +275,14 @@ MpChangeForm MpChangeForm::JsonToChangeForm(simdjson::dom::element& element)
     for (const auto spellId : learnedSpellsData) {
       res.learnedSpells.LearnSpell(spellId);
     }
+  }
+
+  if (element.at_pointer(learnedEnchantments.GetData()).error() ==
+      simdjson::error_code::SUCCESS) {
+    std::vector<uint32_t> learnedEnchantmentsData;
+    ReadVector(element, learnedEnchantments, &learnedEnchantmentsData);
+    res.learnedEnchantments.insert(learnedEnchantmentsData.begin(),
+                                   learnedEnchantmentsData.end());
   }
 
   ReadEx(element, healthPercentage, &res.actorValues.healthPercentage);

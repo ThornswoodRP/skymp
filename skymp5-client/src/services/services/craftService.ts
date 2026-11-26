@@ -1,7 +1,7 @@
 // TODO: refactor this out
 import { localIdToRemoteId } from "../../view/worldViewMisc";
 
-import { Actor, ContainerChangedEvent } from "skyrimPlatform";
+import { Actor, ContainerChangedEvent, ObjectReference } from "skyrimPlatform";
 import { ClientListener, CombinedController, Sp } from "./clientListener";
 import { Inventory, Made, MadeEnchantment, ensureMadePotion, ensureMadeEnchantment, readMadePotion, readMadeEnchantment } from "../../sync/inventory";
 import { MsgType } from "../../messages";
@@ -14,6 +14,8 @@ type FurnitureId = number;
 // THORNSWOOD PATCH. Every craft in Skyrim, the forge, the tanning rack, the
 // smelter, cooking, alchemy and enchanting, happens inside this one menu.
 const CRAFTING_MENU = 'Crafting Menu';
+// Thornswood #4579: the keyword an arcane enchanter's furniture carries.
+const ENCHANTER_KEYWORD = 'CraftingMagicEnchanter';
 
 export class CraftService extends ClientListener {
     constructor(private sp: Sp, private controller: CombinedController) {
@@ -201,6 +203,23 @@ export class CraftService extends ClientListener {
         }
 
         if (oldContainerId === 0x14 && newContainerId === 0) {
+            // Thornswood #4579: a disenchant, which nothing ever follows.
+            if (this.isDisenchant(furnitureRef, e)) {
+                const workbench = localIdToRemoteId(furnitureId);
+                if (!workbench) {
+                    logError(this, `localIdToRemoteId returned 0 for furnitureId`, furnitureId);
+                    return;
+                }
+                logTrace(this, `Sending disenchant workbench`, workbench, `baseId`, baseObjId.toString(16));
+                this.controller.emitter.emit("sendMessage", {
+                    message: {
+                        t: MsgType.CustomPacket,
+                        contentJsonDump: JSON.stringify({ customPacketType: "disenchant", workbench, baseId: baseObjId }),
+                    },
+                    reliability: "reliable"
+                });
+                return;
+            }
             let craftInputObjects = this.furnitureStreak.get(furnitureId);
             if (!craftInputObjects) {
                 craftInputObjects = { entries: [] };
@@ -254,6 +273,37 @@ export class CraftService extends ClientListener {
                 this.hide(resultObjectId, e.numItems);
             }
         }
+    }
+
+    /*
+      THORNSWOOD PATCH (Thornswood #4579). A DISENCHANT.
+
+      Disenchanting at an arcane enchanter takes one piece out of the pack
+      inside this menu, teaches its enchantment, and puts nothing back, so it
+      never closes into a craft and the server never heard of it: the
+      server's inventory, applied once the menu closed, put the piece back,
+      and what it taught was gone at the next relog. Skyrim disenchants only a
+      piece whose own record carries an enchantment (one you made yourself
+      cannot be), and nothing like that is ever an enchanting input, which is
+      an unenchanted piece and a soul gem. So a piece like that leaving the
+      pack at an enchanter is a disenchant, and goes to the server as one
+      (CraftService::Disenchant), which checks it all again.
+    */
+    private isDisenchant(furnitureRef: ObjectReference, e: ContainerChangedEvent): boolean {
+        const base = furnitureRef.getBaseObject();
+        const keyword = this.sp.Keyword.getKeyword(ENCHANTER_KEYWORD);
+        if (!base || !keyword || !base.hasKeyword(keyword)) {
+            return false;
+        }
+        if (!e.baseObj || e.numItems !== 1) {
+            return false;
+        }
+        const weapon = this.sp.Weapon.from(e.baseObj);
+        if (weapon) {
+            return !!weapon.getEnchantment();
+        }
+        const armor = this.sp.Armor.from(e.baseObj);
+        return !!armor && !!armor.getEnchantment();
     }
 
     private furnitureStreak = new Map<FurnitureId, Inventory>();

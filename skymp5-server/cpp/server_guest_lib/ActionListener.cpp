@@ -23,6 +23,7 @@
 #include <cmath>
 #include <fmt/format.h>
 #include <fmt/ranges.h>
+#include <limits>
 #include <spdlog/spdlog.h>
 #include <unordered_set>
 
@@ -157,6 +158,25 @@ void ActionListener::OnCustomPacket(const RawMessageData& rawMsgData,
   auto packetType = content["customPacketType"].get_string();
   if (!packetType.error() && packetType.value() == "craftLeave") {
     craftService->StopWork(rawMsgData.userId);
+    return;
+  }
+
+  // THORNSWOOD PATCH (Thornswood #4579). A disenchant at an arcane enchanter,
+  // which no craft ever carries. See CraftService::Disenchant.
+  if (!packetType.error() && packetType.value() == "disenchant") {
+    auto workbench = content["workbench"].get_uint64();
+    auto baseId = content["baseId"].get_uint64();
+    if (workbench.error() || baseId.error() ||
+        workbench.value() > std::numeric_limits<uint32_t>::max() ||
+        baseId.value() > std::numeric_limits<uint32_t>::max()) {
+      spdlog::warn("ActionListener::OnCustomPacket - a disenchant from user "
+                   "{} names no workbench or piece",
+                   rawMsgData.userId);
+      return;
+    }
+    craftService->Disenchant(rawMsgData.userId,
+                             static_cast<uint32_t>(workbench.value()),
+                             static_cast<uint32_t>(baseId.value()));
     return;
   }
 

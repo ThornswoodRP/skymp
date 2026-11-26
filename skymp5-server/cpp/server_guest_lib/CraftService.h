@@ -34,6 +34,40 @@ public:
   // (ActionListener::OnCustomPacket).
   void StopWork(Networking::UserId userId);
 
+  /*
+    THORNSWOOD PATCH (Thornswood #4579). A DISENCHANT AT AN ARCANE ENCHANTER.
+
+    Disenchanting takes a piece out of the pack inside the crafting menu and
+    teaches its enchantment's effects, and nothing comes back, so no craft is
+    ever sent. The server used to hear nothing: its inventory put the piece
+    back when the menu closed, and what was learned lived only in the
+    client's game, which a session starts fresh, so it was gone at the next
+    relog. The client now says so with the custom packet
+    { "customPacketType": "disenchant", "workbench": <ref>, "baseId": <piece> }
+    (ActionListener::OnCustomPacket).
+
+    Nothing is taken on the client's word. The person is at that bench and it
+    is an arcane enchanter (a bench keyword CraftingMagicEnchanter), the
+    piece is a weapon or armour whose own record carries an enchantment (the
+    only kind Skyrim lets you disenchant; one you made yourself cannot be),
+    and the pack holds a plain one, not worn and not made. Then, in this one
+    call, that piece is taken and the enchantment's effects, read off the
+    plugins, go on the change form (MpActor::LearnEnchantments). False, with
+    nothing changed, otherwise.
+  */
+  bool Disenchant(Networking::UserId userId, uint32_t workbenchId,
+                  uint32_t baseId);
+
+  // public for DisenchantTest.cpp. The magic effects of the enchantment the
+  // piece's own record carries, by global id, in the record's order. nullopt
+  // when it is not a weapon or armour, or carries none.
+  std::optional<std::vector<uint32_t>> DisenchantEffects(
+    const espm::CombineBrowser& br, uint32_t baseId);
+
+  // public for DisenchantTest.cpp. Whether this bench's base carries the
+  // arcane enchanter's keyword.
+  bool IsEnchanter(uint32_t workbenchId);
+
   // public for CraftTest.cpp: how many crafts are being worked or wait to be
   // for this actor.
   size_t GetWorkCount(uint32_t actorId) const;

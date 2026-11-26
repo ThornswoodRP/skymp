@@ -38,7 +38,15 @@
 //  13. a craft of anything else sends no enchantment;
 //  14. craftMade for an enchanted piece builds the enchantment under the
 //      server's id (ensureMadeEnchantment) and puts the piece back with it;
-//  15. an enchantment that cannot be built leaves the piece out.
+//  15. an enchantment that cannot be built leaves the piece out;
+//  16. a disenchant at an arcane enchanter (a piece whose own record is
+//      enchanted leaves the pack, and nothing comes back) tells the server
+//      the bench and the piece, and is no craft (Thornswood #4579);
+//  17. the disenchanted piece is not an input of the next enchanting there;
+//  18. the same piece leaving at any other bench is no disenchant.
+//
+// Against the code before #4579, 16 and 17 fail: nothing is sent, and the
+// piece goes into the next craft's inputs.
 //
 // Against the code before the change (CRAFT=<that copy>), 2, 4, 6 and 7 fail:
 // the item stays in the pack, and nothing is put back or told to the server.
@@ -96,6 +104,10 @@ function load(file, stubs) {
 // Platform hands a containerChanged to its handlers after the change.
 const PLAYER = 0x14;
 const FORGE = 0x1ad6e;
+// Thornswood #4579. An arcane enchanter, and a dagger whose own record
+// carries an enchantment (the only kind Skyrim lets you disenchant).
+const ENCHANTER = 0xbad0c, FIRE_DAGGER = 0x1a9a0;
+let bench = FORGE;
 const queue = [];
 const handlers = {};
 const emitted = [];
@@ -105,7 +117,13 @@ const calls = [];
 
 function fire(name, e) { (handlers[name] || []).forEach(function (h) { h(e); }); }
 function run() { while (queue.length) { const ev = queue.shift(); fire('containerChanged', ev); } }
-function form(id) { return { getFormID: function () { return id; }, getName: function () { return 'Iron Dagger'; } }; }
+function form(id) {
+  return {
+    getFormID: function () { return id; }, getName: function () { return 'Iron Dagger'; },
+    // Thornswood #4579: a bench's base, and whether it is an arcane enchanter.
+    getBaseObject: function () { return { hasKeyword: function (k) { return id === ENCHANTER && k.edid === 'CraftingMagicEnchanter'; } }; },
+  };
+}
 function moved(baseId, count, from, to) {
   queue.push({
     oldContainer: from ? form(from) : null, newContainer: to ? form(to) : null,
@@ -113,7 +131,7 @@ function moved(baseId, count, from, to) {
   });
 }
 const player = {
-  getFurnitureReference: function () { return menuOpen ? form(FORGE) : null; },
+  getFurnitureReference: function () { return menuOpen ? form(bench) : null; },
   removeItem: function (f, count, silent) { calls.push(['removeItem', f.getFormID(), count, silent]); moved(f.getFormID(), count, PLAYER, 0); },
   addItem: function (f, count, silent) { calls.push(['addItem', f.getFormID(), count, silent]); moved(f.getFormID(), count, 0, PLAYER); },
 };
@@ -121,6 +139,9 @@ const sp = {
   Game: { getPlayer: function () { return player; }, getFormEx: function (id) { return form(id); } },
   Ui: { isMenuOpen: function (name) { return name === 'Crafting Menu' && menuOpen; } },
   Enchantment: { from: function (f) { return f ? { enchantmentId: f.getFormID() } : null; } },
+  Keyword: { getKeyword: function (edid) { return { edid: edid }; } },
+  Weapon: { from: function (f) { return f ? { getEnchantment: function () { return f.getFormID() === FIRE_DAGGER ? {} : null; } } : null; } },
+  Armor: { from: function () { return null; } },
   TESModPlatform: {
     addItemEx: function (refr, f, count, health, ench, maxCharge) {
       calls.push(['addItemEx', f.getFormID(), count, ench ? ench.enchantmentId : 0, maxCharge]);
@@ -271,6 +292,35 @@ const callsBeforeBadEnchant = calls.length;
 serverSays({ customPacketType: 'craftMade', baseId: ENCHANTED_PIECE, count: 1,
   madeEnchantment: ENCHANTMENT, enchantmentId: UNBUILDABLE, maxCharge: 250 });
 yes('15. an enchantment that cannot be built leaves the piece out', calls.length === callsBeforeBadEnchant);
+closeMenu();
+
+// Thornswood #4579. A disenchant: one piece whose own record is enchanted
+// leaves the pack at an arcane enchanter, and nothing comes back.
+function disenchants() { return sent(1).filter(function (m) { return JSON.parse(m.contentJsonDump).customPacketType === 'disenchant'; }); }
+bench = ENCHANTER;
+openMenu();
+const craftsBeforeDisenchant = sent(13).length;
+moved(FIRE_DAGGER, 1, PLAYER, 0);
+run();
+const dis = disenchants();
+yes('16. a disenchant at an arcane enchanter tells the server the bench and the piece, and is no craft',
+    dis.length === 1 && JSON.stringify(JSON.parse(dis[0].contentJsonDump)) ===
+      JSON.stringify({ customPacketType: 'disenchant', workbench: ENCHANTER, baseId: FIRE_DAGGER }) &&
+    sent(13).length === craftsBeforeDisenchant);
+
+craft([[DAGGER, 1], [PETTY_GEM, 1]], DAGGER, 1);
+const enchantAfter = sent(13)[sent(13).length - 1];
+yes('17. the disenchanted piece is not an input of the next enchanting there, which still goes as a craft',
+    sent(13).length === craftsBeforeDisenchant + 1 && disenchants().length === 1 &&
+    JSON.stringify(enchantAfter.data.craftInputObjects.entries) ===
+      JSON.stringify([{ baseId: DAGGER, count: 1 }, { baseId: PETTY_GEM, count: 1 }]));
+closeMenu();
+
+bench = FORGE;
+openMenu();
+moved(FIRE_DAGGER, 1, PLAYER, 0);
+run();
+yes('18. an enchanted piece leaving the pack at any other bench is no disenchant', disenchants().length === 1);
 closeMenu();
 
 console.log('');

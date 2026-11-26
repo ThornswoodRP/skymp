@@ -54,6 +54,8 @@ export interface CreateActorMessageAdditionalProps {
     isHostedByOther?: boolean;
     isRaceMenuOpen?: boolean;
     learnedSpells?: number[];
+    // Thornswood #4579: the magic effects disenchanting taught, own character only.
+    learnedEnchantments?: number[];
     healRate?: number;
     healRateMult?: number;
     health?: number;
