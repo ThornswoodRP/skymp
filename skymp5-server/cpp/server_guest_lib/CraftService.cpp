@@ -522,14 +522,26 @@ bool CraftService::IsEnchanter(uint32_t workbenchId)
       (base.rec->GetType() != "FURN" && base.rec->GetType() != "ACTI")) {
     return false;
   }
+  // The arcane enchanter's furniture (CraftingEnchantingWorkbench) carries
+  // WICraftingEnchanting, the keyword the game's own enchanting perks and
+  // recipes test; isEnchanting on it is only the animation, which other
+  // furniture borrows. The Dragonborn staff enchanter shares the menu but
+  // cannot disenchant, and carries DLC2StaffEnchanter.
+  bool enchanting = false;
   for (uint32_t keywordId : base.rec->GetKeywordIds(cache)) {
-    const auto keyword = br.LookupById(keywordId).rec;
+    const auto keyword = br.LookupById(base.ToGlobalId(keywordId)).rec;
     const char* editorId = keyword ? keyword->GetEditorId(cache) : nullptr;
-    if (editorId && std::strcmp(editorId, "CraftingMagicEnchanter") == 0) {
-      return true;
+    if (!editorId) {
+      continue;
+    }
+    if (std::strcmp(editorId, "DLC2StaffEnchanter") == 0) {
+      return false;
+    }
+    if (std::strcmp(editorId, "WICraftingEnchanting") == 0) {
+      enchanting = true;
     }
   }
-  return false;
+  return enchanting;
 }
 
 bool CraftService::Disenchant(Networking::UserId userId, uint32_t workbenchId,

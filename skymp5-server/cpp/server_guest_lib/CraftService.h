@@ -47,7 +47,8 @@ public:
     (ActionListener::OnCustomPacket).
 
     Nothing is taken on the client's word. The person is at that bench and it
-    is an arcane enchanter (a bench keyword CraftingMagicEnchanter), the
+    is an arcane enchanter (its base carries WICraftingEnchanting, and not
+    the staff enchanter's DLC2StaffEnchanter), the
     piece is a weapon or armour whose own record carries an enchantment (the
     only kind Skyrim lets you disenchant; one you made yourself cannot be),
     and the pack holds a plain one, not worn and not made. Then, in this one
@@ -64,8 +65,8 @@ public:
   std::optional<std::vector<uint32_t>> DisenchantEffects(
     const espm::CombineBrowser& br, uint32_t baseId);
 
-  // public for DisenchantTest.cpp. Whether this bench's base carries the
-  // arcane enchanter's keyword.
+  // public for DisenchantTest.cpp. Whether this bench's base is an arcane
+  // enchanter: WICraftingEnchanting, and not DLC2StaffEnchanter.
   bool IsEnchanter(uint32_t workbenchId);
 
   // public for CraftTest.cpp: how many crafts are being worked or wait to be

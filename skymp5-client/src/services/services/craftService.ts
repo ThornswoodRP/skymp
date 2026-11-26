@@ -14,8 +14,12 @@ type FurnitureId = number;
 // THORNSWOOD PATCH. Every craft in Skyrim, the forge, the tanning rack, the
 // smelter, cooking, alchemy and enchanting, happens inside this one menu.
 const CRAFTING_MENU = 'Crafting Menu';
-// Thornswood #4579: the keyword an arcane enchanter's furniture carries.
-const ENCHANTER_KEYWORD = 'CraftingMagicEnchanter';
+// Thornswood #4579: an arcane enchanter's furniture (CraftingEnchantingWorkbench)
+// carries WICraftingEnchanting; isEnchanting on it is only the animation. The
+// Dragonborn staff enchanter shares the menu, cannot disenchant, and carries
+// DLC2StaffEnchanter.
+const ENCHANTER_KEYWORD = 'WICraftingEnchanting';
+const STAFF_ENCHANTER_KEYWORD = 'DLC2StaffEnchanter';
 
 export class CraftService extends ClientListener {
     constructor(private sp: Sp, private controller: CombinedController) {
@@ -293,6 +297,10 @@ export class CraftService extends ClientListener {
         const base = furnitureRef.getBaseObject();
         const keyword = this.sp.Keyword.getKeyword(ENCHANTER_KEYWORD);
         if (!base || !keyword || !base.hasKeyword(keyword)) {
+            return false;
+        }
+        const staff = this.sp.Keyword.getKeyword(STAFF_ENCHANTER_KEYWORD);
+        if (staff && base.hasKeyword(staff)) {
             return false;
         }
         if (!e.baseObj || e.numItems !== 1) {

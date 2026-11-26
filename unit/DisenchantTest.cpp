@@ -11,8 +11,9 @@
 // (MpChangeForm::learnedEnchantments), and the arrival names them back.
 //
 // The enchanter and the enchanted weapon are found in Skyrim.esm by what they
-// are (a bench carrying CraftingMagicEnchanter; a weapon whose own record
-// carries an enchantment), not by ids typed here.
+// are (the furniture CraftingEnchantingWorkbench, whose keywords the first
+// case measures; a weapon in Skyrim.esm's WEAP group whose own record carries
+// an enchantment), not by ids typed here.
 #include "TestUtils.hpp"
 #include <catch2/catch_all.hpp>
 
@@ -21,11 +22,14 @@
 #include "CustomPacketMessage.h"
 #include "MpChangeForms.h"
 #include "libespm/ENCH.h"
+#include "libespm/GroupUtils.h"
 #include "libespm/REFR.h"
 #include "libespm/WEAP.h"
 #include <cstring>
 #include <nlohmann/json.hpp>
+#include <optional>
 #include <set>
+#include <string>
 
 PartOne& GetPartOne();
 
@@ -42,7 +46,9 @@ MpChangeForm ThroughSave(const MpChangeForm& changeForm)
   return MpChangeForm::JsonToChangeForm(element);
 }
 
-// The first reference in the load order whose base is an arcane enchanter.
+// The first reference in the load order whose base is an arcane enchanter:
+// Skyrim.esm's CraftingEnchantingWorkbench, found by its editor id. That it
+// carries WICraftingEnchanting is what the first test case measures.
 uint32_t FindEnchanter(PartOne& p)
 {
   auto& br = p.GetEspm().GetBrowser();
@@ -54,44 +60,84 @@ uint32_t FindEnchanter(PartOne& p)
     if (!base.rec || base.rec->GetType() != "FURN") {
       continue;
     }
-    for (uint32_t keywordId : base.rec->GetKeywordIds(cache)) {
-      const auto keyword = br.LookupById(keywordId).rec;
-      const char* editorId = keyword ? keyword->GetEditorId(cache) : nullptr;
-      if (editorId && !std::strcmp(editorId, "CraftingMagicEnchanter")) {
-        return lookup.ToGlobalId(lookup.rec->GetId());
-      }
+    const char* editorId = base.rec->GetEditorId(cache);
+    if (editorId && !std::strcmp(editorId, "CraftingEnchantingWorkbench")) {
+      return lookup.ToGlobalId(lookup.rec->GetId());
     }
   }
   return 0;
 }
 
+// The editor ids of the keywords a reference's base carries.
+std::set<std::string> BaseKeywords(PartOne& p, uint32_t refId)
+{
+  auto& br = p.GetEspm().GetBrowser();
+  auto& cache = p.worldState.GetEspmCache();
+  auto& ref = p.worldState.GetFormAt<MpObjectReference>(refId);
+  std::set<std::string> res;
+  const auto base = br.LookupById(ref.GetBaseId());
+  for (uint32_t keywordId : base.rec->GetKeywordIds(cache)) {
+    const auto keyword = br.LookupById(base.ToGlobalId(keywordId)).rec;
+    const char* editorId = keyword ? keyword->GetEditorId(cache) : nullptr;
+    if (editorId) {
+      res.insert(editorId);
+    }
+  }
+  return res;
+}
+
 // The first weapon whose own record carries an enchantment, and that
-// enchantment's effects, read here straight off its ENCH record.
+// enchantment's effects, read here straight off its ENCH record. libespm
+// indexes no WEAP records by type, so this walks Skyrim.esm's WEAP group,
+// the one its iron dagger sits in.
 std::pair<uint32_t, std::set<uint32_t>> FindEnchantedWeapon(PartOne& p)
 {
   auto& br = p.GetEspm().GetBrowser();
   auto& cache = p.worldState.GetEspmCache();
-  for (const auto& lookup : br.GetDistinctRecordsByType("WEAP")) {
+  std::optional<espm::LookupResult> home;
+  for (const auto& lookup : br.LookupByIdAll(kIronDagger)) {
+    if (lookup.fileIdx == 0 && !home) {
+      home.emplace(lookup);
+    }
+  }
+  REQUIRE(home);
+  REQUIRE(home->rec);
+  REQUIRE(home->rec->GetType() == "WEAP");
+  const auto& groups = br.GetParentGroupsEnsured(home->rec);
+  REQUIRE(!groups.empty());
+
+  std::pair<uint32_t, std::set<uint32_t>> found{ 0, {} };
+  espm::ForEachChildRecord(br, groups.front(), [&](const espm::RecordHeader* rec) {
+    if (rec->GetType() != "WEAP") {
+      return false;
+    }
+    const uint32_t id = home->ToGlobalId(rec->GetId());
+    const auto lookup = br.LookupById(id);
+    if (!lookup.rec || lookup.rec->GetType() != "WEAP") {
+      return false;
+    }
     const auto local = reinterpret_cast<const espm::WEAP*>(lookup.rec)
                          ->GetData(cache)
                          .enchantmentFormId;
     if (!local) {
-      continue;
+      return false;
     }
     const auto ench = br.LookupById(lookup.ToGlobalId(local));
     if (!ench.rec || ench.rec->GetType() != "ENCH") {
-      continue;
+      return false;
     }
     std::set<uint32_t> effects;
     for (const auto& effect :
          reinterpret_cast<const espm::ENCH*>(ench.rec)->GetData(cache).effects) {
       effects.insert(ench.ToGlobalId(effect.effectId));
     }
-    if (!effects.empty()) {
-      return { lookup.ToGlobalId(lookup.rec->GetId()), effects };
+    if (effects.empty()) {
+      return false;
     }
-  }
-  return { 0, {} };
+    found = { id, effects };
+    return true;
+  });
+  return found;
 }
 
 void SendDisenchant(PartOne& p, uint32_t workbench, uint32_t baseId)
@@ -122,7 +168,20 @@ TEST_CASE("A weapon record's own enchantment is read, and a plain one has "
   REQUIRE(std::set<uint32_t>(read->begin(), read->end()) == effects);
 
   REQUIRE(!craftService->DisenchantEffects(br, kIronDagger));
-  REQUIRE(craftService->IsEnchanter(FindEnchanter(p)));
+
+  // What Skyrim.esm's arcane enchanter really carries: WICraftingEnchanting
+  // (with isEnchanting, its animation), and no CraftingMagicEnchanter, a
+  // keyword no plugin has, which this used to test for and so refused every
+  // real disenchant.
+  const uint32_t enchanter = FindEnchanter(p);
+  REQUIRE(enchanter);
+  const auto keywords = BaseKeywords(p, enchanter);
+  const std::vector<std::string> carried(keywords.begin(), keywords.end());
+  CAPTURE(carried);
+  CHECK(keywords.count("WICraftingEnchanting") == 1);
+  CHECK(keywords.count("CraftingMagicEnchanter") == 0);
+  CHECK(keywords.count("DLC2StaffEnchanter") == 0);
+  REQUIRE(craftService->IsEnchanter(enchanter));
   REQUIRE(!craftService->IsEnchanter(kForge));
 }
 
