@@ -1,7 +1,8 @@
 'use strict';
-// Thornswood: the browser is shown at start, never focused at start, and from
-// the moment the game's data has loaded the Loading Menu reaches the page and
-// the page's focus menu is registered (#6215 replaced CursorFocus with it).
+// Thornswood: the browser is shown at start but not focused before the game's
+// data has loaded; from that moment the Loading Menu reaches the page, the
+// page's focus menu is registered (#6215 replaced CursorFocus with it), and a
+// page shown at start takes the focus (#6200).
 //
 // 31 Oct 2026, dev 20261031-143003-dev: [Browser] ShowAtStart focused the page
 // at 14:59:44, fifteen seconds before the game's data loaded and twenty-five
@@ -47,6 +48,22 @@ check('NirnLab start does not focus it', !!ctor && !/wantedIsFocused\s*=\s*true/
 
 const watch = body(tilted, 'void BrowserApiTilted::WatchMenus()');
 check('WatchMenus adds a sink of its own to the UI', !!watch && /AddEventSink\(&g_menuSink\)/.test(code(watch)));
+
+// #6200, 16 to 25 Nov 2026: the game's Cursor Menu came up with the main menu
+// under the page shown at start, and the plugin focused the page 1.4 to 22
+// seconds later; in 17 of 54 starts the game's cursor had moved where nobody
+// could see it, in 10 to an edge. So the page shown at start takes the focus
+// in WatchMenus, after the focus menu is registered so the game keeps its
+// cursor up for it, and only when nothing has focused or hidden it already.
+check('ShowAtStart notes that it showed the page', !!show && /g_shownAtStart\s*=\s*true/.test(code(show)));
+const w6200 = watch ? code(watch) : '';
+const reg = w6200.indexOf('g_focusMenuRegistered = true');
+const take = w6200.search(/if \(g_shownAtStart && IsVisible\(\) && !focus\)\s*\{[^}]*SetFocusedImpl\(true\);[^}]*\}/);
+check('WatchMenus focuses a page shown at start that is still shown and not focused', take >= 0);
+check('  after the focus menu is registered, so the game keeps its cursor up for it', reg >= 0 && take > reg);
+check('  and through SetFocusedImpl, which says so in the log and queues the focus menu',
+      /QueueFocusMenu\(newFocus\)/.test(code(body(tilted, 'void SetFocusedImpl(bool newFocus)') || '')));
+check('it is the only focus WatchMenus or ShowAtStart takes', (w6200.match(/SetFocusedImpl\(/g) || []).length === 1);
 const sink = body(tilted, 'class MenuSink');
 // It may log where the cursor is when the Cursor Menu opens or closes
 // (#6200), and nothing more: no show, hide or focus from its events.
