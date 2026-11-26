@@ -156,6 +156,16 @@ public:
     } else if (event->menuName == RE::CursorMenu::MENU_NAME) {
       LogCursor(event->opening ? "Cursor Menu opening"
                                : "Cursor Menu closing");
+    } else if (event->menuName == RE::MainMenu::MENU_NAME ||
+               event->menuName == RE::JournalMenu::MENU_NAME ||
+               event->menuName == RE::FaderMenu::MENU_NAME) {
+      // Thornswood #6885: after Quit to Main Menu from the Esc menu the
+      // plugins' 'update' stops, and with it every line they write, so the
+      // platform says itself which of the menus around a quit came and went.
+      auto ui = RE::UI::GetSingleton();
+      spdlog::info("{} {}, the game's pause count {}", event->menuName.c_str(),
+                   event->opening ? "opened" : "closed",
+                   ui ? static_cast<int>(ui->numPausesGame) : -1);
     }
     return RE::BSEventNotifyControl::kContinue;
   }

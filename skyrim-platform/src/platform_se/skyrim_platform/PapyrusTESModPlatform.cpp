@@ -990,6 +990,52 @@ public:
   }
 };
 
+// Thornswood #6885. What the game and its Papyrus VM were doing while the
+// update call waited, read only, for the wait's log line: whether the VM's
+// clocks still move (SkyrimVM::Update still runs), whether the VM is frozen
+// or overstressed and how many stacks it holds, frozen, running or waiting
+// on a latent return, the game's pause count and the menus around a quit,
+// and Main's flags for a game being reset. After a Quit to Main Menu from the
+// Esc menu on 25 Nov 2026 a call waited for good and nothing said why.
+static std::string VmWhileWaiting()
+{
+  std::stringstream ss;
+  auto skyrimVm = RE::SkyrimVM::GetSingleton();
+  if (!skyrimVm) {
+    ss << "no SkyrimVM";
+  } else {
+    ss << "VM time " << skyrimVm->currentVMTime << " menu mode time "
+       << skyrimVm->currentVMMenuModeTime << " frozen " << skyrimVm->isFrozen;
+    auto impl = static_cast<RE::BSScript::Internal::VirtualMachine*>(
+      skyrimVm->impl.get());
+    if (impl) {
+      ss << " freeze state "
+         << static_cast<uint32_t>(impl->freezeState.underlying())
+         << " frozen stacks " << impl->frozenStacksCount << " running stacks "
+         << impl->allRunningStacks.size() << " latent "
+         << impl->waitingLatentReturns.size() << " waiting messages "
+         << impl->uiWaitingFunctionMessages << " overstressed "
+         << impl->overstressed << " initialized " << impl->initialized;
+    }
+  }
+  if (auto ui = RE::UI::GetSingleton()) {
+    ss << "; pause count " << ui->numPausesGame << " menus";
+    for (auto name : { RE::MainMenu::MENU_NAME, RE::LoadingMenu::MENU_NAME,
+                       RE::JournalMenu::MENU_NAME, RE::FaderMenu::MENU_NAME,
+                       RE::CursorMenu::MENU_NAME }) {
+      if (ui->IsMenuOpen(name)) {
+        ss << " [" << name << "]";
+      }
+    }
+  }
+  if (auto main = RE::Main::GetSingleton()) {
+    ss << "; game active " << main->gameActive << " reset " << main->resetGame
+       << " full reset " << main->fullReset << " quit " << main->quitGame
+       << " freeze time " << main->freezeTime;
+  }
+  return ss.str();
+}
+
 void TESModPlatform::Update()
 {
   if (papyrusSourcesMissing) {
@@ -1000,8 +1046,8 @@ void TESModPlatform::Update()
     if (waited >= 0) {
       spdlog::warn("TESModPlatform: the Papyrus update call sent {} ms ago "
                    "has not run yet, so no 'update' event comes until it "
-                   "does",
-                   waited);
+                   "does; {}",
+                   waited, VmWhileWaiting());
     }
     return;
   }
