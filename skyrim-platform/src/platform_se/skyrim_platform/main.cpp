@@ -15,6 +15,7 @@
 #include "Hooks.h"
 #include "IPC.h"
 #include "InputConverter.h"
+#include "LoadTrace.h"
 #include "PageHeldKeys.h"
 #include "PapyrusTESModPlatform.h"
 #include "Settings.h"
@@ -164,6 +165,8 @@ DLLEXPORT bool SKSEAPI SKSEPlugin_Load_Impl(const SKSE::LoadInterface* skse)
   logger::info("Loading plugin.");
 
   SKSE::Init(skse);
+  // Thornswood #6200: measures the start up to the data load (LoadTrace.h).
+  LoadTrace::Start();
   const auto audioRoute = GameAudioRoute::ApplyAtStartup();
   if (audioRoute == GameAudioRoute::Result::Applied) {
     logger::info("Applied the launcher's Skyrim audio output preference.");
@@ -188,6 +191,7 @@ DLLEXPORT bool SKSEAPI SKSEPlugin_Load_Impl(const SKSE::LoadInterface* skse)
 
   SKSE::GetMessagingInterface()->RegisterListener(
     [](SKSE::MessagingInterface::Message* a_msg) {
+      LoadTrace::Mark(a_msg->type);
       EventHandler::HandleSKSEMessage(a_msg);
       BrowserApiNirnLab::GetInstance().HandleSkseMessage(a_msg);
     });
