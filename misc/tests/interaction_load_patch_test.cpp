@@ -123,8 +123,9 @@ Outcome RunWindow(bool patched, std::uint32_t count, void* queued)
   code.Put(stubs + 0x10, P::Stub(reinterpret_cast<std::uintptr_t>(&FakeCancel)));
   code.Put(stubs + 0x20, P::Stub(reinterpret_cast<std::uintptr_t>(&P::EndInteractionLoad)));
   void* managerPointer = &manager;
-  code.Put(cell, P::Bytes(reinterpret_cast<std::uint8_t*>(&managerPointer),
-                          reinterpret_cast<std::uint8_t*>(&managerPointer) + sizeof(managerPointer)));
+  P::Bytes managerCell(sizeof(managerPointer));
+  std::memcpy(managerCell.data(), &managerPointer, managerCell.size());
+  code.Put(cell, managerCell);
   code.PutRelative(window + P::kClearCall + 1, code.At(stubs), window + P::kClearCall + 5);
   code.PutRelative(window + P::kManagerLoad + 3, code.At(cell), window + P::kManagerLoad + 7);
   code.PutRelative(window + P::kCancelCall + 1, code.At(stubs + 0x10), window + P::kCancelCall + 5);
