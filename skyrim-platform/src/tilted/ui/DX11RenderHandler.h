@@ -10,6 +10,7 @@
 #include <functional>
 #include <map>
 #include <mutex>
+#include <vector>
 #include <wrl.h>
 
 struct IDXGISwapChain;
@@ -58,12 +59,16 @@ struct DX11RenderHandler : MyRenderHandler
   void OnPaint(CefRefPtr<CefBrowser> browser, PaintElementType type,
                const RectList& dirtyRects, const void* buffer, int width,
                int height) override;
+  void OnPopupShow(CefRefPtr<CefBrowser> browser, bool show) override;
+  void OnPopupSize(CefRefPtr<CefBrowser> browser,
+                   const CefRect& rect) override;
 
   IMPLEMENT_REFCOUNTING(DX11RenderHandler);
 
 protected:
   void GetRenderTargetSize();
   void CreateRenderTexture();
+  void Upload(const uint8_t* view);
 
 private:
   uint32_t m_width{ 0 };
@@ -76,6 +81,14 @@ private:
   std::mutex m_createLock;
   bool isCreateLock = false;
   Renderer* m_pRenderer;
+
+  // Thornswood #6882: the page's open popup (a select's list), which CEF
+  // paints apart from the page, and the page's last picture while it is
+  // open, to draw the popup over. Touched on CEF's UI thread only.
+  bool m_popupShown{ false };
+  CefRect m_popupRect;
+  std::vector<uint8_t> m_popup;
+  std::vector<uint8_t> m_view;
 
   Microsoft::WRL::ComPtr<ID3D11Device> m_pDevice;
   Microsoft::WRL::ComPtr<ID3D11DeviceContext> m_pContext;

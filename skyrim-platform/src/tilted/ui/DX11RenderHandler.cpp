@@ -7,8 +7,10 @@
 #include <DirectXTK/SimpleMath.h>
 #include <DirectXTK/WICTextureLoader.h>
 #include <OverlayClient.h>
+#include <algorithm>
 #include <cmrc/cmrc.hpp>
 #include <codecvt>
+#include <cstring>
 #include <filesystem>
 #include <functional>
 #include <iostream>
@@ -217,47 +219,138 @@ void DX11RenderHandler::GetViewRect(CefRefPtr<CefBrowser> browser,
   rect = CefRect(0, 0, m_width, m_height);
 }
 
+/*
+  Thornswood #6882. A popup, which is how Chromium shows the list of a
+  select: the market stall's item and price lists, the drop box's pack, the
+  board's destinations, the journal's friends and every other one.
+
+  Drawn offscreen, the page comes to OnPaint as PET_VIEW and an open popup
+  comes apart from it, as PET_POPUP, at the place OnPopupSize gave. Only
+  PET_VIEW used to be drawn, so a select took the click and opened its list,
+  and the list was never put on the screen: on Main the stall's item and
+  currency lists "did not open" while its price and count boxes worked.
+
+  So while a popup is open the page's last picture is kept, and every paint
+  of either puts the page in the texture with the popup over it, cut to the
+  page. CEF already sends the mouse and the keys over the popup's place to
+  the popup. Opening and closing one asks CEF for the page again
+  (Invalidate), so the picture under the popup is the page as it is, and the
+  page as it is goes back when the list closes.
+*/
+void DX11RenderHandler::OnPopupShow(CefRefPtr<CefBrowser> browser, bool show)
+{
+  {
+    std::unique_lock<std::mutex> _(m_textureLock);
+    m_popupShown = show;
+    m_popup.clear();
+    m_view.clear();
+    if (!show)
+      m_popupRect = CefRect();
+  }
+  // Outside the lock: OnPaint takes it, and nothing here needs to hold it
+  // while CEF is asked for the page.
+  if (browser)
+    browser->GetHost()->Invalidate(PET_VIEW);
+}
+
+void DX11RenderHandler::OnPopupSize(CefRefPtr<CefBrowser> browser,
+                                    const CefRect& rect)
+{
+  std::unique_lock<std::mutex> _(m_textureLock);
+  m_popupRect = rect;
+  m_popup.clear();
+}
+
 void DX11RenderHandler::OnPaint(CefRefPtr<CefBrowser> browser,
                                 PaintElementType type,
                                 const RectList& dirtyRects, const void* buffer,
                                 int width, int height)
 {
+  const auto bytes = static_cast<const uint8_t*>(buffer);
+
+  if (type == PET_POPUP) {
+    bool askForPage = false;
+    {
+      std::unique_lock<std::mutex> _(m_textureLock);
+      if (!m_popupShown || width != m_popupRect.width ||
+          height != m_popupRect.height || width <= 0 || height <= 0)
+        return;
+      m_popup.assign(bytes, bytes + static_cast<size_t>(width) * height * 4);
+      if (m_view.size() == static_cast<size_t>(m_width) * m_height * 4)
+        Upload(m_view.data());
+      else
+        askForPage = true; // the page is drawn with it when it comes
+    }
+    if (askForPage && browser)
+      browser->GetHost()->Invalidate(PET_VIEW);
+    return;
+  }
+
+  std::unique_lock<std::mutex> _(m_textureLock);
   if (type == PET_VIEW && m_width == width && m_height == height) {
-    std::unique_lock<std::mutex> _(m_textureLock);
+    if (m_popupShown)
+      m_view.assign(bytes, bytes + static_cast<size_t>(width) * height * 4);
+    Upload(bytes);
+  }
+}
 
-    if (!m_pTexture) {
-      CreateRenderTexture();
+// The page's picture into the texture, and an open popup over it. Called with
+// m_textureLock held; view is m_width by m_height, four bytes a pixel.
+void DX11RenderHandler::Upload(const uint8_t* view)
+{
+  if (!m_pTexture) {
+    CreateRenderTexture();
+  }
+
+  // Under MO2 for some reason, OnPaint called before context initialization
+  if (!m_pContext || !m_pTexture) {
+    return;
+  }
+
+  D3D11_MAPPED_SUBRESOURCE mappedResource;
+  const auto result = m_pContext->Map(
+    m_pTexture.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mappedResource);
+
+  if (FAILED(result)) {
+    // We got no mapping, let's drop the context and reset the texture so
+    // that we attempt to create a new one during the next frame
+    m_pContext.Reset();
+    m_pTexture.Reset();
+    m_width = m_height = 0;
+    return;
+  }
+
+  const auto pDest = static_cast<uint8_t*>(mappedResource.pData);
+  const size_t row = static_cast<size_t>(m_width) * 4;
+  const size_t pitch = mappedResource.RowPitch;
+  for (uint32_t y = 0; y < m_height; ++y)
+    std::memcpy(pDest + y * pitch, view + y * row, row);
+
+  const CefRect& r = m_popupRect;
+  if (m_popupShown &&
+      m_popup.size() == static_cast<size_t>(r.width) * r.height * 4) {
+    const int x0 = (std::max)(r.x, 0);
+    const int y0 = (std::max)(r.y, 0);
+    const int x1 = (std::min)(r.x + r.width, static_cast<int>(m_width));
+    const int y1 = (std::min)(r.y + r.height, static_cast<int>(m_height));
+    for (int y = y0; y < y1 && x0 < x1; ++y) {
+      std::memcpy(pDest + y * pitch + static_cast<size_t>(x0) * 4,
+                  m_popup.data() +
+                    (static_cast<size_t>(y - r.y) * r.width + (x0 - r.x)) * 4,
+                  static_cast<size_t>(x1 - x0) * 4);
     }
+  }
 
-    // Under MO2 for some reason, OnPaint called before context initialization
-    if (!m_pContext) {
-      return;
-    }
+  m_pContext->Unmap(m_pTexture.Get(), 0);
 
-    D3D11_MAPPED_SUBRESOURCE mappedResource;
-    const auto result = m_pContext->Map(
-      m_pTexture.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mappedResource);
-
-    if (SUCCEEDED(result)) {
-      const auto pDest = static_cast<uint8_t*>(mappedResource.pData);
-      std::memcpy(pDest, buffer, width * height * 4);
-      m_pContext->Unmap(m_pTexture.Get(), 0);
-      // Thornswood #3129: when the page first has a picture to draw, so the
-      // log says how long the game's own menu picture was the only one up.
-      static bool firstPictureTold = false;
-      if (!firstPictureTold) {
-        firstPictureTold = true;
-        spdlog::info("browser (tilted): the page drew its first picture "
-                     "({}x{}), shown: {}",
-                     width, height, Visible() ? "yes" : "no");
-      }
-    } else {
-      // We got no mapping, let's drop the context and reset the texture so
-      // that we attempt to create a new one during the next frame
-      m_pContext.Reset();
-      m_pTexture.Reset();
-      m_width = m_height = 0;
-    }
+  // Thornswood #3129: when the page first has a picture to draw, so the
+  // log says how long the game's own menu picture was the only one up.
+  static bool firstPictureTold = false;
+  if (!firstPictureTold) {
+    firstPictureTold = true;
+    spdlog::info("browser (tilted): the page drew its first picture "
+                 "({}x{}), shown: {}",
+                 m_width, m_height, Visible() ? "yes" : "no");
   }
 }
 
