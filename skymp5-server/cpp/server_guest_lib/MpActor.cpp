@@ -744,6 +744,18 @@ void MpActor::AddSpell(const uint32_t spellId)
   });
 }
 
+void MpActor::LearnEnchantments(const std::vector<uint32_t>& effectIds)
+{
+  EditChangeForm([&](MpChangeForm& changeForm) {
+    changeForm.learnedEnchantments.insert(effectIds.begin(), effectIds.end());
+  });
+}
+
+std::set<uint32_t> MpActor::GetLearnedEnchantments() const
+{
+  return ChangeForm().learnedEnchantments;
+}
+
 void MpActor::RemoveSpell(const uint32_t spellId)
 {
   EditChangeForm([&](MpChangeForm& changeForm) {
@@ -1071,6 +1083,13 @@ void MpActor::VisitProperties(CreateActorMessage& message,
   }
 
   message.props.learnedSpells = changeForm.learnedSpells.GetLearnedSpells();
+  // THORNSWOOD PATCH (Thornswood #4579). What disenchanting taught, which the
+  // client's fresh game knows nothing of. Left out when there is none.
+  if (!changeForm.learnedEnchantments.empty()) {
+    message.props.learnedEnchantments =
+      std::vector<uint32_t>(changeForm.learnedEnchantments.begin(),
+                            changeForm.learnedEnchantments.end());
+  }
 
   if (!changeForm.templateChain.empty()) {
     std::vector<uint32_t> templateChain;

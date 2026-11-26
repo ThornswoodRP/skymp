@@ -38,7 +38,15 @@
 //  13. a craft of anything else sends no enchantment;
 //  14. craftMade for an enchanted piece builds the enchantment under the
 //      server's id (ensureMadeEnchantment) and puts the piece back with it;
-//  15. an enchantment that cannot be built leaves the piece out.
+//  15. an enchantment that cannot be built leaves the piece out;
+//  16. a disenchant at an arcane enchanter (a piece whose own record is
+//      enchanted leaves the pack, and nothing comes back) tells the server
+//      the bench and the piece, and is no craft (Thornswood #4579);
+//  17. the disenchanted piece is not an input of the next enchanting there;
+//  18. the same piece leaving at any other bench is no disenchant.
+//
+// Against the code before #4579, 16 and 17 fail: nothing is sent, and the
+// piece goes into the next craft's inputs.
 //
 // Against the code before the change (CRAFT=<that copy>), 2, 4, 6 and 7 fail:
 // the item stays in the pack, and nothing is put back or told to the server.
@@ -59,13 +67,9 @@ function yes(what, cond) {
 }
 
 function stripTypes(src) {
-  const mod = require('module');
-  if (typeof mod.stripTypeScriptTypes === 'function') {
-    const warn = process.emitWarning;
-    process.emitWarning = function () { };
-    try { return mod.stripTypeScriptTypes(src, { mode: 'transform' }); }
-    finally { process.emitWarning = warn; }
-  }
+  // The typescript package first, when it is installed: craftService.ts has
+  // constructor parameter properties, which need a transform, and Node 26
+  // keeps only stripTypeScriptTypes' 'strip' mode, which refuses them.
   let ts = null;
   try { ts = require('typescript'); } catch (e) { ts = null; }
   if (ts && typeof ts.transpileModule === 'function') {
@@ -73,7 +77,14 @@ function stripTypes(src) {
       compilerOptions: { target: ts.ScriptTarget.ES2019, module: ts.ModuleKind.ESNext },
     }).outputText;
   }
-  throw new Error('needs Node 22.13 or newer, or the typescript package (yarn install here)');
+  const mod = require('module');
+  if (typeof mod.stripTypeScriptTypes === 'function') {
+    const warn = process.emitWarning;
+    process.emitWarning = function () { };
+    try { return mod.stripTypeScriptTypes(src, { mode: 'transform' }); }
+    finally { process.emitWarning = warn; }
+  }
+  throw new Error('needs the typescript package (yarn install here), or Node 22.13 to 25 for stripTypeScriptTypes\' transform mode');
 }
 
 function load(file, stubs) {
@@ -96,6 +107,18 @@ function load(file, stubs) {
 // Platform hands a containerChanged to its handlers after the change.
 const PLAYER = 0x14;
 const FORGE = 0x1ad6e;
+// Thornswood #4579. An arcane enchanter, and a dagger whose own record
+// carries an enchantment (the only kind Skyrim lets you disenchant). Each
+// bench's base carries the keywords Skyrim.esm and Dragonborn.esm give it:
+// the arcane enchanter WICraftingEnchanting and isEnchanting (the animation),
+// the staff enchanter DLC2StaffEnchanter too, and LOOKALIKE a bench that only
+// borrows the enchanting animation, as some furniture does.
+const ENCHANTER = 0xbad0c, FIRE_DAGGER = 0x1a9a0, STAFF_ENCHANTER = 0x3a2b7, LOOKALIKE = 0x3a2b8;
+const BENCH_KEYWORDS = {};
+BENCH_KEYWORDS[ENCHANTER] = ['WICraftingEnchanting', 'isEnchanting'];
+BENCH_KEYWORDS[STAFF_ENCHANTER] = ['WICraftingEnchanting', 'DLC2StaffEnchanter', 'isEnchanting'];
+BENCH_KEYWORDS[LOOKALIKE] = ['isEnchanting'];
+let bench = FORGE;
 const queue = [];
 const handlers = {};
 const emitted = [];
@@ -105,7 +128,13 @@ const calls = [];
 
 function fire(name, e) { (handlers[name] || []).forEach(function (h) { h(e); }); }
 function run() { while (queue.length) { const ev = queue.shift(); fire('containerChanged', ev); } }
-function form(id) { return { getFormID: function () { return id; }, getName: function () { return 'Iron Dagger'; } }; }
+function form(id) {
+  return {
+    getFormID: function () { return id; }, getName: function () { return 'Iron Dagger'; },
+    // Thornswood #4579: a bench's base, and whether it is an arcane enchanter.
+    getBaseObject: function () { return { hasKeyword: function (k) { return (BENCH_KEYWORDS[id] || []).indexOf(k.edid) !== -1; } }; },
+  };
+}
 function moved(baseId, count, from, to) {
   queue.push({
     oldContainer: from ? form(from) : null, newContainer: to ? form(to) : null,
@@ -113,7 +142,7 @@ function moved(baseId, count, from, to) {
   });
 }
 const player = {
-  getFurnitureReference: function () { return menuOpen ? form(FORGE) : null; },
+  getFurnitureReference: function () { return menuOpen ? form(bench) : null; },
   removeItem: function (f, count, silent) { calls.push(['removeItem', f.getFormID(), count, silent]); moved(f.getFormID(), count, PLAYER, 0); },
   addItem: function (f, count, silent) { calls.push(['addItem', f.getFormID(), count, silent]); moved(f.getFormID(), count, 0, PLAYER); },
 };
@@ -121,6 +150,9 @@ const sp = {
   Game: { getPlayer: function () { return player; }, getFormEx: function (id) { return form(id); } },
   Ui: { isMenuOpen: function (name) { return name === 'Crafting Menu' && menuOpen; } },
   Enchantment: { from: function (f) { return f ? { enchantmentId: f.getFormID() } : null; } },
+  Keyword: { getKeyword: function (edid) { return { edid: edid }; } },
+  Weapon: { from: function (f) { return f ? { getEnchantment: function () { return f.getFormID() === FIRE_DAGGER ? {} : null; } } : null; } },
+  Armor: { from: function () { return null; } },
   TESModPlatform: {
     addItemEx: function (refr, f, count, health, ench, maxCharge) {
       calls.push(['addItemEx', f.getFormID(), count, ench ? ench.enchantmentId : 0, maxCharge]);
@@ -271,6 +303,49 @@ const callsBeforeBadEnchant = calls.length;
 serverSays({ customPacketType: 'craftMade', baseId: ENCHANTED_PIECE, count: 1,
   madeEnchantment: ENCHANTMENT, enchantmentId: UNBUILDABLE, maxCharge: 250 });
 yes('15. an enchantment that cannot be built leaves the piece out', calls.length === callsBeforeBadEnchant);
+closeMenu();
+
+// Thornswood #4579. A disenchant: one piece whose own record is enchanted
+// leaves the pack at an arcane enchanter, and nothing comes back.
+function disenchants() { return sent(1).filter(function (m) { return JSON.parse(m.contentJsonDump).customPacketType === 'disenchant'; }); }
+bench = ENCHANTER;
+openMenu();
+const craftsBeforeDisenchant = sent(13).length;
+moved(FIRE_DAGGER, 1, PLAYER, 0);
+run();
+const dis = disenchants();
+yes('16. a disenchant at an arcane enchanter tells the server the bench and the piece, and is no craft',
+    dis.length === 1 && JSON.stringify(JSON.parse(dis[0].contentJsonDump)) ===
+      JSON.stringify({ customPacketType: 'disenchant', workbench: ENCHANTER, baseId: FIRE_DAGGER }) &&
+    sent(13).length === craftsBeforeDisenchant);
+
+craft([[DAGGER, 1], [PETTY_GEM, 1]], DAGGER, 1);
+const enchantAfter = sent(13)[sent(13).length - 1];
+yes('17. the disenchanted piece is not an input of the next enchanting there, which still goes as a craft',
+    sent(13).length === craftsBeforeDisenchant + 1 && disenchants().length === 1 &&
+    JSON.stringify(enchantAfter.data.craftInputObjects.entries) ===
+      JSON.stringify([{ baseId: DAGGER, count: 1 }, { baseId: PETTY_GEM, count: 1 }]));
+closeMenu();
+
+bench = FORGE;
+openMenu();
+moved(FIRE_DAGGER, 1, PLAYER, 0);
+run();
+yes('18. an enchanted piece leaving the pack at any other bench is no disenchant', disenchants().length === 1);
+closeMenu();
+
+bench = STAFF_ENCHANTER;
+openMenu();
+moved(FIRE_DAGGER, 1, PLAYER, 0);
+run();
+yes('19. nor at the staff enchanter, which cannot disenchant', disenchants().length === 1);
+closeMenu();
+
+bench = LOOKALIKE;
+openMenu();
+moved(FIRE_DAGGER, 1, PLAYER, 0);
+run();
+yes('20. nor at a bench that only borrows the enchanting animation', disenchants().length === 1);
 closeMenu();
 
 console.log('');

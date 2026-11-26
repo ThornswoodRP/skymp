@@ -28,6 +28,7 @@ import { applyEquipment, isBadMenuShown, syncSpellEquipment, SpellType } from '.
 import { Inventory, acceptPreloadedInventoryBase, applyInventory, getDiff, getInventory, inventoryEntriesEqual, resetInventoryBase } from '../../sync/inventory';
 import { Movement, Transform } from '../../sync/movement';
 import { learnSpells, removeAllSpells } from '../../sync/spell';
+import { markEnchantmentsKnown } from '../../sync/enchantments';
 import { ModelApplyUtils } from '../../view/modelApplyUtils';
 import { FormModel, WorldModel } from '../../view/model';
 import { LoadGameService } from './loadGameService';
@@ -854,6 +855,19 @@ export class RemoteServer extends ClientListener {
             );
           }
         });
+      });
+    }
+
+    // THORNSWOOD PATCH (Thornswood #4579). What disenchanting taught this
+    // character, kept by the server, marked known in this fresh game.
+    if (msg.isMe && msg.props && msg.props.learnedEnchantments) {
+      const learnedEnchantments = msg.props.learnedEnchantments;
+      once('update', () => {
+        if (!ownerIsCurrent()) { return; }
+        const marked = markEnchantmentsKnown(learnedEnchantments);
+        logTrace(this,
+          `player learnedEnchantments:`, JSON.stringify(learnedEnchantments), `marked`, marked,
+        );
       });
     }
 

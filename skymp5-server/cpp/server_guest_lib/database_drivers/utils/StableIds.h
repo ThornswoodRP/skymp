@@ -31,6 +31,7 @@
 //   equipmentDump          inv.entries[] (as above), leftSpell, rightSpell,
 //                          voiceSpell, instantSpell
 //   learnedSpells[]
+//   learnedEnchantments[]  (Thornswood #4579)
 //   appearanceDump         raceId, headpartIds[], headTextureSetId
 //   effects[]              effectId
 //   pickupExtra            enchantmentId, poisonId, made and

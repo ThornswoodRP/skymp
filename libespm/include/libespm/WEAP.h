@@ -49,6 +49,10 @@ public:
   {
     const WeapData* weapData = nullptr;
     const DNAM* weapDNAM = nullptr;
+    // THORNSWOOD PATCH (Thornswood #4579). The enchantment the record itself
+    // carries (EITM), as ARMO::Data has it: a form id in this file's
+    // numbering, 0 for none.
+    uint32_t enchantmentFormId = 0;
   };
 
   Data GetData(CompressedFieldsCache& compressedFieldsCache) const noexcept;

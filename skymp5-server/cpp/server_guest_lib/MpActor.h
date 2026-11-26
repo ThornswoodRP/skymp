@@ -319,6 +319,12 @@ public:
   bool RenameEquipment(const Equipment& renamed);
 
   void AddSpell(uint32_t spellId);
+
+  // THORNSWOOD PATCH (Thornswood #4579). The magic effects disenchanting
+  // taught this character, kept on its change form so they outlive the
+  // session (MpChangeForm::learnedEnchantments).
+  void LearnEnchantments(const std::vector<uint32_t>& effectIds);
+  std::set<uint32_t> GetLearnedEnchantments() const;
   void RemoveSpell(uint32_t spellId);
 
   void SetLastAnimEvent(const std::optional<AnimationData>& animationData);

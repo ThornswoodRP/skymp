@@ -72,6 +72,12 @@ public:
   Inventory inv;
   LearnedSpells learnedSpells;
 
+  // THORNSWOOD PATCH (Thornswood #4579). The magic effects a disenchant at an
+  // arcane enchanter taught this character, by global form id. Skyrim keeps
+  // what was learned only in the client's own game, which a session starts
+  // fresh, so it is kept here and handed back on arrival.
+  std::set<uint32_t> learnedEnchantments;
+
   bool isHarvested = false;
   bool isOpen = false;
   bool baseContainerAdded = false;
@@ -155,7 +161,7 @@ public:
       magickaRespawnPercentage, staminaRespawnPercentage, spawnPoint,
       dynamicFields, spawnDelay, learnedSpells, templateChain, lastAnimation,
       setNodeTextureSet, setNodeScale, displayName,
-      PickupExtraToJson(pickupExtra), deleteDatetime);
+      PickupExtraToJson(pickupExtra), deleteDatetime, learnedEnchantments);
   }
 
   static nlohmann::json ToJson(const MpChangeFormREFR& changeForm);

@@ -9,9 +9,13 @@
 #include "gamemode_events/CraftEvent.h"
 #include "gamemode_events/CraftWorkEvent.h"
 #include "libespm/Convert.h"
+#include "libespm/ARMO.h"
+#include "libespm/ENCH.h"
 #include "libespm/INGR.h"
+#include "libespm/WEAP.h"
 #include <algorithm>
 #include <cmath>
+#include <cstring>
 #include <map>
 #include <nlohmann/json.hpp>
 #include <set>
@@ -459,6 +463,128 @@ size_t CraftService::GetWorkCount(uint32_t actorId) const
 {
   auto it = work.find(actorId);
   return it == work.end() ? 0 : it->second.size();
+}
+
+std::optional<std::vector<uint32_t>> CraftService::DisenchantEffects(
+  const espm::CombineBrowser& br, uint32_t baseId)
+{
+  const auto piece = br.LookupById(baseId);
+  if (!piece.rec) {
+    return std::nullopt;
+  }
+  uint32_t localEnchantment = 0;
+  if (piece.rec->GetType() == "WEAP") {
+    localEnchantment = reinterpret_cast<const espm::WEAP*>(piece.rec)
+                         ->GetData(cache)
+                         .enchantmentFormId;
+  } else if (piece.rec->GetType() == "ARMO") {
+    localEnchantment = reinterpret_cast<const espm::ARMO*>(piece.rec)
+                         ->GetData(cache)
+                         .enchantmentFormId;
+  } else {
+    return std::nullopt;
+  }
+  if (!localEnchantment) {
+    return std::nullopt;
+  }
+  const auto ench = br.LookupById(piece.ToGlobalId(localEnchantment));
+  if (!ench.rec || ench.rec->GetType() != "ENCH") {
+    return std::nullopt;
+  }
+  std::vector<uint32_t> effects;
+  for (const auto& effect :
+       reinterpret_cast<const espm::ENCH*>(ench.rec)->GetData(cache).effects) {
+    const uint32_t id = ench.ToGlobalId(effect.effectId);
+    const auto mgef = br.LookupById(id).rec;
+    if (!mgef || mgef->GetType() != "MGEF") {
+      return std::nullopt;
+    }
+    if (std::find(effects.begin(), effects.end(), id) == effects.end()) {
+      effects.push_back(id);
+    }
+  }
+  if (effects.empty()) {
+    return std::nullopt;
+  }
+  return effects;
+}
+
+bool CraftService::IsEnchanter(uint32_t workbenchId)
+{
+  auto& form = partOne.worldState.LookupFormById(workbenchId);
+  auto bench = dynamic_cast<MpObjectReference*>(form.get());
+  if (!bench) {
+    return false;
+  }
+  auto& br = partOne.worldState.GetEspm().GetBrowser();
+  const auto base = br.LookupById(bench->GetBaseId());
+  if (!base.rec ||
+      (base.rec->GetType() != "FURN" && base.rec->GetType() != "ACTI")) {
+    return false;
+  }
+  // The arcane enchanter's furniture (CraftingEnchantingWorkbench) carries
+  // WICraftingEnchanting, the keyword the game's own enchanting perks and
+  // recipes test; isEnchanting on it is only the animation, which other
+  // furniture borrows. The Dragonborn staff enchanter shares the menu but
+  // cannot disenchant, and carries DLC2StaffEnchanter.
+  bool enchanting = false;
+  for (uint32_t keywordId : base.rec->GetKeywordIds(cache)) {
+    const auto keyword = br.LookupById(base.ToGlobalId(keywordId)).rec;
+    const char* editorId = keyword ? keyword->GetEditorId(cache) : nullptr;
+    if (!editorId) {
+      continue;
+    }
+    if (std::strcmp(editorId, "DLC2StaffEnchanter") == 0) {
+      return false;
+    }
+    if (std::strcmp(editorId, "WICraftingEnchanting") == 0) {
+      enchanting = true;
+    }
+  }
+  return enchanting;
+}
+
+bool CraftService::Disenchant(Networking::UserId userId, uint32_t workbenchId,
+                              uint32_t baseId)
+{
+  MpActor* me = partOne.serverState.ActorByUser(userId);
+  if (!me) {
+    spdlog::error("CraftService::Disenchant - user {} has no actor", userId);
+    return false;
+  }
+  if (!AtBench(*me, workbenchId) || !IsEnchanter(workbenchId)) {
+    spdlog::warn("CraftService::Disenchant - actor {:#x} is not at an arcane "
+                 "enchanter ({:#x}), so the disenchant of {:#x} is refused",
+                 me->GetFormId(), workbenchId, baseId);
+    return false;
+  }
+  auto& br = partOne.worldState.GetEspm().GetBrowser();
+  auto effects = DisenchantEffects(br, baseId);
+  if (!effects) {
+    spdlog::warn("CraftService::Disenchant - {:#x} carries no enchantment of "
+                 "its own, so actor {:#x}'s disenchant is refused",
+                 baseId, me->GetFormId());
+    return false;
+  }
+  std::vector<Inventory::Entry> piece;
+  try {
+    piece = me->GetInventory().ResolveRemoval({ Inventory::Entry(baseId, 1) });
+  } catch (const std::exception& e) {
+    spdlog::warn("CraftService::Disenchant - actor {:#x} holds no plain "
+                 "{:#x} ({}), so the disenchant is refused",
+                 me->GetFormId(), baseId, e.what());
+    return false;
+  }
+  me->RemoveItems(piece);
+  me->LearnEnchantments(*effects);
+  std::vector<std::string> learned;
+  for (uint32_t id : *effects) {
+    learned.push_back(fmt::format("{:#x}", id));
+  }
+  spdlog::info("CraftService::Disenchant - actor {:#x} disenchanted {:#x} and "
+               "learned {}",
+               me->GetFormId(), baseId, fmt::join(learned, ", "));
+  return true;
 }
 
 void CraftService::SendMade(Networking::UserId userId, const Made& made)
