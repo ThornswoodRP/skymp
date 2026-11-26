@@ -371,3 +371,30 @@ TEST_CASE("Death loot stops when an item-added callback transfers ownership",
   REQUIRE(listener->called);
   REQUIRE(actor.GetInventory().ToJson() == replacement.ToJson());
 }
+
+TEST_CASE("Thornswood #7034: a character loads with the health, magicka and "
+          "stamina it was saved with",
+          "[ActorPercentages][espm]")
+{
+  PartOne server;
+  server.AttachEspm(&GetEspmLoader());
+  constexpr uint32_t id = 0xff000abd;
+  server.CreateActor(id, { 1, 1, 1 }, 0, 0x3c, 42);
+  auto& actor = server.worldState.GetFormAt<MpActor>(id);
+  REQUIRE_FALSE(actor.IsServerControlled());
+  const float baseHealth = actor.GetChangeForm().actorValues.health;
+
+  auto saved = actor.GetChangeForm();
+  saved.actorValues.healthPercentage = 0.5f;
+  saved.actorValues.magickaPercentage = 0.25f;
+  saved.actorValues.staminaPercentage = 0.7162841558456421f;
+  saved.actorValues.health = baseHealth + 1000.f;
+  actor.ApplyChangeForm(saved);
+
+  const auto& values = actor.GetChangeForm().actorValues;
+  REQUIRE(values.healthPercentage == 0.5f);
+  REQUIRE(values.magickaPercentage == 0.25f);
+  REQUIRE(values.staminaPercentage == 0.7162841558456421f);
+  // The base still comes from the plugins, not from the saved form.
+  REQUIRE(values.health == baseHealth);
+}

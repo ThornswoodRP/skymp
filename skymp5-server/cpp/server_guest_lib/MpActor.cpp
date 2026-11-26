@@ -1391,21 +1391,22 @@ void MpActor::ApplyChangeForm(const MpChangeForm& newChangeForm)
         changeForm.isRaceMenuOpen = true;
       }
 
-      // ActorValues does not refelect real base actor values set in esp/esm
-      // game files since new update
-      // this check is added only for test as a workaround. It is to be redone
-      // in the nearest future. TODO
+      // The base values (health, magicka, stamina and the rest) come from
+      // the esp/esm files, so a saved form never keeps a stale base. The
+      // percentages are the actor's own state and are kept as saved, for a
+      // character as for an NPC: replacing them put every character back at
+      // full health, magicka and stamina at each server start and each
+      // restore (Thornswood #7034). A dead character is respawned by
+      // PartOne::SetUserActor, which sets its respawn percentages.
       if (GetParent() && GetParent()->HasEspm()) {
         EnsureTemplateChainEvaluated(GetParent()->GetEspm(),
                                      Mode::NoRequestSave);
         const auto savedValues = changeForm.actorValues;
         changeForm.actorValues = GetBaseActorValues(
           GetParent(), GetBaseId(), GetRaceId(), changeForm.templateChain);
-        if (IsServerControlled()) {
-          changeForm.actorValues.healthPercentage = savedValues.healthPercentage;
-          changeForm.actorValues.magickaPercentage = savedValues.magickaPercentage;
-          changeForm.actorValues.staminaPercentage = savedValues.staminaPercentage;
-        }
+        changeForm.actorValues.healthPercentage = savedValues.healthPercentage;
+        changeForm.actorValues.magickaPercentage = savedValues.magickaPercentage;
+        changeForm.actorValues.staminaPercentage = savedValues.staminaPercentage;
       }
     },
     Mode::NoRequestSave);
