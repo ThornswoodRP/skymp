@@ -192,6 +192,13 @@ void BrowserApiTilted::WatchMenus()
   }
   LogCursor("game data loaded");
 
+  // Thornswood #6200. The mouse's motion made while the data loaded waits in
+  // the device until the game reads it again, and would move the cursor
+  // that comes up next by all of it at once (DInputHook.cpp says how that
+  // was measured). No cursor existed while it was made, so the next read
+  // moves nothing.
+  CEFUtils::DInputHook::ForgetMouseMotion();
+
   // Thornswood #6200. The game opens its Cursor Menu with the main menu a
   // few milliseconds after this, under the page shown at start, and the
   // cursor is drawn over the page only while the page has the focus

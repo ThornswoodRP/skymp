@@ -8,6 +8,7 @@
 #include <FunctionHook.hpp>
 #include <HeldKeyRelease.h>
 #include <array>
+#include <atomic>
 #include <cstdio>
 #include <iostream>
 
@@ -52,6 +53,28 @@ static InputMeter g_meter = {};
 // The keys the game has been told are down (Thornswood #898, the note in
 // GetDeviceData).
 static HeldKeyRelease g_heldKeys;
+
+/*
+  THORNSWOOD PATCH (Thornswood #6200). Motion made while the game loads.
+
+  The mouse is read with GetDeviceState, and DirectInput gives a relative
+  axis as the motion since the last read. While the game loads its data its
+  thread reads nothing, for tens of seconds, and the device is BACKGROUND
+  (SetCooperativeLevel below), so every move of the mouse in that time, in
+  any window, waits in the device. The first read at the main menu then
+  carried it all, and the game's menu cursor, which had just come up at the
+  middle of the window, went straight to an edge. On 26 Nov 2026
+  (build-1.3.125, 3440x1440) the cursor was at 1720,720 when the page took
+  the focus at the data load, and the page's very first mouse move was at
+  0,0: a single read moved the cursor 1720 by 720. Before
+  that, 10 of 54 starts between 16 and 25 Nov put the cursor at an edge
+  before the person had seen it.
+
+  No cursor existed while that motion was made, so it moves none: the first
+  mouse read after the data load (ForgetMouseMotion, from WatchMenus) keeps
+  its buttons and drops its motion, and says how much in the input log.
+*/
+static std::atomic<bool> g_forgetMouseMotion = false;
 
 static FILE* InputLog()
 {
@@ -700,6 +723,20 @@ HRESULT _stdcall FakeIDirectInputDevice8A::GetDeviceState(DWORD outDataLen,
   if (ret != DI_OK)
     return ret;
 
+  if (outData && outDataLen >= sizeof(DIMOUSESTATE) &&
+      GET_DIDEVICE_TYPE(instanceInfo.dwDevType) == DI8DEVTYPE_MOUSE &&
+      g_forgetMouseMotion.exchange(false)) {
+    auto* motion = static_cast<DIMOUSESTATE*>(outData);
+    if (FILE* f = InputLog()) {
+      fprintf(f,
+              "[mouse] the first read after the game's data loaded held "
+              "%ld,%ld (wheel %ld) of motion made while it loaded; left out\n",
+              motion->lX, motion->lY, motion->lZ);
+      fflush(f);
+    }
+    motion->lX = motion->lY = motion->lZ = 0;
+  }
+
   DIMOUSESTATE2* mouseState = (DIMOUSESTATE2*)outData;
 
   ProcessMouseData(mouseState);
@@ -853,6 +890,11 @@ static HRESULT _stdcall HookDirectInput8Create(HINSTANCE instance,
   }
 
   return result;
+}
+
+void DInputHook::ForgetMouseMotion() noexcept
+{
+  g_forgetMouseMotion = true;
 }
 
 void DInputHook::Install(std::shared_ptr<IInputListener> listener) noexcept

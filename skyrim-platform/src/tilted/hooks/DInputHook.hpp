@@ -54,6 +54,10 @@ struct DInputHook
   void Unacquire() const noexcept;
 
   static void Install(std::shared_ptr<IInputListener> listener) noexcept;
+  // Thornswood: the next mouse read moves nothing, and the motion it held is
+  // written to thornswood-input.log. Called once the game's data has loaded
+  // (BrowserApiTilted::WatchMenus); DInputHook.cpp says why.
+  static void ForgetMouseMotion() noexcept;
   static DInputHook& Get() noexcept;
 
   void Update() const noexcept;
