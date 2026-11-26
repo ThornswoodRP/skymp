@@ -80,6 +80,16 @@ void DX11RenderHandler::Render(
                            DirectX::SimpleMath::Vector2(0.f, 0.f), nullptr,
                            DirectX::Colors::White, 0.f);
     }
+
+    // Thornswood #6882: an open <select> list, over the page, where
+    // Chromium put it (PopupLayer.h).
+    if (m_popup.ShouldDraw() && m_pPopupTextureView) {
+      m_pSpriteBatch->Draw(
+        m_pPopupTextureView.Get(),
+        DirectX::SimpleMath::Vector2(static_cast<float>(m_popup.x),
+                                     static_cast<float>(m_popup.y)),
+        nullptr, DirectX::Colors::White, 0.f);
+    }
   }
 
   // obtainTextsToDraw is expected to do nothing if IsVisible is set to false
@@ -222,6 +232,11 @@ void DX11RenderHandler::OnPaint(CefRefPtr<CefBrowser> browser,
                                 const RectList& dirtyRects, const void* buffer,
                                 int width, int height)
 {
+  if (type == PET_POPUP) {
+    PaintPopup(buffer, width, height);
+    return;
+  }
+
   if (type == PET_VIEW && m_width == width && m_height == height) {
     std::unique_lock<std::mutex> _(m_textureLock);
 
@@ -258,6 +273,79 @@ void DX11RenderHandler::OnPaint(CefRefPtr<CefBrowser> browser,
       m_pTexture.Reset();
       m_width = m_height = 0;
     }
+  }
+}
+
+void DX11RenderHandler::OnPopupShow(CefRefPtr<CefBrowser> browser, bool show)
+{
+  std::unique_lock<std::mutex> _(m_textureLock);
+  m_popup.Show(show);
+}
+
+void DX11RenderHandler::OnPopupSize(CefRefPtr<CefBrowser> browser,
+                                    const CefRect& rect)
+{
+  std::unique_lock<std::mutex> _(m_textureLock);
+  m_popup.Size(rect.x, rect.y, rect.width, rect.height);
+}
+
+// Thornswood #6882: the open <select> list's picture, into a texture of its
+// own size, drawn over the page's in Render.
+void DX11RenderHandler::PaintPopup(const void* buffer, int width, int height)
+{
+  std::unique_lock<std::mutex> _(m_textureLock);
+
+  if (!m_popup.Takes(width, height) || !m_pDevice || !m_pContext) {
+    return;
+  }
+
+  D3D11_TEXTURE2D_DESC have = {};
+  if (m_pPopupTexture) {
+    m_pPopupTexture->GetDesc(&have);
+  }
+  if (!m_pPopupTexture || have.Width != static_cast<UINT>(width) ||
+      have.Height != static_cast<UINT>(height)) {
+    m_pPopupTextureView.Reset();
+    m_pPopupTexture.Reset();
+
+    D3D11_TEXTURE2D_DESC desc = {};
+    desc.Width = static_cast<UINT>(width);
+    desc.Height = static_cast<UINT>(height);
+    desc.MipLevels = desc.ArraySize = 1;
+    desc.Format = DXGI_FORMAT_B8G8R8A8_UNORM;
+    desc.SampleDesc.Count = 1;
+    desc.Usage = D3D11_USAGE_DYNAMIC;
+    desc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+    desc.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
+
+    if (FAILED(m_pDevice->CreateTexture2D(
+          &desc, nullptr, m_pPopupTexture.ReleaseAndGetAddressOf()))) {
+      spdlog::error("browser (tilted): no texture for a {}x{} select list",
+                    width, height);
+      return;
+    }
+
+    D3D11_SHADER_RESOURCE_VIEW_DESC view = {};
+    view.Format = desc.Format;
+    view.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
+    view.Texture2D.MipLevels = 1;
+
+    if (FAILED(m_pDevice->CreateShaderResourceView(
+          m_pPopupTexture.Get(), &view,
+          m_pPopupTextureView.ReleaseAndGetAddressOf()))) {
+      spdlog::error("browser (tilted): no view for a {}x{} select list",
+                    width, height);
+      m_pPopupTexture.Reset();
+      return;
+    }
+  }
+
+  D3D11_MAPPED_SUBRESOURCE mapped;
+  if (SUCCEEDED(m_pContext->Map(m_pPopupTexture.Get(), 0,
+                                D3D11_MAP_WRITE_DISCARD, 0, &mapped))) {
+    PopupLayer::CopyRows(static_cast<uint8_t*>(mapped.pData),
+                         mapped.RowPitch, buffer, width, height);
+    m_pContext->Unmap(m_pPopupTexture.Get(), 0);
   }
 }
 

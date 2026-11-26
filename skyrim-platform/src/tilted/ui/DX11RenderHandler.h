@@ -1,6 +1,7 @@
 #pragma once
 
 #include "MyRenderHandler.h"
+#include "PopupLayer.h"
 #include "TextToDraw.h"
 #include <DirectXTK/CommonStates.h>
 #include <DirectXTK/SpriteBatch.h>
@@ -59,11 +60,17 @@ struct DX11RenderHandler : MyRenderHandler
                const RectList& dirtyRects, const void* buffer, int width,
                int height) override;
 
+  // Thornswood #6882: the list a <select> opens (PopupLayer.h).
+  void OnPopupShow(CefRefPtr<CefBrowser> browser, bool show) override;
+  void OnPopupSize(CefRefPtr<CefBrowser> browser,
+                   const CefRect& rect) override;
+
   IMPLEMENT_REFCOUNTING(DX11RenderHandler);
 
 protected:
   void GetRenderTargetSize();
   void CreateRenderTexture();
+  void PaintPopup(const void* buffer, int width, int height);
 
 private:
   uint32_t m_width{ 0 };
@@ -72,6 +79,11 @@ private:
   Microsoft::WRL::ComPtr<ID3D11Texture2D> m_pTexture;
   Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> m_pCursorTexture;
   Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> m_pTextureView;
+  // Thornswood #6882: the open <select> list and its picture, drawn over
+  // the page's. All three are under m_textureLock.
+  PopupLayer m_popup;
+  Microsoft::WRL::ComPtr<ID3D11Texture2D> m_pPopupTexture;
+  Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> m_pPopupTextureView;
   std::mutex m_textureLock;
   std::mutex m_createLock;
   bool isCreateLock = false;
