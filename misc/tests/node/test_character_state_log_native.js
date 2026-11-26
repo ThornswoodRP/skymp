@@ -34,7 +34,7 @@ check('it reads the controller\'s state, wanted state and flags',
       /context\.currentState/.test(log) && /wantState/.test(log) &&
         /flags\.underlying\(\)/.test(log));
 check('it writes only what CharacterStateLog lets through',
-      /if \(!g_log\.Write\(/.test(log));
+      /if \(!g_movementStateLog\.Write\(/.test(log));
 check(
   'it writes nothing to the character, its controller or the camera',
   !/->\s*(context\.currentState|wantState|flags|pitchAngle|waterHeight)\s*=[^=]/

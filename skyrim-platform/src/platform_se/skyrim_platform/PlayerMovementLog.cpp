@@ -4,7 +4,7 @@
 #include <chrono>
 
 namespace {
-CharacterStateLog g_log;
+CharacterStateLog g_movementStateLog;
 
 int64_t NowMs()
 {
@@ -35,7 +35,7 @@ void LogPlayerMovement()
   s.firstPerson = camera && camera->IsInFirstPerson();
 
   int leftOut = 0;
-  if (!g_log.Write(s, NowMs(), &leftOut)) {
+  if (!g_movementStateLog.Write(s, NowMs(), &leftOut)) {
     return;
   }
   const auto pos = player->GetPosition();
