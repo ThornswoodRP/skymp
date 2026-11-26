@@ -53,8 +53,16 @@ export class TimeService extends ClientListener {
 
         if (diff >= 1 / 60) {
             gameHour.setValue(newGameHourValue);
+        }
+
+        // A matching hour can still belong to an old saved date (#4661).
+        if (gameDay.getValue() !== date.getUTCDate()) {
             gameDay.setValue(date.getUTCDate());
+        }
+        if (gameMonth.getValue() !== date.getUTCMonth()) {
             gameMonth.setValue(date.getUTCMonth());
+        }
+        if (gameYear.getValue() !== gameYearOf(date)) {
             gameYear.setValue(gameYearOf(date));
         }
 

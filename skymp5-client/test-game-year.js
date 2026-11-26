@@ -74,9 +74,10 @@ function load(file, stubs) {
   return new Function('__stub', js)(function (from) { return stubs[from] || {}; });
 }
 
-// A game with the five globals TimeService writes, at a clock set by hand.
-function rig(hoursOffset) {
-  const globals = { 0x35: 0, 0x36: 0, 0x37: 0, 0x38: 0, 0x3a: 20 };
+// Include elapsed days to check that date correction leaves them alone (#4661).
+function rig(hoursOffset, initial) {
+  const globals = Object.assign({ 0x35: 0, 0x36: 0, 0x37: 0, 0x38: 0, 0x39: 12345.5, 0x3a: 20 }, initial);
+  const writes = [];
   const sp = {
     settings: { 'skymp5-client': hoursOffset === undefined ? {} : { hoursOffset: hoursOffset } },
     Game: { getFormEx: function (id) { return Object.prototype.hasOwnProperty.call(globals, id) ? { id: id } : null; } },
@@ -85,7 +86,7 @@ function rig(hoursOffset) {
         if (!f) { return null; }
         return {
           getValue: function () { return globals[f.id]; },
-          setValue: function (v) { globals[f.id] = v; },
+          setValue: function (v) { writes.push(f.id); globals[f.id] = v; },
         };
       },
     },
@@ -96,6 +97,7 @@ function rig(hoursOffset) {
   const service = new mod.TimeService(sp, controller);
   return {
     globals: globals,
+    writes: writes,
     // One update at the given UTC time, as the game would run it.
     at: function (iso) {
       const real = Date.now;
@@ -135,6 +137,42 @@ if (r) {
   const o = rig(2).at('2026-12-31T23:00:00Z');
   yes('an hoursOffset of 2 turns the year with the day: 23:00 UTC on 31 December is 4E 253',
     o[0x37] === 1 && o[0x36] === 0 && o[0x35] === 253);
+
+  // An already matching hour must not keep a saved world's old date (#4661).
+  const hour = 12 + 34 / 60;
+  const matching = rig(0, { 0x38: hour, 0x37: 1, 0x36: 0, 0x35: 201 });
+  const m = matching.at('2026-11-26T12:34:00Z');
+  yes('a matching hour still corrects a stale day, month and year',
+    m[0x37] === 26 && m[0x36] === 10 && m[0x35] === 252);
+  yes('matching-hour date correction leaves the hour and elapsed days alone',
+    !matching.writes.includes(0x38) && !matching.writes.includes(0x39) && m[0x39] === 12345.5);
+
+  for (const seconds of [-30, 30]) {
+    const drift = rig(0, { 0x38: hour + seconds / 3600, 0x37: 25, 0x36: 10, 0x35: 252 });
+    const d = drift.at('2026-11-26T12:34:00Z');
+    yes('sub-minute hour drift still corrects the day: ' + seconds,
+      d[0x37] === 26);
+    yes('sub-minute drift keeps the hour threshold and TimeScale direction: ' + seconds,
+      d[0x38] === hour + seconds / 3600 && !drift.writes.includes(0x38) &&
+      d[0x3a] === (seconds > 0 ? 0.6 : 1.2));
+    yes('sub-minute correction writes no already-correct month or year: ' + seconds,
+      !drift.writes.includes(0x36) && !drift.writes.includes(0x35));
+  }
+
+  const midnight = rig(0, { 0x38: 0, 0x37: 26, 0x36: 10, 0x35: 252 }).at('2026-11-27T00:00:00Z');
+  yes('midnight corrects the previous day even when the hour is already zero',
+    midnight[0x37] === 27 && midnight[0x36] === 10 && midnight[0x35] === 252);
+  const newYear = rig(0, { 0x38: 0, 0x37: 31, 0x36: 11, 0x35: 252 }).at('2027-01-01T00:00:00Z');
+  yes('midnight at new year corrects all three date fields with a matching hour',
+    newYear[0x37] === 1 && newYear[0x36] === 0 && newYear[0x35] === 253);
+  const offset = rig(2, { 0x38: 1, 0x37: 31, 0x36: 11, 0x35: 252 }).at('2026-12-31T23:00:00Z');
+  yes('matching-hour correction uses the existing offset across the year boundary',
+    offset[0x37] === 1 && offset[0x36] === 0 && offset[0x35] === 253);
+
+  const correct = rig(0, { 0x38: hour, 0x37: 26, 0x36: 10, 0x35: 252 });
+  correct.at('2026-11-26T12:34:00Z');
+  yes('an already-correct calendar writes only the existing TimeScale adjustment',
+    JSON.stringify(correct.writes) === JSON.stringify([0x3a]) && correct.globals[0x3a] === 1.2);
 }
 
 console.log('');
