@@ -151,6 +151,10 @@ on('update', () => {
   applyInventory(pl, pcInv, false, true);
 });
 
+// Thornswood #6979: the heading the character had when this client opened the
+// face menu, put back when it closes (RemoteServer.onFaceMenuClosed).
+const faceMenuHeadingKey = 'thornswoodFaceMenuHeading';
+
 const unequipIronHelmet = () => {
   const ironHelment = Armor.from(Game.getFormEx(0x00012e4d));
   const pl = Game.getPlayer();
@@ -188,6 +192,46 @@ export class RemoteServer extends ClientListener {
     this.controller.emitter.on("spellCastMessage", (e) => this.onSpellCastMessage(e));
     this.controller.emitter.on("updateAnimVariablesMessage", (e) => this.onUpdateAnimVariablesMessage(e));
 
+    on("menuClose", (e) => {
+      if (e.name === 'RaceSex Menu') { this.onFaceMenuClosed(); }
+    });
+  }
+
+  /*
+    THORNSWOOD (Thornswood #6979). THE FACE MENU HANDS THE CHARACTER BACK AS
+    IT FOUND THEM, IN THIRD PERSON.
+
+    The face menu shows the character from the front: it turns the character
+    itself to face its camera (dragging in the menu turns them further), and
+    closing it leaves them turned. A new character arrives on the creation
+    hall's marker facing into the room, opens the menu two seconds later, and
+    came out of it facing the way they came in. The camera they came out in
+    is the one the loaded save had, first person, because nothing in creation
+    said which one. Patrick's Dev start at 1:49 PM on 26 Nov: "in the
+    creation hall you come in backwards and in first person".
+
+    So the heading is taken just before this client opens the menu
+    (onSetRaceMenuOpenMessage), kept in storage so a script reload in between
+    keeps it, and put back when the menu closes, with the camera behind the
+    character. The log says the heading before, the heading the menu left,
+    and the camera, so a start shows what the menu did.
+  */
+  private onFaceMenuClosed(): void {
+    const before = storage[faceMenuHeadingKey];
+    if (typeof before !== 'number') { return; }
+    delete storage[faceMenuHeadingKey];
+    once('update', () => {
+      try {
+        const pc = Game.getPlayer();
+        if (!pc) { return; }
+        const left = pc.getAngleZ();
+        const camera = Game.getCameraState();
+        pc.setAngle(0, 0, before);
+        Game.forceThirdPerson();
+        printConsole('[face menu] closed: heading ' + left.toFixed(1) + ' as the menu left it, ' +
+          before.toFixed(1) + ' before it opened, put back; camera state ' + camera + ', now third person');
+      } catch (e) { logError(this, 'Could not hand the character back after the face menu', e); }
+    });
   }
 
   private onHostStartMessage(event: ConnectionMessage<HostStartMessage>) {
@@ -1303,6 +1347,7 @@ export class RemoteServer extends ClientListener {
     this.ownerSpawnTarget = undefined;
     delete storage['pcInv'];
     delete storage['ownerInventorySettling'];
+    delete storage[faceMenuHeadingKey];
   }
 
   private recordOwnerOutfit(stage: string): void {
@@ -1356,6 +1401,11 @@ export class RemoteServer extends ClientListener {
             if (!Ui.isMenuOpen('RaceSex Menu')) {
               unequipIronHelmet();
               this.recordOwnerOutfit('before-face-menu');
+              const heading = Game.getPlayer()?.getAngleZ();
+              if (typeof heading === 'number') {
+                storage[faceMenuHeadingKey] = heading;
+                printConsole('[face menu] opening: heading ' + heading.toFixed(1) + ', camera state ' + Game.getCameraState());
+              }
               Game.showRaceMenu();
             }
             delete storage['ownerInventorySettling'];
