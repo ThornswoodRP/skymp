@@ -24,6 +24,8 @@ function fixture(save = false, options = {}) {
   let rejectedAdds = options.rejectedAdds || 0, positionX = options.pos?.[0] ?? 1, cellId = options.sourceCell || 9;
   let partialThrow = !!options.partialThrow;
   const spellWrites = []; let basePrepared = !!options.basePrepared;
+  // Thornswood #6979: the heading the menu leaves, and the camera state.
+  let angleZ = 180, camera = 0, lines = [];
   if (options.initialWorn) for (const id of options.initialWorn) worn.add(id);
   const world = {forms: [], playerCharacterFormIdx: -1, playerCharacterRefrId: 0};
   const forms = id => ({id, getFormID: () => id, getName: () => 'base' + id});
@@ -31,7 +33,7 @@ function fixture(save = false, options = {}) {
     is3DLoaded: () => frame >= loadedAt, getFormID: () => 0x14,
     getPositionX: () => positionX, getPositionY: () => options.pos?.[1] ?? 2, getPositionZ: () => 3,
     getParentCell: () => forms(cellId), getWorldSpace: () => options.exterior ? forms(9) : null,
-    getRace: () => forms(123),
+    getRace: () => forms(123), getAngleZ: () => angleZ, setAngle: (_x, _y, z) => { angleZ = z; },
     getItemCount: f => items.get(f.id) || 0, isEquipped: f => worn.has(f.id),
     equipItem: f => {if (equipFailures-- > 0) throw Error('native equip temporarily unavailable');jobs.push({at: frame + 2, run: () => { if (items.has(f.id)) {worn.add(f.id); if (f.id === 200) hands.set(1, f.id);} }});},
     equipItemEx: (f, slot) => jobs.push({at: frame + 2, run: () => {if(items.has(f.id)){hands.set(slot, f.id);worn.add(f.id);}}}),
@@ -68,12 +70,12 @@ function fixture(save = false, options = {}) {
     },
     storage: {worldModel: world}, Actor: {from: x => x}, Armor: {from: x => x}, Ammo: {from: () => null},
     Cell: {from: x => x}, WorldSpace: {from: () => null}, Weapon: {from: f => f?.id === 200 ? f : null},
-    Game: {getPlayer: () => actor, getFormEx: forms, getModCount: () => 0, getLightModCount: () => 0, showRaceMenu: () => {paused = true; opens++;}},
+    Game: {getPlayer: () => actor, getFormEx: forms, getModCount: () => 0, getLightModCount: () => 0, showRaceMenu: () => {paused = true; opens++;}, getCameraState: () => camera, forceThirdPerson: () => { camera = 9; }},
     Ui: {isMenuOpen: name => name === 'RaceSex Menu' && paused},
     TESModPlatform: {moveRefrToPosition() {if (!firstMoveInventory) firstMoveInventory = inventory(); if (options.moveCell) { if (options.transitionDelay) { if (++moveCalls === 1) jobs.push({at: frame + options.transitionDelay, run: () => {cellId = options.moveCell;}}); } else if (options.moveDelay && ++moveCalls === 1) loadedAt = frame + options.moveDelay; else cellId = options.moveCell; }}},
     Utility: {isInMenuMode: () => false, wait: seconds => new Promise(resolve => jobs.push({at: frame + Math.max(1, Math.ceil(seconds * 10)), run: resolve}))},
     once: (event, fn) => onceHandlers[event].push(fn), on: (event, fn) => { (onHandlers[event] ||= []).push(fn); },
-    printConsole() {}
+    printConsole(line) { lines.push(String(line)); }
   };
   vm.runInNewContext(fs.readFileSync(path.join(__dirname, '../../../skyrim-platform/src/platform_se/skyrim_platform/assets/storageProxy.js'), 'utf8'))(sp);
   sp.storage.worldModel = world;
@@ -120,7 +122,9 @@ function fixture(save = false, options = {}) {
       for (let k = 0; k < 8; k++) await Promise.resolve();
     }
   };
-  return {spawn, emit, advance, move: x => {positionX = x;}, changeCell: id => {cellId = id;}, recreate: () => new sandbox.exports.RemoteServer(sp, controller), get diagnostic() {return typeof sp.storage.ownerOutfitDiagnostic === 'string' ? JSON.parse(sp.storage.ownerOutfitDiagnostic) : undefined;}, get baseResets() {return baseResets;}, get appearanceApplies() {return appearanceApplies;}, get initialInventory() {return initialInventory;}, get firstMoveInventory() {return firstMoveInventory;}, get opens() {return opens;}, items, worn, hands, spellWrites, get settling() {return sp.storage.ownerInventorySettling === true;}, get removals() {return removals;}};
+  // The face menu closing the way the game says it: menuClose for RaceSex Menu.
+  const closeFaceMenu = (turnedTo) => { if (turnedTo !== undefined) angleZ = turnedTo; paused = false; for (const fn of onHandlers.menuClose || []) fn({name: 'RaceSex Menu'}); };
+  return {spawn, emit, advance, closeFaceMenu, get angleZ() {return angleZ;}, set angleZ(v) {angleZ = v;}, get camera() {return camera;}, lines, move: x => {positionX = x;}, changeCell: id => {cellId = id;}, recreate: () => new sandbox.exports.RemoteServer(sp, controller), get diagnostic() {return typeof sp.storage.ownerOutfitDiagnostic === 'string' ? JSON.parse(sp.storage.ownerOutfitDiagnostic) : undefined;}, get baseResets() {return baseResets;}, get appearanceApplies() {return appearanceApplies;}, get initialInventory() {return initialInventory;}, get firstMoveInventory() {return firstMoveInventory;}, get opens() {return opens;}, items, worn, hands, spellWrites, get settling() {return sp.storage.ownerInventorySettling === true;}, get removals() {return removals;}};
 }
 
 (async () => {
@@ -256,5 +260,22 @@ function fixture(save = false, options = {}) {
   const recordDecides = fixture(false, {equipment: []}); recordDecides.spawn(true); await recordDecides.advance(300);
   assert.equal(recordDecides.opens, 1); assert.equal(recordDecides.worn.size, 0, 'the equipment record, not the pack, says what is worn');
   assert.equal(recordDecides.items.get(100), 1, 'and the pack still holds the clothes');
+  // Thornswood #6979: the face menu turns the character to face its camera
+  // and leaves them turned, in the camera of the loaded save (first person).
+  // Closing it puts back the heading they had when it opened, in third person.
+  const turned = fixture(); turned.spawn(true); await turned.advance(100);
+  assert.equal(turned.opens, 1);
+  assert(turned.lines.some(l => l.startsWith('[face menu] opening: heading 180.0, camera state 0')), 'the heading and camera at opening are logged');
+  turned.closeFaceMenu(0); await turned.advance(2);
+  assert.equal(turned.angleZ, 180, 'closing the face menu puts back the heading it opened on');
+  assert.equal(turned.camera, 9, 'and the camera goes behind the character');
+  assert(turned.lines.some(l => l.startsWith('[face menu] closed: heading 0.0 as the menu left it, 180.0 before it opened')), 'the heading the menu left is logged');
+  turned.angleZ = 90; turned.closeFaceMenu(); await turned.advance(2);
+  assert.equal(turned.angleZ, 90, 'a second close with no opening of ours turns nobody');
+  const notOurs = fixture(); notOurs.spawn(); await notOurs.advance(100);
+  notOurs.closeFaceMenu(45); await notOurs.advance(2);
+  assert.equal(notOurs.angleZ, 45, 'a face menu this client did not open is left alone'); assert.equal(notOurs.camera, 0);
+  const reconnect = fixture(); reconnect.spawn(true); await reconnect.advance(100); reconnect.spawn(true, 1); reconnect.closeFaceMenu(10); await reconnect.advance(2);
+  assert.equal(reconnect.angleZ, 10, 'a new owner packet forgets the heading of the menu before it');
   console.log('PASS real creation handlers: delayed inventory, asynchronous equip, both spawn paths, cancellation and early request');
 })().catch(e => { console.error(e); process.exitCode = 1; });
