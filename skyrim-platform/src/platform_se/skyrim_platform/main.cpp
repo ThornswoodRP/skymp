@@ -12,6 +12,7 @@
 #include "FridaHooks.h"
 #include "GameAudioRoute.h"
 #include "GameplayMenuUnpaused.h"
+#include "InteractionLoadCancel.h"
 #include "Hooks.h"
 #include "IPC.h"
 #include "InputConverter.h"
@@ -198,6 +199,9 @@ DLLEXPORT bool SKSEAPI SKSEPlugin_Load_Impl(const SKSE::LoadInterface* skse)
   // MainUpdate or any UI job can execute. Install the whole checked hook set
   // here; DataLoaded is too late to assume those sites are quiescent (#6497).
   GameplayMenuUnpaused::Install();
+  // Before any actor's AI runs, so no furniture load is ever left with a
+  // freed listener (Thornswood #6884).
+  InteractionLoadCancel::Install();
 
   // init custom events first
   // and the rest at DataLoaded, to be safe
