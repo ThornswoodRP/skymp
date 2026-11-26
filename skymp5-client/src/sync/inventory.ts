@@ -483,14 +483,93 @@ const extractExtraData = (
   });
 };
 
+// Ordinary named rows can only match the same cropName, or a broad row whose
+// missing/tempered/legacy name still needs namesEqual. Never turn that comparator
+// into a new canonical equality rule. Accessors and non-primitive extras retain
+// the old comparison path, including its type and exception behavior.
+const indexedFields = ["health", "made", "madeEnchantment", "enchantmentId", "maxCharge",
+  "removeEnchantmentOnUnequip", "chargePercent", "soul", "poisonId", "poisonCount", "worn", "wornLeft"];
+const indexedPrimitiveTypes = ["undefined", "boolean", "number", "string"];
+const indexedName = (entry: Entry): string | undefined => {
+  const name = Object.getOwnPropertyDescriptor(entry, "name");
+  if (!name || !("value" in name) || typeof name.value !== "string" || !name.value) {
+    return undefined;
+  }
+  for (const field of indexedFields) {
+    const property = Object.getOwnPropertyDescriptor(entry, field);
+    if (!property) {
+      if (field in entry) { return undefined; }
+    } else if (!("value" in property) || (property.value !== null &&
+      !indexedPrimitiveTypes.includes(typeof property.value))) {
+      return undefined;
+    }
+  }
+  if (entry.made || entry.madeEnchantment || isTempered(entry)) { return undefined; }
+  return cropName(name.value);
+};
+
+const indexedBase = (entry: Entry): number | undefined => {
+  const property = Object.getOwnPropertyDescriptor(entry, "baseId");
+  const value = property && "value" in property ? property.value : undefined;
+  return typeof value === "number" && Number.isInteger(value) && value >= 0 && value <= 0xffffffff
+    ? value : undefined;
+};
+
 const squash = (inv: Inventory, ignoreWorn = false): Inventory => {
   const res = new Array<Entry>();
+  type Row = { entry: Entry; order: number };
+  type Bucket = { all: Row[]; broad: Row[]; names: Map<string, Row[]> };
+  const bases = new Map<number, Bucket>();
   inv.entries.forEach((e) => {
-    const same = res.find((x) => e.baseId === x.baseId && extrasEqual(x, e, ignoreWorn));
+    const matches = (x: Entry): boolean => e.baseId === x.baseId && extrasEqual(x, e, ignoreWorn);
+    const base = indexedBase(e);
+    let same: Entry | undefined;
+    if (base === undefined) {
+      same = res.find(matches);
+    } else {
+      const bucket = bases.get(base);
+      if (bucket) {
+        const name = indexedName(e);
+        if (name === undefined) {
+          same = bucket.all.find((row) => matches(row.entry))?.entry;
+        } else {
+          const named = bucket.names.get(name) || [];
+          let a = 0, b = 0;
+          // Merge the two disjoint candidate lists in original representative
+          // order, so an earlier broad match still wins over an exact name.
+          while (a < named.length || b < bucket.broad.length) {
+            const row = b >= bucket.broad.length ||
+              (a < named.length && named[a].order < bucket.broad[b].order)
+              ? named[a++] : bucket.broad[b++];
+            if (matches(row.entry)) { same = row.entry; break; }
+          }
+        }
+      }
+    }
     if (same) {
       same.count += e.count;
     } else {
-      res.push(JSON.parse(JSON.stringify(e)));
+      const entry: Entry = JSON.parse(JSON.stringify(e));
+      const row = { entry, order: res.length };
+      res.push(entry);
+      // Index the cloned representative: JSON can change a legacy value.
+      const storedBase = indexedBase(entry);
+      if (storedBase !== undefined) {
+        let bucket = bases.get(storedBase);
+        if (!bucket) {
+          bucket = { all: [], broad: [], names: new Map() };
+          bases.set(storedBase, bucket);
+        }
+        bucket.all.push(row);
+        const name = indexedName(entry);
+        if (name === undefined) {
+          bucket.broad.push(row);
+        } else {
+          const named = bucket.names.get(name) || [];
+          named.push(row);
+          bucket.names.set(name, named);
+        }
+      }
     }
   });
   return { entries: res.filter((x) => x.count !== 0) };
