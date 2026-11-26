@@ -60,7 +60,7 @@ int main()
           w == PapyrusUpdateWay::kWaitWrittenMs);
     int64_t again = -1;
     way.Open(9000, &again);
-    Check("only once", again == -1);
+    Check("not again before thirty seconds more", again == -1);
     auto late = way.End(&a, 9500);
     Check("its end says the wait was written, and how long it was",
           late.wasOnItsWay && late.waitWasWritten && late.waited == 8500);
@@ -68,6 +68,39 @@ int main()
     int64_t next = -1;
     way.Open(9600 + PapyrusUpdateWay::kWaitWrittenMs, &next);
     Check("the next call that waits is written again", next >= 0);
+  }
+  {
+    // 25 Nov (#6885): after a quit to the main menu one call waited for good.
+    // Its wait is written at 5 s and every 30 s after, six times at most.
+    PapyrusUpdateWay way;
+    way.Send(&a, 0);
+    int writes = 0;
+    int64_t last = -1;
+    bool onTime = true;
+    for (int64_t t = 0; t <= 600000; t += 16) {
+      int64_t w = -1;
+      way.Open(t, &w);
+      if (w >= 0) {
+        const int64_t due = PapyrusUpdateWay::kWaitWrittenMs +
+          writes * PapyrusUpdateWay::kWaitWrittenAgainMs;
+        if (w < due || w >= due + 16) {
+          onTime = false;
+        }
+        ++writes;
+        last = w;
+      }
+    }
+    Check("a call that never ends is written at 5 s and each 30 s after",
+          onTime && writes > 1);
+    Check("six times at most", writes == PapyrusUpdateWay::kWaitWrittenTimes);
+    Check("the last at 155 s", last >= 155000 && last < 155016);
+    Check("and the way stays shut all along", !way.Open(600001));
+    Check("its end still opens it", way.End(&a, 600002).wasOnItsWay);
+    way.Send(&b, 600003);
+    int64_t fresh = -1;
+    way.Open(600003 + PapyrusUpdateWay::kWaitWrittenMs, &fresh);
+    Check("and the next call that waits is written from the start again",
+          fresh >= 0);
   }
   return failed ? 1 : 0;
 }
