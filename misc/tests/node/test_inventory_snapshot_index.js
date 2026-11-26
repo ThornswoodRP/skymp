@@ -6,7 +6,8 @@ const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
 const ts = require('../../../skymp5-client/node_modules/typescript');
-const file = process.env.INVENTORY || path.join(__dirname, '../../../skymp5-client/src/sync/inventory.ts');
+const file = process.env.THORNSWOOD_INVENTORY_SNAPSHOT_SOURCE ||
+  path.join(__dirname, '../../../skymp5-client/src/sync/inventory.ts');
 const source = fs.readFileSync(file, 'utf8');
 const js = ts.transpileModule(source, {
   compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2018 },

@@ -487,18 +487,20 @@ const extractExtraData = (
 // missing/tempered/legacy name still needs namesEqual. Never turn that comparator
 // into a new canonical equality rule. Accessors and non-primitive extras retain
 // the old comparison path, including its type and exception behavior.
+const indexedFields = ["health", "made", "madeEnchantment", "enchantmentId", "maxCharge",
+  "removeEnchantmentOnUnequip", "chargePercent", "soul", "poisonId", "poisonCount", "worn", "wornLeft"];
+const indexedPrimitiveTypes = ["undefined", "boolean", "number", "string"];
 const indexedName = (entry: Entry): string | undefined => {
   const name = Object.getOwnPropertyDescriptor(entry, "name");
   if (!name || !("value" in name) || typeof name.value !== "string" || !name.value) {
     return undefined;
   }
-  for (const field of ["health", "made", "madeEnchantment", "enchantmentId", "maxCharge",
-    "removeEnchantmentOnUnequip", "chargePercent", "soul", "poisonId", "poisonCount", "worn", "wornLeft"]) {
+  for (const field of indexedFields) {
     const property = Object.getOwnPropertyDescriptor(entry, field);
     if (!property) {
       if (field in entry) { return undefined; }
     } else if (!("value" in property) || (property.value !== null &&
-      !["undefined", "boolean", "number", "string"].includes(typeof property.value))) {
+      !indexedPrimitiveTypes.includes(typeof property.value))) {
       return undefined;
     }
   }
