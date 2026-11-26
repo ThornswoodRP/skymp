@@ -1,9 +1,14 @@
+/*
+  No outline: none here (Thornswood #4475). This rule reaches every element on
+  the page, the game's own panels drawn into it included, and with it nobody
+  could see which button or field the keyboard was on. The browser's
+  focus-visible ring now shows for keyboard focus and not for a click.
+*/
 * {
   margin: 0;
   padding: 0;
   box-sizing: border-box;
   user-select: none;
-  outline: none;
   border: none;
   background: none;
 }
