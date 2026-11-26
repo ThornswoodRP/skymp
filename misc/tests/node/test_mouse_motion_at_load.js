@@ -1,11 +1,10 @@
 'use strict';
-// Thornswood #6200: the mouse's motion made while the game loads its data
-// moves no cursor. The mouse is read with GetDeviceState, which gives the
-// motion since the last read, and the game reads nothing while it loads, so
-// the first read at the main menu carried all of it: on 26 Nov 2026 the
-// page's first mouse move was at 0,0, one read after the cursor came up at
-// 1720,720 of 3440x1440. These checks read the sources, since the hook needs
-// DirectInput and the game.
+// Thornswood #6200: on 26 Nov 2026 the game's menu cursor came up at
+// 1720,720 of 3440x1440 at the data load, and the page's first mouse move was
+// at 0,0. What carried it there is not proven, so the first mouse read after
+// the data load moves nothing and says what it held, and the reads after it
+// and the game's acquiring of the mouse are written to the input log. These
+// checks read the sources, since the hook needs DirectInput and the game.
 const fs = require('node:fs'), path = require('node:path');
 const src = path.join(__dirname, '../../../skyrim-platform/src');
 const read = (f) => fs.readFileSync(path.join(src, f), 'utf8');
@@ -46,6 +45,20 @@ check('  only for a mouse, and only a read that succeeded and is long enough',
 check('  keeping its buttons', !/rgbButtons[^;]*= 0/.test(state.slice(drop, handOff)));
 check('  and says how much it left out in the input log',
       /\[mouse\] the first read after the game's data loaded held/.test(state));
+
+const trace = state.search(/g_mouseReadsLeft\.fetch_sub\(1\)/);
+check('the reads after the data load are written down', trace >= 0 &&
+      /read %d after the data load: 0x%08lX, motion %ld,%ld/.test(hook));
+check('  as the device gave them, before anything is zeroed or left out',
+      trace >= 0 && trace < drop && trace < state.indexOf('minimisedAte++'));
+check('  only for a mouse', /DI8DEVTYPE_MOUSE &&\s*g_mouseReadsLeft > 0/.test(state));
+check('the game acquiring the mouse and letting go of it are written down',
+      /TraceMouseAcquire\(m_pDevice, "acquired", hr\)/.test(hook) &&
+      /TraceMouseAcquire\(m_pDevice, "let go of", hr\)/.test(hook) &&
+      /DI8DEVTYPE_MOUSE/.test(body(hook, 'static void TraceMouseAcquire(')));
+const forgetBody = code(body(hook, 'void DInputHook::ForgetMouseMotion() noexcept'));
+check('  and the data load starts both again', /g_mouseReadsLeft = MouseTraceReads;/.test(forgetBody) &&
+      /g_mouseAcquiresLeft = MouseTraceAcquires;/.test(forgetBody));
 
 const tilted = code(read('platform_se/skyrim_platform/BrowserApiTilted.cpp'));
 const watch = body(tilted, 'void BrowserApiTilted::WatchMenus()');
