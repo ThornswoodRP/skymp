@@ -13,6 +13,8 @@
 #include <algorithm>
 #include <chrono>
 #include <map>
+#include <set>
+#include <string>
 
 PartOne& GetPartOne();
 
@@ -106,6 +108,8 @@ struct CombatFixture
     damage = formula.get();
     p.SetDamageFormula(std::move(formula));
     Arm(Npc());
+    // Drawn long enough ago that the first swing is not held for the draw.
+    Npc().DrawServerWeapon(std::chrono::steady_clock::now() - std::chrono::seconds(10));
     p.Messages().clear();
   }
   MpActor& Npc() { return p.worldState.GetFormAt<MpActor>(kCombatNpc); }
@@ -165,6 +169,86 @@ TEST_CASE("Server NPC attacks use owned equipped weapons or unarmed damage",
     }
     REQUIRE(sentHealth);
     REQUIRE(sentAttack);
+  }
+}
+
+namespace {
+// The swing event the last accepted server attack sent, or empty.
+std::string SentSwing(CombatFixture& f)
+{
+  std::string event;
+  for (const auto& sent : f.p.Messages()) {
+    auto animation = dynamic_cast<UpdateAnimationMessage*>(sent.message.get());
+    if (animation && animation->idx == f.Npc().GetIdx())
+      event = animation->data.animEventName;
+  }
+  return event;
+}
+
+void GiveRace(MpActor& actor, uint32_t raceId)
+{
+  Appearance appearance;
+  appearance.raceId = raceId;
+  actor.SetAppearance(&appearance);
+}
+}
+
+// Thornswood #6720: creatures, draugr and skeletons were sent "attackStart"
+// or "AttackStartH2HRight", which their races do not list, so no swing
+// showed while the damage landed.
+TEST_CASE("A server NPC swings with an attack its own race lists",
+          "[ServerNpcCombat][PartOne][espm]")
+{
+  CombatFixture f;
+  // Within a skeever's unarmed reach.
+  f.Human().SetPos({ 0, 10, 0 });
+  SECTION("A skeever bites with the skeever's attacks, in turn")
+  {
+    GiveRace(f.Npc(), 0x13201); // SkeeverRace
+    f.Npc().SetEquipment(Equipment());
+    const std::set<std::string> skeever = { "attackStart_Attack1",
+      "attackStart_Attack2", "attackStart_SkeeverLungeMedium",
+      "attackStart_SkeeverLungeShort", "attackStart_SkeeverLungeLong" };
+    REQUIRE(f.Attack());
+    const auto first = SentSwing(f);
+    REQUIRE(skeever.count(first));
+    f.p.Messages().clear();
+    f.Npc().SetLastHitTime(kCombatHuman,
+      std::chrono::steady_clock::now() - std::chrono::seconds(10));
+    REQUIRE(f.Attack());
+    const auto second = SentSwing(f);
+    REQUIRE(skeever.count(second));
+    REQUIRE(second != first);
+  }
+  SECTION("A draugr with a dagger swings a one-handed draugr attack")
+  {
+    GiveRace(f.Npc(), 0xd53); // DraugrRace
+    REQUIRE(f.Attack());
+    const std::set<std::string> oneHanded = { "attackStart1HMSwipe",
+      "attackStart1HMX2", "attackStart1HMBackSlash" };
+    REQUIRE(oneHanded.count(SentSwing(f)));
+  }
+  SECTION("An unarmed draugr punches, as its race lists")
+  {
+    GiveRace(f.Npc(), 0xd53);
+    f.Npc().SetEquipment(Equipment());
+    REQUIRE(f.Attack());
+    REQUIRE(SentSwing(f) == "AttackStartH2HRight");
+  }
+  SECTION("A Nord keeps the playable races' events")
+  {
+    GiveRace(f.Npc(), 0x13746); // NordRace
+    REQUIRE(f.Attack());
+    REQUIRE(SentSwing(f) == "attackStart");
+  }
+  SECTION("A race with no standard attack has no swing, so no blow")
+  {
+    // Armed, so its reach is the dagger's and only the race refuses.
+    GiveRace(f.Npc(), 0xebe18); // SkeletonNecroPriestRace
+    REQUIRE_FALSE(f.Attack());
+    REQUIRE(f.damage->calls == 0);
+    REQUIRE(f.Human().GetActorValues().healthPercentage == 1.f);
+    REQUIRE(SentSwing(f).empty());
   }
 }
 
@@ -729,6 +813,45 @@ TEST_CASE("Server NPC health death and attack events deliver reliably without ho
       return true;
     }, true, { 0, 1 });
   }
+}
+
+// Thornswood #6720: the first blow of a fight came with no swing in any
+// game, because the weapon was drawn only after the blow's damage.
+TEST_CASE("A sheathed server NPC draws in every game before its first swing",
+          "[ServerNpcCombat][NpcDelivery][PartOne][espm]")
+{
+  DeliveryFixture f;
+  f.Npc().SetAnimationVariableBool(
+    AnimationVariableBool::kVariable__skymp_isWeapDrawn, false);
+  REQUIRE_FALSE(f.Npc().IsWeaponDrawn());
+  f.p.Messages().clear();
+  REQUIRE_FALSE(f.Attack());
+  REQUIRE(f.Npc().IsWeaponDrawn());
+  REQUIRE(f.damage->calls == 0);
+  REQUIRE(f.Human().GetActorValues().healthPercentage == 1.f);
+  CheckDirectDelivery<UpdateMovementMessage>(f.p, [&](const auto& message) {
+    if (message.idx != f.Npc().GetIdx()) return false;
+    CHECK(message.data.isWeapDrawn);
+    return true;
+  }, true, { 0, 1 });
+  for (const auto& sent : f.p.Messages()) {
+    auto animation = dynamic_cast<UpdateAnimationMessage*>(sent.message.get());
+    REQUIRE_FALSE((animation && animation->idx == f.Npc().GetIdx()));
+  }
+
+  // The swing waits the weapon's swing time after the draw.
+  f.p.Messages().clear();
+  REQUIRE_FALSE(f.Attack());
+  REQUIRE(f.damage->calls == 0);
+  REQUIRE(f.p.Messages().empty());
+
+  f.Npc().DrawServerWeapon(std::chrono::steady_clock::now() - std::chrono::seconds(10));
+  f.p.Messages().clear();
+  REQUIRE(f.Attack());
+  REQUIRE(f.damage->calls == 1);
+  CheckDirectDelivery<UpdateAnimationMessage>(f.p, [&](const auto& message) {
+    return message.idx == f.Npc().GetIdx();
+  }, true, { 0, 1 });
 }
 
 TEST_CASE("A disconnected observer receives no later server NPC movement or health events",

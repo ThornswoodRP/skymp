@@ -1,6 +1,8 @@
 #pragma once
 #include "RecordHeader.h"
 #include <set>
+#include <string>
+#include <vector>
 
 #pragma pack(push, 1)
 
@@ -60,6 +62,26 @@ public:
     float unarmedReach = 0.f;
 
     std::set<uint32_t> spells = {};
+
+    // The race's attacks (ATKD then ATKE, Thornswood #6720): the event its
+    // behavior plays for each, and that attack's ATKD flags.
+    enum AttackFlags : uint32_t
+    {
+      kAttackIgnoreWeapon = 0x01,
+      kAttackBash = 0x02,
+      kAttackPower = 0x04,
+      kAttackLeft = 0x08,
+      kAttackRotating = 0x10
+    };
+    struct Attack
+    {
+      uint32_t flags = 0;
+      std::string event;
+    };
+    std::vector<Attack> attacks = {};
+    // ATKR, as stored: the race whose attacks this one uses. A form id local
+    // to the record's file.
+    uint32_t attackRace = 0;
   };
 
   Data GetData(CompressedFieldsCache& compressedFieldsCache) const noexcept;

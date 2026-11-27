@@ -20,7 +20,9 @@
 #include "gamemode_events/EquipItemAttemptEvent.h"
 #include "gamemode_events/UpdateEquipmentAttemptEvent.h"
 #include "script_objects/EspmGameObject.h"
+#include "libespm/RACE.h"
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <fmt/format.h>
 #include <fmt/ranges.h>
@@ -1472,6 +1474,92 @@ private:
 };
 }
 
+namespace {
+// Thornswood #6720. The event a server NPC's swing is played with, from its
+// own race's attacks. Until 27 Nov 2026 every swing was "attackStart", or
+// "AttackStartH2HRight" without a weapon. The playable races list both, but
+// creatures list neither (SkeeverRace: attackStart_Attack1,
+// attackStart_SkeeverLungeShort...; FrostbiteSpiderRace: attackStart_Bite1,
+// AttackStart_LeftChop...), and nor do draugr and skeletons
+// (attackStart1HMSwipe, attackStartGSChop...), so their games were sent an
+// event their behavior does not have and showed no swing while the damage
+// landed (measured from the five masters on ThornswoodRP/skymp#223's CI).
+//
+// The swing is a standard attack of the race: not a bash, a power attack, a
+// left hand or a rotating one. The event the playable races use stays when
+// the race lists it. Otherwise, with a weapon whose family the race names
+// its attacks by (1HM, 2HM, GS, H2H), only those; then the attacks take
+// turns. A race with no standard attack has no swing to show: empty.
+std::string PickServerNpcAttackEvent(WorldState& worldState, uint32_t raceId,
+                                     uint32_t source, bool unarmed,
+                                     uint32_t turn)
+{
+  auto& browser = worldState.GetEspm().GetBrowser();
+  auto& cache = worldState.GetEspmCache();
+  const auto lookup = browser.LookupById(raceId);
+  const auto race = espm::Convert<espm::RACE>(lookup.rec);
+  if (!race) return {};
+  auto data = race->GetData(cache);
+  if (data.attacks.empty() && data.attackRace) {
+    const auto attackLookup =
+      browser.LookupById(lookup.ToGlobalId(data.attackRace));
+    const auto attackRace = espm::Convert<espm::RACE>(attackLookup.rec);
+    if (!attackRace) return {};
+    data = attackRace->GetData(cache);
+  }
+  using Race = espm::RACE::Data;
+  constexpr uint32_t kNotStandard = Race::kAttackBash | Race::kAttackPower |
+    Race::kAttackLeft | Race::kAttackRotating;
+  std::vector<std::string> standard;
+  for (const auto& attack : data.attacks) {
+    if (!(attack.flags & kNotStandard) && !attack.event.empty()) {
+      standard.push_back(attack.event);
+    }
+  }
+  const auto lower = [](std::string text) {
+    std::transform(text.begin(), text.end(), text.begin(),
+                   [](unsigned char c) { return std::tolower(c); });
+    return text;
+  };
+  const std::string preferred = unarmed ? "attackstarth2hright" : "attackstart";
+  for (const auto& event : standard) {
+    if (lower(event) == preferred) return event;
+  }
+  std::string family = "h2h";
+  if (!unarmed) {
+    family.clear();
+    const auto weapon = espm::GetData<espm::WEAP>(source, &worldState).weapDNAM;
+    if (weapon) {
+      switch (weapon->animType) {
+        case espm::WEAP::AnimType::OneHandSword:
+        case espm::WEAP::AnimType::OneHandDagger:
+        case espm::WEAP::AnimType::OneHandAxe:
+        case espm::WEAP::AnimType::OneHandMace:
+          family = "1hm";
+          break;
+        case espm::WEAP::AnimType::TwoHandSword:
+          family = "gs";
+          break;
+        case espm::WEAP::AnimType::TwoHandAxe:
+          family = "2hm";
+          break;
+        default:
+          break;
+      }
+    }
+  }
+  std::vector<std::string> ofFamily;
+  for (const auto& event : standard) {
+    if (!family.empty() && lower(event).find(family) != std::string::npos) {
+      ofFamily.push_back(event);
+    }
+  }
+  const auto& choices = ofFamily.empty() ? standard : ofFamily;
+  if (choices.empty()) return {};
+  return choices[turn % choices.size()];
+}
+}
+
 bool ActionListener::ServerNpcAttack(uint32_t aggressorId, uint32_t targetId)
 {
   auto aggressorForm = partOne.worldState.LookupFormByIdNoLoad(aggressorId);
@@ -1517,8 +1605,25 @@ bool ActionListener::ServerNpcAttack(uint32_t aggressorId, uint32_t targetId)
     std::hypot(float(bounds.pos2[0]), float(bounds.pos2[1]))));
   if (!std::isfinite(reach) || reach <= 0 || !std::isfinite(distance) ||
       distance > std::min(300.f, reach + allowance)) return false;
+  const auto lastAnimation = aggressor->GetLastAnimEvent();
+  const uint32_t swingNumber = lastAnimation ? lastAnimation->numChanges + 1 : 1;
+  const std::string swingEvent = PickServerNpcAttackEvent(
+    partOne.worldState, aggressor->GetRaceId(), hit.source,
+    IsUnarmedAttack(hit.source), swingNumber);
+  if (swingEvent.empty()) return false;
+  // Thornswood #6720. A sheathed weapon is drawn first, and that is this
+  // step's action; the swing comes on a later step. The draw is paced like a
+  // swing: the first one waits the weapon's swing time after it.
+  const auto now = std::chrono::steady_clock::now();
+  if (!aggressor->IsWeaponDrawn()) {
+    aggressor->DrawServerWeapon(now);
+    return false;
+  }
+  const std::chrono::duration<float> sinceDraw =
+    now - aggressor->GetServerWeaponDrawnAt();
+  if (!CanHit(*aggressor, hit, sinceDraw)) return false;
   const std::chrono::duration<float> elapsed =
-    std::chrono::steady_clock::now() - aggressor->GetLastHitTime(std::nullopt);
+    now - aggressor->GetLastHitTime(std::nullopt);
   if (!CanHit(*aggressor, hit, elapsed)) return false;
   const auto previous = aggressor->GetLastHitTime(targetId);
   const HitActorLease lease(*aggressor, *target);
@@ -1527,7 +1632,7 @@ bool ActionListener::ServerNpcAttack(uint32_t aggressorId, uint32_t targetId)
   if (aggressor->GetLastHitTime(targetId) == previous) return false;
   UpdateAnimationMessage animation;
   animation.idx = aggressor->GetIdx();
-  animation.data.animEventName = IsUnarmedAttack(hit.source) ? "AttackStartH2HRight" : "attackStart";
+  animation.data.animEventName = swingEvent;
   const auto last = aggressor->GetLastAnimEvent();
   animation.data.numChanges = last ? last->numChanges + 1 : 1;
   partOne.animationSystem.Process(aggressor, animation.data);
