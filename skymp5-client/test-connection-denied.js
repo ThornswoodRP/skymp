@@ -86,6 +86,10 @@ const stubs = {
   '../../messages': { MsgType: {} },
   './clientListener': { ClientListener: ClientListener },
   './remoteServer': { RemoteServer: class { } },
+  // Each new connection starts the server-first activation rules afresh
+  // (fc73109d, 18 Nov). Nothing here activates anything, so the stand-in
+  // only has to be there.
+  '../../extensions/objectReferenceEx': { ObjectReferenceEx: { resetServerFirstActivation: function () { } } },
 };
 const NetworkingService = load(NETWORKING, stubs).NetworkingService;
 
