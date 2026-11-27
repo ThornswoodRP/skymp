@@ -14,6 +14,14 @@
 #  ifndef NOMINMAX
 #    define NOMINMAX
 #  endif
+// THORNSWOOD (Thornswood #7444): without WIN32_LEAN_AND_MEAN, Windows.h
+// declares Winsock 1, which cannot share a file with the Winsock 2 that
+// SLikeNet and the Mongo driver include, and without NOMINMAX it defines min
+// and max, which the archives' std::numeric_limits calls cannot follow.
+// server_guest_lib compiles in batches (Thornswood #7247), so it shares one.
+#  ifndef WIN32_LEAN_AND_MEAN
+#    define WIN32_LEAN_AND_MEAN
+#  endif
 #  include <Windows.h>
 #  include <io.h>
 #else
