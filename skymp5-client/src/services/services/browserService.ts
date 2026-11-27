@@ -35,6 +35,12 @@ export class BrowserService extends ClientListener {
     if (e.isDown([DxScanCode.F1])) {
       FormView.isDisplayingNicknames = !FormView.isDisplayingNicknames;
     }
+    // THORNSWOOD PATCH (#4616): while the character choice is held at the
+    // main menu the page is the only thing on screen to choose with, so
+    // neither F2, F6 nor Escape hides it or takes its mouse away.
+    if (this.choiceHeld()) {
+      return;
+    }
     if (e.isDown([DxScanCode.F2])) {
       this.sp.browser.setVisible(!this.sp.browser.isVisible());
     }
@@ -72,6 +78,14 @@ export class BrowserService extends ClientListener {
   }
 
   private onMenuOpen(e: MenuOpenEvent) {
+    // THORNSWOOD PATCH (#4616): the main menu is where the character choice
+    // is, so while thornswood-front.js holds the choice it is not a menu the
+    // page has to get out of the way of. Hiding the page for it left nothing
+    // to choose with, and nothing showed it again, because the main menu
+    // stays open until the pick loads.
+    if (e.name === Menu.Main && this.choiceHeld()) {
+      return;
+    }
     if (this.isBadMenu(e.name)) {
       this.sp.browser.setVisible(false);
       this.badMenusOpen.add(e.name);
@@ -84,12 +98,30 @@ export class BrowserService extends ClientListener {
     if (this.badMenusOpen.delete(e.name)) {
       if (this.badMenusOpen.size === 0) {
         this.sp.browser.setVisible(true);
+        // THORNSWOOD PATCH (#4616): hiding the page took its focus with it
+        // (NirnLab drops the real focus on a hide), and the choice is chosen
+        // with the mouse, so it gets the mouse back with the page.
+        if (this.choiceHeld()) {
+          this.sp.browser.setFocused(true);
+          this.sp.browser.executeJavaScript(focusEventString);
+        }
       }
     }
 
-    if (e.name === Menu.HUD) {
+    // THORNSWOOD PATCH (#4616): the HUD closes on the way back to the main
+    // menu, where the character choice is coming back up.
+    if (e.name === Menu.HUD && !this.choiceHeld()) {
       this.sp.browser.setVisible(false);
     }
+  }
+
+  // THORNSWOOD PATCH (#4616): thornswood-front.js says on globalThis whether
+  // it holds the character choice at the main menu: true from the moment the
+  // choice is due (the start, or a session ended back to the menu) until a
+  // pick goes in or the world is up. SkyrimPlatform's plugins share one
+  // globalThis, the way __thornswoodLoadRefused and __thornswoodInWorld go.
+  private choiceHeld(): boolean {
+    return (globalThis as any).__thornswoodChoiceHeld === true;
   }
 
   private isBadMenu(menu: string) {
