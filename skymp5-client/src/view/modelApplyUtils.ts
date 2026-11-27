@@ -11,15 +11,25 @@ export class ModelApplyUtils {
   }
 
   static applyModelIsOpen(refr: ObjectReference, isOpen: boolean) {
-    refr.setOpen(isOpen);
-
     // See also objectReferenceEx.ts
     const caveGSecretDoor01 = 0x6f703;
+    const base = refr.getBaseObject();
+    const needsParent = base?.getFormID() === caveGSecretDoor01;
+    if (base?.getType() === FormType.Door && !needsParent) {
+      // FormView reapplies the server state while the door is visible.
+      // Let an animation already heading to that state finish on its own.
+      const state = refr.getOpenState();
+      const alreadyMovingOrThere = isOpen ? state === 1 || state === 2 : state === 3 || state === 4;
+      if (alreadyMovingOrThere) {
+        return;
+      }
+    }
+    refr.setOpen(isOpen);
 
     // TODO: add more activators to support more cells
     const parentActivatorId = 0x460ca;
 
-    if (refr.getBaseObject()?.getFormID() === caveGSecretDoor01) {
+    if (needsParent) {
       const openOrOpening = [1, 2].includes(refr.getOpenState());
       if (openOrOpening) {
         if (!isOpen) {
