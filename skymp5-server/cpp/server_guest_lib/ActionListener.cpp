@@ -6,6 +6,7 @@
 #include "Exceptions.h"
 #include "GetBaseActorValues.h"
 #include "HitData.h"
+#include "KillMoves.h"
 #include "MathUtils.h"
 #include "MovementValidation.h"
 #include "MpObjectReference.h"
@@ -1951,6 +1952,26 @@ void ActionListener::OnWeaponHit(MpActor* aggressor,
     currentActorValues.healthPercentage < 0.f
     ? 0.f
     : currentActorValues.healthPercentage;
+
+  // Thornswood #4507. The killmove this swing asks for is held on the target
+  // only while this one write runs; MpActor::Kill plays it if the write's
+  // death goes through. A refused death (mp.onDying: somebody going down)
+  // never plays one.
+  struct KillMoveScope
+  {
+    MpActor& target;
+    ~KillMoveScope() { target.ClearPendingKillMove(); }
+  } killMoveScope{ targetActor };
+  if (hitData.killMoves && !hitData.killMoves->empty() &&
+      !hitData.isBashAttack && !hitData.isHitBlocked &&
+      currentActorValues.healthPercentage <= 0.f) {
+    auto& espm = partOne.worldState.GetEspm();
+    if (const auto idle =
+          KillMoves::Pick(espm.GetBrowser(), partOne.worldState.GetEspmCache(),
+                          *hitData.killMoves, hitData.isPowerAttack)) {
+      targetActor.SetPendingKillMove(aggressor->GetFormId(), *idle);
+    }
+  }
 
   targetActor.NetSetPercentages(
     currentActorValues, aggressor,

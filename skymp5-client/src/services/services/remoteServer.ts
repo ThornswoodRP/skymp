@@ -34,6 +34,7 @@ import { FormModel, WorldModel } from '../../view/model';
 import { LoadGameService } from './loadGameService';
 import { UpdateMovementMessage } from '../messages/updateMovementMessage';
 import { ChangeValuesMessage } from '../messages/changeValuesMessage';
+import { KillMoveMessage } from '../messages/killMoveMessage';
 import { UpdateAnimationMessage } from '../messages/updateAnimationMessage';
 import { UpdateEquipmentMessage } from '../messages/updateEquipmentMessage';
 import { RagdollService } from './ragdollService';
@@ -179,6 +180,7 @@ export class RemoteServer extends ClientListener {
     this.controller.emitter.on("destroyActorMessage", (e) => this.onDestroyActorMessage(e));
     this.controller.emitter.on("setRaceMenuOpenMessage", (e) => this.onSetRaceMenuOpenMessage(e));
     this.controller.emitter.on("updatePropertyMessage", (e) => this.onUpdatePropertyMessage(e));
+    this.controller.emitter.on("killMoveMessage", (e) => this.onKillMoveMessage(e));
     this.controller.emitter.on("deathStateContainerMessage", (e) => this.onDeathStateContainerMessage(e));
 
     this.controller.emitter.on("connectionAccepted", () => this.handleConnectionAccepted());
@@ -1284,6 +1286,33 @@ export class RemoteServer extends ClientListener {
           }
         }
       }
+    });
+  }
+
+  // Thornswood #4507. The server picked a killmove for a melee hit that
+  // kills. It comes before the death, so DeathService knows the death comes
+  // by the pair when it arrives.
+  private onKillMoveMessage(event: ConnectionMessage<KillMoveMessage>): void {
+    const msg = event.message;
+    const actorOf = (idx: number): Actor | null => {
+      const id = this.getIdManager().getId(idx);
+      if (id === this.getWorldModel().playerCharacterFormIdx) {
+        return Game.getPlayer();
+      }
+      const form = this.worldModel.forms[id];
+      if (form === undefined || !form.refrId) {
+        return null;
+      }
+      return Actor.from(Game.getFormEx(remoteIdToLocalId(form.refrId)));
+    };
+    once('update', () => {
+      const attacker = actorOf(msg.idx);
+      const target = actorOf(msg.targetIdx);
+      if (!attacker || !target) {
+        logTrace(this, `onKillMoveMessage - actors not here`, msg.idx, msg.targetIdx);
+        return;
+      }
+      this.controller.emitter.emit("applyKillMoveEvent", { attacker, target, idle: msg.idle });
     });
   }
 

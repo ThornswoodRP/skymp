@@ -30,6 +30,8 @@ export declare function getScriptVariable(formId: number, scriptName: string, va
 // Thornswood #4511: writes the variable `variableName` of the script `scriptName` attached to form `formId`. An array is filled in place at its own size, so `value` is an array of exactly that many. Each value must be the variable's kind (a number, boolean, string, or a form or null for an object); one that is not throws, and nothing is written. False when the script is not attached or has no such variable.
 export declare function setScriptVariable(formId: number, scriptName: string, variableName: string, value: ScriptValue): boolean
 export type ScriptValue = boolean | number | string | Form | null | (boolean | number | string | Form | null)[]
+// Thornswood #4507: the killmoves Skyrim's own condition code judges fit for actor `attackerFormId` on actor `targetFormId`, under the killmove roots of a normal or a power attack, in the order the game takes them, leaving ShouldAttackKill and the KillMove global to the server. Empty when none fit or either actor is not loaded.
+export declare function getFittingKillMoves(attackerFormId: number, targetFormId: number, isPowerAttack: boolean): number[]
 // Thornswood #1385: while ignored, the game does not hold form `formId` to its carry weight (Actor::IsOverEncumbered answers no), so being overloaded never makes it walk.
 export declare function setOverEncumberedIgnored(formId: number, ignored: boolean): void
 export declare function isOverEncumberedIgnored(formId: number): boolean

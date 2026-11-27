@@ -40,5 +40,8 @@ enum class MsgType : uint8_t
   UpdateGamemodeData = 32,
   CreateActor = 33,
 
+  // Thornswood #4507
+  KillMove = 34,
+
   Max
 };

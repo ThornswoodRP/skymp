@@ -7,6 +7,7 @@
 #include "libespm/FACT.h"
 #include "libespm/GroupDataInternal.h"
 #include "libespm/GroupUtils.h"
+#include "libespm/IDLE.h"
 #include "libespm/KYWD.h"
 #include "libespm/LCTN.h"
 #include "libespm/NAVM.h"
@@ -46,6 +47,7 @@ struct Browser::Impl
     groupStackByRecordPtr;
   std::vector<const RecordHeader*> objectReferences;
   std::vector<const RecordHeader*> constructibleObjects;
+  std::vector<const RecordHeader*> idles;
   std::vector<const RecordHeader*> keywords;
   std::vector<const RecordHeader*> locations;
   std::vector<const RecordHeader*> factions;
@@ -125,6 +127,9 @@ const std::vector<const RecordHeader*>& Browser::GetRecordsByType(
   if (!std::strcmp(type, espm::COBJ::kType)) {
     return pImpl->constructibleObjects;
   }
+  if (!std::strcmp(type, espm::IDLE::kType)) {
+    return pImpl->idles;
+  }
   if (!std::strcmp(type, espm::KYWD::kType)) {
     return pImpl->keywords;
   }
@@ -146,9 +151,10 @@ const std::vector<const RecordHeader*>& Browser::GetRecordsByType(
   if (!std::strcmp(type, "NAVM")) {
     return pImpl->navmeshRecords;
   }
-  throw std::runtime_error("GetRecordsByType currently supports only REFR, "
-                           "COBJ, KYWD, LCTN, FACT, QUST, WRLD, CELL and NAVM "
-                           "records");
+  throw std::runtime_error(
+    "GetRecordsByType currently supports only REFR, "
+    "COBJ, IDLE, KYWD, LCTN, FACT, QUST, WRLD, CELL and "
+    "NAVM records");
 }
 
 const std::vector<const RecordHeader*>& Browser::GetRecordsAtPos(
@@ -264,6 +270,10 @@ bool Browser::ReadAny(const GroupStack* parentGrStack)
 
     if (utils::Is<espm::COBJ>(t)) {
       pImpl->constructibleObjects.push_back(recHeader);
+    }
+
+    if (utils::Is<espm::IDLE>(t)) {
+      pImpl->idles.push_back(recHeader);
     }
 
     if (utils::Is<espm::KYWD>(t)) {
