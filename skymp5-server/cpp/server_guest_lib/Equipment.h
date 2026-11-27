@@ -5,6 +5,11 @@ struct Equipment
 {
   [[nodiscard]] bool IsSpellEquipped(uint32_t spellFormId) const;
 
+  // THORNSWOOD #6746. What is worn, for one log line: the base ids in hex,
+  // an L after a left-hand one, then the spells by hand. Nothing carried
+  // but not worn.
+  [[nodiscard]] std::string WornList() const;
+
   // TODO: get rid in favor of Serialize
   nlohmann::json ToJson() const;
   static Equipment FromJson(const simdjson::dom::element& element);

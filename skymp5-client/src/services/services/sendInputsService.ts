@@ -11,7 +11,7 @@ import { Animation, AnimationSource } from "../../sync/animation";
 import { Actor, EquipEvent, FormType } from "skyrimPlatform";
 import { getAppearance } from "../../sync/appearance";
 import { ActorValues, getActorValues } from "../../sync/actorvalues";
-import { getEquipment } from "../../sync/equipment";
+import { getEquipment, wornList } from "../../sync/equipment";
 import { nextHostAttempt } from "../../view/hostAttempts";
 import { traceHostedSend } from "../../view/spawnTrace";
 import { SkympClient } from "./skympClient";
@@ -347,6 +347,10 @@ export class SendInputsService extends ClientListener {
                 message,
                 reliability: "reliable"
             });
+            // THORNSWOOD #6746 measurement: the owner's half of one outfit
+            // change. The server's OnUpdateEquipment line and each viewer's
+            // "Equipment" lines are the other two.
+            logTrace(this, `Equipment sent change ${eq.numChanges}, worn ${wornList(eq)}`);
         }
     }
 

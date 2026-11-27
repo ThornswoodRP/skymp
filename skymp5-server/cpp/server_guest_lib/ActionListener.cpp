@@ -671,6 +671,14 @@ void ActionListener::OnUpdateEquipment(const RawMessageData& rawMsgData,
       stored.data = data;
       SendToNeighbours(msg.idx, rawMsgData.userId, stored, true);
     }
+    // THORNSWOOD #6746 measurement. One line per stored change of a
+    // person's outfit: the number the game sent, the number the record had,
+    // and what is worn now. With the game's send line and the viewers'
+    // apply lines, it says which hop an outfit others did not see stopped at.
+    spdlog::info("OnUpdateEquipment {:x} - stored change {} (record had {}), "
+                 "worn {}",
+                 actorFormId, data.numChanges,
+                 actor->GetEquipment().numChanges, data.WornList());
     actor->SetEquipment(data);
     for (uint32_t itemId : refusedItemIds) {
       SpSnippetObjectArgument itemArg;
