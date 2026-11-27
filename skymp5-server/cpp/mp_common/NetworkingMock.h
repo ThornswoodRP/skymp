@@ -18,6 +18,8 @@ public:
 
   std::string GetIp(UserId userId) const override;
 
+  ConnectionStats GetConnectionStats(UserId userId) const override;
+
   void CloseConnection(UserId userId) override;
 
 private:

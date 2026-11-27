@@ -163,6 +163,12 @@ std::string Networking::MockServer::GetIp(UserId userId) const
   return "";
 }
 
+Networking::ConnectionStats Networking::MockServer::GetConnectionStats(
+  UserId userId) const
+{
+  return {};
+}
+
 void Networking::MockServer::CloseConnection(UserId userId)
 {
   pImpl->packets.push_back(
