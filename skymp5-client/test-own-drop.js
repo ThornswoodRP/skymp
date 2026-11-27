@@ -84,7 +84,7 @@ function rig() {
     w.forms[id] = r;
     return r;
   }
-  const player = { actor: true, getFormID: function () { return 0x14; }, getActorBase: function () { return PLAYER_BASE; } };
+  const player = { actor: true, getFormID: function () { return 0x14; }, getBaseObject: function () { return PLAYER_BASE; } };
   player.placeAtMe = function (b) { const id = w.nextId++; const r = refr(id, b); w.spawned.push(r); return r; };
   w.forms[0x14] = player;
   w.forms[CLOTHES] = baseForm;
@@ -95,6 +95,7 @@ function rig() {
     Game: { getPlayer: function () { return player; }, getFormEx: function (id) { return w.forms[id] || null; } },
     ObjectReference: { from: function (f) { return f || null; } },
     Actor: { from: function (f) { return f && f.actor ? f : null; } },
+    ActorBase: { from: function (f) { return f === PLAYER_BASE ? f : null; } },
     TESModPlatform: { setWeaponDrawnMode: function () { } },
     FormType: { NPC: 43 },
     storage: {},

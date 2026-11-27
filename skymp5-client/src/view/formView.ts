@@ -246,7 +246,7 @@ export class FormView {
           // droppedByMe only to the one who dropped it, so only their game
           // owns it; everybody else's keeps it as the place has it.
           if (model.droppedByMe && refr) {
-            const playerBase = (Game.getPlayer() as Actor).getActorBase();
+            const playerBase = ActorBase.from((Game.getPlayer() as Actor).getBaseObject());
             if (playerBase) {
               refr.setActorOwner(playerBase);
             }
