@@ -9,6 +9,7 @@
 #include <prometheus/gauge.h>
 #include <prometheus/histogram.h>
 #include <slikenet/MessageIdentifiers.h>
+#include <slikenet/statistics.h>
 #include <slikenet/types.h>
 #include <spdlog/spdlog.h>
 
@@ -245,6 +246,36 @@ public:
     auto address = peer->GetSystemAddressFromGuid(guid);
     std::string ip = address.ToString(false);
     return ip;
+  }
+
+  Networking::ConnectionStats GetConnectionStats(
+    Networking::UserId userId) const override
+  {
+    const auto guid = idManager->find(userId);
+    if (guid == RakNetGUID(-1)) {
+      throw std::runtime_error("User with id " + std::to_string(userId) +
+                               " doesn't exist");
+    }
+
+    Networking::ConnectionStats s;
+    s.lastPingMs = peer->GetLastPing(guid);
+    s.averagePingMs = peer->GetAveragePing(guid);
+    s.lowestPingMs = peer->GetLowestPing(guid);
+
+    RakNetStatistics rns;
+    if (!peer->GetStatistics(peer->GetSystemAddressFromGuid(guid), &rns)) {
+      return s;
+    }
+    s.bytesSent = rns.runningTotal[ACTUAL_BYTES_SENT];
+    s.bytesResent = rns.runningTotal[USER_MESSAGE_BYTES_RESENT];
+    s.bytesReceived = rns.runningTotal[ACTUAL_BYTES_RECEIVED];
+    for (int i = 0; i < NUMBER_OF_PRIORITIES; ++i) {
+      s.messagesWaiting += rns.messageInSendBuffer[i];
+    }
+    s.messagesToResend = rns.messagesInResendBuffer;
+    s.packetLoss = rns.packetlossTotal;
+    s.limitedByCongestion = rns.isLimitedByCongestionControl;
+    return s;
   }
 
   void CloseConnection(Networking::UserId userId) override

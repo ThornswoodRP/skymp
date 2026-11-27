@@ -117,6 +117,7 @@ Napi::Object ScampServer::Init(Napi::Env env, Napi::Object exports)
       InstanceMethod("createBot", &ScampServer::CreateBot),
       InstanceMethod("getUserByActor", &ScampServer::GetUserByActor),
       InstanceMethod("getUserIp", &ScampServer::GetUserIp),
+      InstanceMethod("getConnectionStats", &ScampServer::GetConnectionStats),
       InstanceMethod("kick", &ScampServer::Kick),
 
       InstanceMethod("getLocalizedString", &ScampServer::GetLocalizedString),
@@ -1439,6 +1440,34 @@ Napi::Value ScampServer::GetUserIp(const Napi::CallbackInfo& info)
   try {
     auto userId = info[0].As<Napi::Number>().Uint32Value();
     return Napi::String::New(info.Env(), server->GetIp(userId));
+  } catch (std::exception& e) {
+    throw Napi::Error::New(info.Env(), std::string(e.what()));
+  }
+}
+
+// Thornswood #5053: what one connection did, for the gamemode's minute line.
+Napi::Value ScampServer::GetConnectionStats(const Napi::CallbackInfo& info)
+{
+  try {
+    auto userId = info[0].As<Napi::Number>().Uint32Value();
+    const auto s = server->GetConnectionStats(userId);
+    auto env = info.Env();
+    auto out = Napi::Object::New(env);
+    out.Set("lastPingMs", Napi::Number::New(env, s.lastPingMs));
+    out.Set("averagePingMs", Napi::Number::New(env, s.averagePingMs));
+    out.Set("lowestPingMs", Napi::Number::New(env, s.lowestPingMs));
+    out.Set("bytesSent",
+            Napi::Number::New(env, static_cast<double>(s.bytesSent)));
+    out.Set("bytesResent",
+            Napi::Number::New(env, static_cast<double>(s.bytesResent)));
+    out.Set("bytesReceived",
+            Napi::Number::New(env, static_cast<double>(s.bytesReceived)));
+    out.Set("messagesWaiting", Napi::Number::New(env, s.messagesWaiting));
+    out.Set("messagesToResend", Napi::Number::New(env, s.messagesToResend));
+    out.Set("packetLoss", Napi::Number::New(env, s.packetLoss));
+    out.Set("limitedByCongestion",
+            Napi::Boolean::New(env, s.limitedByCongestion));
+    return out;
   } catch (std::exception& e) {
     throw Napi::Error::New(info.Env(), std::string(e.what()));
   }

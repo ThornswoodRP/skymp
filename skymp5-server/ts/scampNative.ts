@@ -36,6 +36,21 @@ export interface SaveCompletionResult {
   readonly supportsDurableUpsert: boolean;
 }
 
+// Thornswood #5053: one connection, as the transport sees it. Byte counts run
+// from when it opened; a ping of -1 is one not measured yet.
+export interface ConnectionStats {
+  lastPingMs: number;
+  averagePingMs: number;
+  lowestPingMs: number;
+  bytesSent: number;
+  bytesResent: number;
+  bytesReceived: number;
+  messagesWaiting: number;
+  messagesToResend: number;
+  packetLoss: number;
+  limitedByCongestion: boolean;
+}
+
 export interface ScampServer {
   on(event: "connect", handler: (userId: number) => void): void;
   on(event: "disconnect", handler: (userId: number) => void): void;
@@ -165,6 +180,8 @@ export interface ScampServer {
   createBot(): Bot;
   getUserByActor(formId: number): number;
   getUserIp(userId: number): string;
+  /** Thornswood #5053: what one connection did, as the transport saw it. */
+  getConnectionStats(userId: number): ConnectionStats;
   kick(userId: number): void;
 
   /** Thornswood #2740: replaces the file at path with text (UTF-8), whole.
