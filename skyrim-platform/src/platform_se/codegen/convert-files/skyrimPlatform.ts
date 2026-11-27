@@ -3306,6 +3306,7 @@ export declare class TESModPlatform extends PapyrusObject {
   static resetContainer(container: Form | null): void
   static resizeHeadpartsArray(npc: ActorBase | null, newSize: number): void
   static resizeTintsArray(newSize: number): void
+  static setCraftingInput(recipe: Form | null, item: Form | null, count: number): void
   static setFormIdUnsafe(Form: Form | null, newId: number): void
   static setNpcHairColor(npc: ActorBase | null, hairColor: number): void
   static setNpcRace(npc: ActorBase | null, race: Race | null): void
