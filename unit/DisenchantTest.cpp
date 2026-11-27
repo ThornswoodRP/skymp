@@ -30,21 +30,12 @@
 #include <optional>
 #include <set>
 #include <string>
+#include "TestFormIds.h"
 
 PartOne& GetPartOne();
 
 namespace {
-constexpr uint32_t kForge = 0x1ad6e;
-constexpr uint32_t kIronDagger = 0x1397e;
 constexpr uint32_t kMe = 0xff000000;
-
-MpChangeForm ThroughSave(const MpChangeForm& changeForm)
-{
-  static simdjson::dom::parser parser;
-  const std::string dump = MpChangeForm::ToJson(changeForm).dump();
-  simdjson::dom::element element = parser.parse(dump).value();
-  return MpChangeForm::JsonToChangeForm(element);
-}
 
 // The first reference in the load order whose base is an arcane enchanter:
 // Skyrim.esm's CraftingEnchantingWorkbench, found by its editor id. That it

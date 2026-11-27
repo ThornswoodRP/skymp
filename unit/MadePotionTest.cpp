@@ -23,16 +23,11 @@
 #include <limits>
 #include <memory>
 #include <nlohmann/json.hpp>
+#include "TestFormIds.h"
 
 PartOne& GetPartOne();
 
 namespace {
-constexpr uint32_t kForge = 0x1ad6e;
-constexpr uint32_t kBlueMountainFlower = 0x77e1c; // 3eb15 3eb25 3eaf3 73f2b
-constexpr uint32_t kWheat = 0x4b0ba;              // 3eb15 3eaf3 73f2c 10de5f
-constexpr uint32_t kRestoreHealth = 0x3eb15;
-constexpr uint32_t kFortifyHealth = 0x3eaf3;
-constexpr uint32_t kResistMagic = 0x39e51;
 // What the brewing game called its bottle: a runtime id, nothing more.
 constexpr uint32_t kRuntimeBottle = 0xff000a01;
 

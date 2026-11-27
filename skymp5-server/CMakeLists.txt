@@ -5,6 +5,7 @@ set(SKYMP5_SERVER_SOURCE_DIR ${CMAKE_CURRENT_LIST_DIR})
 
 include(${CMAKE_SOURCE_DIR}/cmake/apply_default_settings.cmake)
 include(${CMAKE_SOURCE_DIR}/cmake/yarn.cmake)
+include(${CMAKE_SOURCE_DIR}/cmake/thornswood_unity_build.cmake)
 
 find_package(CMakeRC CONFIG REQUIRED)
 
@@ -74,6 +75,8 @@ if(NOT EMSCRIPTEN)
   target_link_libraries(${PROJECT_NAME} PRIVATE mp_common server_guest_lib localization-provider)
   list(APPEND VCPKG_DEPENDENT ${PROJECT_NAME})
   apply_default_settings(TARGETS ${PROJECT_NAME})
+  # THORNSWOOD: compiled in batches (Thornswood #7247, cmake/thornswood_unity_build.cmake says why)
+  thornswood_unity_build(TARGETS ${PROJECT_NAME})
 endif()
 
 # All targets are ready

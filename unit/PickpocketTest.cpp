@@ -7,6 +7,7 @@
 #include <catch2/catch_all.hpp>
 
 #include "Messages.h"
+#include "TestFormIds.h"
 
 PartOne& GetPartOne();
 
@@ -15,18 +16,9 @@ using Catch::Matchers::ContainsSubstring;
 namespace {
 constexpr uint32_t kThief = 0xff000b10;
 constexpr uint32_t kMark = 0xff000b11;
-constexpr uint32_t kNpc = 0xff000b12;
-constexpr uint32_t kGold = 0xf;
-constexpr uint32_t kSword = 0x12eb7; // Iron Sword, Skyrim.esm
+constexpr uint32_t kPickpocketNpc = 0xff000b12;
 // WoodElfMalePreset10: an NPC_ record that is not the Player record.
 constexpr uint32_t kNpcBase = 0x10abac;
-
-Inventory::Entry Worn(uint32_t baseId)
-{
-  Inventory::ExtraData extra;
-  extra.worn_ = true;
-  return Inventory::Entry(baseId, 1, extra);
-}
 
 bool OpenedFor(PartOne& p, uint32_t target)
 {
@@ -183,16 +175,16 @@ TEST_CASE("Nobody pickpockets an NPC", "[Thornswood6622][espm]")
     std::make_unique<MpActor>(
       LocationalData{ { 50, 0, 0 }, {}, FormDesc::Tamriel() },
       w.p.CreateFormCallbacks(), kNpcBase),
-    kNpc);
-  auto& npc = w.p.worldState.GetFormAt<MpActor>(kNpc);
+    kPickpocketNpc);
+  auto& npc = w.p.worldState.GetFormAt<MpActor>(kPickpocketNpc);
   REQUIRE_FALSE(npc.IsCreatedAsPlayer());
 
   Sneak(w.thief, true);
   REQUIRE_FALSE(MpActor::MayPickpocket(w.thief, npc));
   w.p.Messages().clear();
   npc.Activate(w.thief);
-  REQUIRE_FALSE(OpenedFor(w.p, kNpc));
+  REQUIRE_FALSE(OpenedFor(w.p, kPickpocketNpc));
 
-  w.p.worldState.DestroyForm<MpActor>(kNpc);
+  w.p.worldState.DestroyForm<MpActor>(kPickpocketNpc);
   Done(w);
 }

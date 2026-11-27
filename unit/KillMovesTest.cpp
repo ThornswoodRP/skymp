@@ -9,6 +9,7 @@
 #include "KillMoves.h"
 #include "RawMessageData.h"
 #include "libespm/Loader.h"
+#include "TestFormIds.h"
 
 PartOne& GetPartOne();
 extern espm::Loader& GetEspmLoader();
@@ -24,7 +25,6 @@ constexpr uint32_t kBackStab00 = 0x100f17;               // under BackSide00
 constexpr uint32_t kFrontSideRoot = 0x24cd4;    // a root: no event of its own
 constexpr uint32_t kBoarKillMoves = 0x04030c95; // groups its children
 constexpr uint32_t kAttackRightRoot = 0x13211;
-constexpr uint32_t kIronDagger = 0x0001397e;
 
 const auto kExtraWornTrue = [] {
   Inventory::ExtraData extra;

@@ -1,6 +1,7 @@
 #include <catch2/catch_all.hpp>
 
 #include "CastDurations.h"
+#include "TestIds.h"
 #include <limits>
 #include <vector>
 
@@ -8,8 +9,6 @@
 // on this machine. 0x14 is the person's own character.
 
 namespace {
-constexpr uint32_t kPlayer = 0x14;
-constexpr uint32_t kOther = 0xff000a2c;
 constexpr uint32_t kOakflesh = 0x0005ad5c;
 constexpr uint32_t kCandlelight = 0x00043324;
 }

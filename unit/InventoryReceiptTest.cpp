@@ -132,13 +132,6 @@ Inventory InitialInventory()
   return inv;
 }
 
-void AttachSkyrimFiles(PartOne& server)
-{
-  // Created-actor FormDesc encoding and AttachSaveStorage FF checks need the
-  // real plugin list. Empty espmFiles stores full ff ids and breaks save ack.
-  server.AttachEspm(&GetEspmLoader());
-}
-
 MpActor& CreateHuman(PartOne& server)
 {
   server.CreateActor(kHuman, { 1, 1, 1 }, 0, 0x3c, 42);

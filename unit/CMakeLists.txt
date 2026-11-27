@@ -3,6 +3,7 @@ if(BUILD_UNIT_TESTS AND NOT EMSCRIPTEN)
 
   include(${CMAKE_SOURCE_DIR}/cmake/add_papyrus_library_ck.cmake)
   include(${CMAKE_SOURCE_DIR}/cmake/apply_default_settings.cmake)
+  include(${CMAKE_SOURCE_DIR}/cmake/thornswood_unity_build.cmake)
 
   #
   # papyrus_test_files
@@ -37,6 +38,8 @@ if(BUILD_UNIT_TESTS AND NOT EMSCRIPTEN)
     target_link_libraries(unit PUBLIC platform_lib)
   endif()
   apply_default_settings(TARGETS unit)
+  # THORNSWOOD: compiled in batches (Thornswood #7247, cmake/thornswood_unity_build.cmake says why)
+  thornswood_unity_build(TARGETS unit)
   list(APPEND VCPKG_DEPENDENT unit)
 
   if(SKYRIM_SE)

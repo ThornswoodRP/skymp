@@ -13,10 +13,6 @@
 #include <algorithm>
 #include <cstring>
 
-namespace {
-constexpr uint32_t kPlayerCharacterLevel = 1;
-}
-
 VarValue PapyrusObjectReference::IsHarvested(
   VarValue self, const std::vector<VarValue>& arguments)
 {
@@ -154,7 +150,7 @@ VarValue PapyrusObjectReference::AddItem(
       const auto kCountMult = 1;
       auto map = LeveledListUtils::EvaluateListRecurse(
         worldState->GetEspm().GetBrowser(), resultItemLookupRes, kCountMult,
-        kPlayerCharacterLevel);
+        LeveledListUtils::kPlayerCharacterLevel);
       for (auto& p : map) {
         selfRefr->AddItem(p.first, p.second);
       }

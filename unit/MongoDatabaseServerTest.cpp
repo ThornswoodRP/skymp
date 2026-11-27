@@ -5,6 +5,7 @@
 // on a machine with no mongod. Each test uses a database of its own, made from
 // a random name, and drops it at the end.
 #include "MpChangeForms.h"
+#include "TestUtils.hpp" // DumpChangeForm
 #include "database_drivers/FileDatabase.h"
 #include "database_drivers/MigrationDatabase.h"
 #include "database_drivers/MongoDatabase.h"
@@ -56,11 +57,6 @@ std::vector<MpChangeForm> All(Database& db)
   std::vector<MpChangeForm> res;
   db.Iterate([&](const MpChangeForm& f) { res.push_back(f); }, std::nullopt);
   return res;
-}
-
-std::string Dump(const MpChangeForm& f)
-{
-  return MpChangeForm::ToJson(f).dump();
 }
 
 #ifndef NO_MONGO
@@ -134,7 +130,7 @@ TEST_CASE("MongoDB driver keeps a form whole, the way the file driver does",
   named.displayName = "Brynja";
   named.setNodeScale = std::map<std::string, float>{ { "NPC Head", 1.25f } };
   REQUIRE(db->Upsert({ named }) == 1);
-  REQUIRE(Dump(All(*db).at(0)) == Dump(named));
+  REQUIRE(DumpChangeForm(All(*db).at(0)) == DumpChangeForm(named));
 
   // The optional fields go away: a $set would have kept the old ones.
   auto plain = Form("1", 7);
@@ -143,7 +139,7 @@ TEST_CASE("MongoDB driver keeps a form whole, the way the file driver does",
   REQUIRE(back.size() == 1);
   REQUIRE(!back[0].displayName.has_value());
   REQUIRE(!back[0].setNodeScale.has_value());
-  REQUIRE(Dump(back[0]) == Dump(plain));
+  REQUIRE(DumpChangeForm(back[0]) == DumpChangeForm(plain));
 }
 
 TEST_CASE(
@@ -275,9 +271,9 @@ TEST_CASE("Migration from files to MongoDB moves every form and checks it",
   REQUIRE(fromMongo.size() == 1500);
   std::map<std::string, std::string> a, b;
   for (auto& f : fromFiles)
-    a[f.formDesc.ToString()] = Dump(f);
+    a[f.formDesc.ToString()] = DumpChangeForm(f);
   for (auto& f : fromMongo)
-    b[f.formDesc.ToString()] = Dump(f);
+    b[f.formDesc.ToString()] = DumpChangeForm(f);
   REQUIRE(a == b);
 
   // The move stores the ids inside each form by plugin: the file world kept

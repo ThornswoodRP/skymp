@@ -10,8 +10,8 @@
 PartOne& GetPartOne();
 
 namespace {
-constexpr uint32_t kNpc = 0x39fe4;
-constexpr uint32_t kHuman = 0xff031079;
+constexpr uint32_t kLootNpc = 0x39fe4;
+constexpr uint32_t kLooter = 0xff031079;
 constexpr uint32_t kAssigned = 0x64b2e;
 
 struct NpcLootFixture
@@ -24,12 +24,12 @@ struct NpcLootFixture
     p.worldState.npcAllowCrimeFaction = true;
     p.worldState.npcSettings["Skyrim.esm"].spawnInInterior = true;
     auto& npc = Npc();
-    p.CreateActor(kHuman, npc.GetPos(), 0,
+    p.CreateActor(kLooter, npc.GetPos(), 0,
                   npc.GetCellOrWorld().ToFormId(p.worldState.espmFiles));
     Human().SetInventory(Inventory());
   }
-  MpActor& Npc() { return p.worldState.GetFormAt<MpActor>(kNpc); }
-  MpActor& Human() { return p.worldState.GetFormAt<MpActor>(kHuman); }
+  MpActor& Npc() { return p.worldState.GetFormAt<MpActor>(kLootNpc); }
+  MpActor& Human() { return p.worldState.GetFormAt<MpActor>(kLooter); }
   Inventory::Entry Assigned()
   {
     Inventory::ExtraData extra;
@@ -238,7 +238,7 @@ TEST_CASE("An NPC can fight with inherited gear after an attempted loot transfer
 {
   NpcLootFixture f;
   DoConnect(f.p, 0);
-  f.p.SetUserActor(0, kHuman);
+  f.p.SetUserActor(0, kLooter);
   f.Npc().SetServerControlled(true);
   f.Npc().SetPercentages({1, 1, 1});
   f.Human().SetPercentages({1, 1, 1});
@@ -248,7 +248,7 @@ TEST_CASE("An NPC can fight with inherited gear after an attempted loot transfer
   f.Npc().RemoveAllItems(&f.Human());
   REQUIRE(f.Human().GetInventory().IsEmpty());
   REQUIRE(f.Npc().GetEquipment() == gear);
-  REQUIRE(f.p.GetActionListener().ServerNpcAttack(kNpc, kHuman));
+  REQUIRE(f.p.GetActionListener().ServerNpcAttack(kLootNpc, kLooter));
   REQUIRE(f.Human().GetActorValues().healthPercentage < 1.f);
 }
 

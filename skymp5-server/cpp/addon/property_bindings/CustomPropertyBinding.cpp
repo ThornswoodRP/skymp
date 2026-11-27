@@ -14,20 +14,15 @@ auto EnsurePropertyExists(const GamemodeApi::State& state,
   return it;
 }
 
-bool StartsWith(const std::string& str, const char* prefix)
-{
-  return str.compare(0, strlen(prefix), prefix) == 0;
-}
-
 }
 
 CustomPropertyBinding::CustomPropertyBinding(const std::string& propertyName_)
 {
   this->propertyName = propertyName_;
   this->isPrivate =
-    StartsWith(propertyName_, MpObjectReference::GetPropertyPrefixPrivate());
-  this->isPrivateIndexed = StartsWith(
-    propertyName_, MpObjectReference::GetPropertyPrefixPrivateIndexed());
+    propertyName_.starts_with(MpObjectReference::GetPropertyPrefixPrivate());
+  this->isPrivateIndexed = propertyName_.starts_with(
+    MpObjectReference::GetPropertyPrefixPrivateIndexed());
 }
 
 std::string CustomPropertyBinding::GetPropertyName() const

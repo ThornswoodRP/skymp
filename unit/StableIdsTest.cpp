@@ -4,6 +4,7 @@
 #include "database_drivers/utils/StableIds.h"
 #include "Inventory.h"
 #include "MpChangeForms.h"
+#include "TestUtils.hpp" // DumpChangeForm
 #include "libespm/LoadOrder.h"
 #include <catch2/catch_all.hpp>
 #include <nlohmann/json.hpp>
@@ -131,10 +132,6 @@ MpChangeForm Loaded(const std::string& stored, const StableIds& ids,
   return MpChangeForm::JsonToChangeForm(element);
 }
 
-std::string Dump(const MpChangeForm& f)
-{
-  return MpChangeForm::ToJson(f).dump();
-}
 }
 
 TEST_CASE("Stable ids: a save reads back the same under the same order",
@@ -142,7 +139,7 @@ TEST_CASE("Stable ids: a save reads back the same under the same order",
 {
   StableIds ids(kBefore, {});
   auto f = Character(kBefore);
-  REQUIRE(Dump(Loaded(Stored(f, ids), ids)) == Dump(f));
+  REQUIRE(DumpChangeForm(Loaded(Stored(f, ids), ids)) == DumpChangeForm(f));
 }
 
 TEST_CASE("Stable ids: a load order change keeps every item, spell, head "
@@ -162,7 +159,7 @@ TEST_CASE("Stable ids: a load order change keeps every item, spell, head "
   // the moved effects.
   auto loaded = Loaded(stored, StableIds(kAfter, {}));
   auto expected = Character(kAfter);
-  REQUIRE(Dump(loaded) == Dump(expected));
+  REQUIRE(DumpChangeForm(loaded) == DumpChangeForm(expected));
 
   // And it is not what the old ids would have said.
   REQUIRE(Id(kAfter, "801:Sword.esp") != Id(kBefore, "801:Sword.esp"));
@@ -177,7 +174,7 @@ TEST_CASE("Stable ids: a world saved with numbers reads as it always did",
   auto f = Character(kBefore);
   auto legacy = MpChangeForm::ToJson(f).dump();
   REQUIRE_THAT(legacy, !ContainsSubstring("Sword.esp\""));
-  REQUIRE(Dump(Loaded(legacy, StableIds(kBefore, {}))) == Dump(f));
+  REQUIRE(DumpChangeForm(Loaded(legacy, StableIds(kBefore, {}))) == DumpChangeForm(f));
 }
 
 TEST_CASE("Stable ids: ids no plugin owns stay numbers", "[StableIds]")
