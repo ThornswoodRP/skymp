@@ -388,8 +388,9 @@ void Networking::HandlePacketClientside(Networking::IClient::OnPacket onPacket,
              packet->length, "");
   } else if (packetId == ID_CONNECTION_LOST ||
              packetId == ID_DISCONNECTION_NOTIFICATION) {
+    // THORNSWOOD (Thornswood #6568): which end it was, for the client's log.
     onPacket(state, Networking::PacketType::ClientSideDisconnect, nullptr, 0,
-             "");
+             DescribeDisconnect(packetId, false));
   } else if (packetId == ID_CONNECTION_ATTEMPT_FAILED) {
     onPacket(state, Networking::PacketType::ClientSideConnectionFailed,
              nullptr, 0, "");
@@ -400,6 +401,21 @@ void Networking::HandlePacketClientside(Networking::IClient::OnPacket onPacket,
     onPacket(state, Networking::PacketType::ClientSideConnectionDenied,
              nullptr, 0, err);
   }
+}
+
+const char* Networking::DescribeDisconnect(unsigned char packetId,
+                                           bool serverside)
+{
+  if (packetId == ID_DISCONNECTION_NOTIFICATION) {
+    return serverside ? "their game said goodbye"
+                      : "the server closed the connection";
+  }
+  if (packetId == ID_CONNECTION_LOST) {
+    return serverside
+      ? "the connection was lost: their game stopped answering"
+      : "the connection was lost: the server stopped answering";
+  }
+  return "";
 }
 
 void Networking::HandlePacketServerside(Networking::IServer::OnPacket onPacket,
@@ -417,6 +433,9 @@ void Networking::HandlePacketServerside(Networking::IServer::OnPacket onPacket,
           "Unexpected disconnection for system without userId (guid={})",
           packet->guid.g));
       }
+      // THORNSWOOD (Thornswood #6568): said apart in the server's log.
+      spdlog::info("user {} left: {}", userId,
+                   DescribeDisconnect(packetId, true));
       onPacket(state, userId, Networking::PacketType::ServerSideUserDisconnect,
                nullptr, 0);
       idManager.freeId(userId);
