@@ -8,6 +8,7 @@
 #include "script_classes/PapyrusActor.h"
 #include "script_objects/EspmGameObject.h"
 #include <algorithm>
+#include <vector>
 
 PartOne& GetPartOne();
 
@@ -139,4 +140,68 @@ TEST_CASE("An NPC still holds the spells on its own base record",
   REQUIRE(npc.IsSpellLearned(kFlames));
 
   p.worldState.DestroyForm<MpActor>(kNpcId);
+}
+
+namespace {
+constexpr uint32_t kNordRace = 0x13746;
+constexpr uint32_t kDarkElfRace = 0x13742;
+
+std::vector<uint32_t> RacePowers(PartOne& p, uint32_t raceId)
+{
+  const auto race = p.worldState.GetEspm().GetBrowser().LookupById(raceId);
+  const auto raceData = espm::GetData<espm::RACE>(raceId, &p.worldState);
+  std::vector<uint32_t> res;
+  for (const auto local : raceData.spells) {
+    const auto id = race.ToGlobalId(local);
+    const auto spell = espm::GetData<espm::SPEL>(id, &p.worldState);
+    if (spell.spellItem &&
+        (spell.spellItem->type == espm::SPEL::SpellType::Power ||
+         spell.spellItem->type == espm::SPEL::SpellType::LesserPower)) {
+      res.push_back(id);
+    }
+  }
+  return res;
+}
+}
+
+// Thornswood #6716. A person's race powers are those of the race they made
+// in the face menu, not those of the Player record's race (Nord).
+TEST_CASE("A person holds the powers of their own race, not the Nord ones",
+          "[Thornswood6716][authoritative-spells][espm]")
+{
+  PartOne& p = GetPartOne();
+  DoConnect(p, 0);
+  p.CreateActor(kPersonId, { 0, 0, 0 }, 0, 0x3c);
+  p.SetUserActor(0, kPersonId);
+  auto& actor = p.worldState.GetFormAt<MpActor>(kPersonId);
+  actor.SetPropertyValueDump("_skympAuthoritativeSpells", "true", false,
+                             false);
+
+  Appearance appearance;
+  appearance.raceId = kDarkElfRace;
+  actor.SetAppearance(&appearance);
+  REQUIRE(actor.GetRaceId() == kDarkElfRace);
+
+  const auto darkElf = RacePowers(p, kDarkElfRace);
+  const auto nord = RacePowers(p, kNordRace);
+  REQUIRE(!darkElf.empty());
+
+  for (const auto id : darkElf) {
+    REQUIRE(actor.IsSpellLearnedFromBase(id));
+    REQUIRE(actor.IsSpellLearned(id));
+  }
+
+  size_t nordOnly = 0;
+  for (const auto id : nord) {
+    if (std::find(darkElf.begin(), darkElf.end(), id) != darkElf.end()) {
+      continue;
+    }
+    REQUIRE_FALSE(actor.IsSpellLearnedFromBase(id));
+    REQUIRE_FALSE(actor.IsSpellLearned(id));
+    ++nordOnly;
+  }
+  REQUIRE(nordOnly > 0); // Battle Cry
+
+  p.DestroyActor(kPersonId);
+  DoDisconnect(p, 0);
 }
