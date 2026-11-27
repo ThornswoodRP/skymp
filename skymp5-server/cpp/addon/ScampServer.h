@@ -151,7 +151,16 @@ private:
   std::optional<std::vector<std::string>> cachedAvailableLanguages;
 
   static Napi::FunctionReference constructor;
-  std::map<uint32_t, std::pair<std::string, std::array<uint8_t, 2>>> npcAIProfiles;
+  // An NPC's authored AI data (AIDT): aggression, confidence, and its aggro
+  // radius (warn, warn or attack, attack), all zero when the behaviour is off
+  // (#6493).
+  struct NpcAIProfile
+  {
+    uint8_t aggression = 0;
+    uint8_t confidence = 4;
+    std::array<uint32_t, 3> aggroRadius{ 0, 0, 0 };
+  };
+  std::map<uint32_t, std::pair<std::string, NpcAIProfile>> npcAIProfiles;
   std::optional<std::map<uint32_t, std::vector<uint32_t>>> navmeshParents;
   std::map<std::tuple<uint32_t, int16_t, int16_t>, std::vector<uint32_t>> navmeshRegions;
   void EnsureNavmeshIndex();
