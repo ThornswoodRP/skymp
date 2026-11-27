@@ -11,8 +11,10 @@ if(WIN32)
   file(GLOB_RECURSE src "client/*")
   list(APPEND src "${CMAKE_SOURCE_DIR}/.clang-format")
   add_library(MpClientPlugin SHARED ${src})
+  # THORNSWOOD (Thornswood #7444): the client takes the data types its
+  # messages carry through messages (server_guest_types, below), never the
+  # server's own library.
   target_link_libraries(MpClientPlugin PUBLIC mp_common)
-  target_link_libraries(MpClientPlugin PUBLIC server_guest_lib) # For Inventory.cpp, required by messages
   set_target_properties(MpClientPlugin PROPERTIES OUTPUT_NAME "MpClientPlugin")
   apply_default_settings(TARGETS MpClientPlugin)
   list(APPEND VCPKG_DEPENDENT MpClientPlugin)
@@ -34,8 +36,42 @@ target_include_directories(messages PUBLIC "${CMAKE_CURRENT_LIST_DIR}/messages")
 target_link_libraries(messages PUBLIC viet)
 target_link_libraries(messages PUBLIC papyrus-vm-lib) # Utils.h: stricmp
 target_link_libraries(messages PUBLIC serialization)
+target_link_libraries(messages PUBLIC server_guest_types)
 apply_default_settings(TARGETS messages)
 list(APPEND VCPKG_DEPENDENT messages)
+
+#
+# server_guest_types
+#
+
+# THORNSWOOD (Thornswood #7444). The four data types the messages carry, which
+# the client and the server both serialize. Their sources stay in
+# server_guest_lib's folder, beside the rest of the server's types, and are
+# compiled here instead of in server_guest_lib.
+#
+# WHY. MpClientPlugin used to link the whole of server_guest_lib for these
+# four. A linker takes a static library's objects whole, and while each
+# source was its own object the client took these four and nothing else.
+# Since server_guest_lib compiles in batches (Thornswood #7247), one object
+# holds eight sources, so the client took the server code batched beside
+# them, and with it everything that code calls: measured at fork commit
+# 11988fae, MpClientPlugin.dll grew from 1.5 MB to 3.3 MB and its program
+# database names antigo, the Mongo drivers, libzip, rsm-bsa, libespm and
+# papyrus-vm, which the server alone uses. Now the client links only what
+# messages needs, so how the server compiles cannot change what goes into
+# the client.
+set(server_guest_types_src
+  "${CMAKE_CURRENT_SOURCE_DIR}/server_guest_lib/AnimationData.cpp"
+  "${CMAKE_CURRENT_SOURCE_DIR}/server_guest_lib/Appearance.cpp"
+  "${CMAKE_CURRENT_SOURCE_DIR}/server_guest_lib/Equipment.cpp"
+  "${CMAKE_CURRENT_SOURCE_DIR}/server_guest_lib/Inventory.cpp"
+)
+add_library(server_guest_types STATIC ${server_guest_types_src})
+# Appearance.cpp reads JsonUtils.h, whose helpers are inline: the folder only.
+target_include_directories(server_guest_types PRIVATE "${CMAKE_CURRENT_LIST_DIR}/mp_common")
+target_link_libraries(server_guest_types PUBLIC serialization)
+apply_default_settings(TARGETS server_guest_types)
+list(APPEND VCPKG_DEPENDENT server_guest_types)
 
 #
 # mp_common
@@ -69,6 +105,15 @@ apply_default_settings(TARGETS geo)
 #
 
 file(GLOB_RECURSE src "${CMAKE_CURRENT_SOURCE_DIR}/server_guest_lib/*")
+# THORNSWOOD (Thornswood #7444): server_guest_types compiles these, and the
+# server takes them from it through mp_common and messages.
+foreach(f ${server_guest_types_src})
+  list(FIND src "${f}" at)
+  if(at EQUAL -1)
+    message(FATAL_ERROR "server_guest_types names ${f}, which is not in server_guest_lib")
+  endif()
+endforeach()
+list(REMOVE_ITEM src ${server_guest_types_src})
 list(APPEND src "${CMAKE_SOURCE_DIR}/.clang-format")
 add_library(server_guest_lib STATIC ${src})
 target_include_directories(server_guest_lib PUBLIC "${CMAKE_CURRENT_LIST_DIR}/server_guest_lib")
