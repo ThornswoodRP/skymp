@@ -25,6 +25,7 @@
 #include "TPRenderSystemD3D11.h"
 #include "TextApi.h"
 #include "TextsCollection.h"
+#include <chrono>
 
 extern CallNativeApi::NativeCallRequirements g_nativeCallRequirements;
 
@@ -383,8 +384,20 @@ public:
     if (!ui)
       return;
 
-    if (!ui->IsMenuOpen(RE::CursorMenu::MENU_NAME))
+    if (!ui->IsMenuOpen(RE::CursorMenu::MENU_NAME)) {
+      if (click.held)
+        ++click.movesDropped;
       return;
+    }
+
+    if (click.held) {
+      if (!IsBrowserFocused())
+        ++click.movesDropped;
+      else if (GetCefModifiers_(0) & EVENTFLAG_LEFT_MOUSE_BUTTON)
+        ++click.movesWithButton;
+      else
+        ++click.movesWithoutButton;
+    }
 
     if (pCursorX && pCursorY)
       if (auto app = service->GetMyChromiumApp()) {
@@ -395,8 +408,17 @@ public:
 
   void OnMouseStateChange(MouseButton mouseButton, bool down) noexcept override
   {
-    if (!IsBrowserFocused())
+    if (!IsBrowserFocused()) {
+      if (click.held && mouseButton == MouseButton::Left && !down) {
+        spdlog::info("browser mouse: left up not sent, the page let go of "
+                     "the focus between the down and the up ({} ms)",
+                     click.Ms());
+        click.held = false;
+      }
       return;
+    }
+    if (mouseButton == MouseButton::Left && pCursorX && pCursorY)
+      LogLeftButton(down);
     if (pCursorX && pCursorY)
       if (auto app = service->GetMyChromiumApp()) {
         cef_mouse_button_type_t btn;
@@ -447,12 +469,74 @@ public:
   }
 
 private:
+  /*
+    THORNSWOOD #6713 measurement. Somebody found the help panel's buttons
+    hard to click and could not move the Settings slider, and no log says
+    what reached the page. A click on a page button needs its down and its
+    up on the same element, and a slider drag needs the moves between them
+    to carry the left button flag. So each left down and up sent to the page
+    is written once, where it was sent and whether the Cursor Menu was up,
+    and the up says how many moves went to the page in between, how many of
+    them carried the button, and how many were never sent because the Cursor
+    Menu was down or the page had let go of the focus.
+  */
+  struct LeftClick
+  {
+    bool held = false;
+    std::chrono::steady_clock::time_point downAt;
+    int downX = 0;
+    int downY = 0;
+    int movesWithButton = 0;
+    int movesWithoutButton = 0;
+    int movesDropped = 0;
+
+    long long Ms() const
+    {
+      return std::chrono::duration_cast<std::chrono::milliseconds>(
+               std::chrono::steady_clock::now() - downAt)
+        .count();
+    }
+  };
+
+  void LogLeftButton(bool down)
+  {
+    auto ui = RE::UI::GetSingleton();
+    const bool cursorMenu =
+      ui && ui->IsMenuOpen(RE::CursorMenu::MENU_NAME);
+    const int x = static_cast<int>(*pCursorX);
+    const int y = static_cast<int>(*pCursorY);
+    if (down) {
+      click = LeftClick();
+      click.held = true;
+      click.downAt = std::chrono::steady_clock::now();
+      click.downX = x;
+      click.downY = y;
+      spdlog::info("browser mouse: left down at {},{}, Cursor Menu {}", x, y,
+                   cursorMenu ? "open" : "closed");
+      return;
+    }
+    if (!click.held) {
+      spdlog::info("browser mouse: left up at {},{} with no down sent "
+                   "before it, Cursor Menu {}",
+                   x, y, cursorMenu ? "open" : "closed");
+      return;
+    }
+    spdlog::info("browser mouse: left up at {},{}, {} ms after the down at "
+                 "{},{}; moves sent {} with the button, {} without, {} not "
+                 "sent; Cursor Menu {}",
+                 x, y, click.Ms(), click.downX, click.downY,
+                 click.movesWithButton, click.movesWithoutButton,
+                 click.movesDropped, cursorMenu ? "open" : "closed");
+    click.held = false;
+  }
+
   std::shared_ptr<OverlayService> service;
   std::shared_ptr<InputConverter> conv;
   PageHeldKeys pageKeys;
   float* pCursorX = nullptr;
   float* pCursorY = nullptr;
   bool switchLayoutDownWas = false;
+  LeftClick click;
 };
 
 class SkyrimPlatformApp : public CEFUtils::SKSEPluginBase
