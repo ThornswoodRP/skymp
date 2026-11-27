@@ -9,6 +9,15 @@ freeze-frame screenshot flags, including bit 24, retain their original values.
 Bit 24 is not the bit used by the UI's pause counter; it is not cleared on the
 strength of its name.
 
+The face menu (`RaceSex Menu`) is the one menu that keeps both bits
+(Thornswood #6979). Its camera comes round to the character's front only while
+the game is paused under it. Without the pause it opened on the camera it
+found, first person or behind the character's back: Patrick's Dev start on
+26 Nov logged camera state 0 as it opened and `pauses 0` while it stood open,
+and showed the hall's door beside the sliders. A character in the face menu is
+in the creation hall, with nothing in the world to keep up with.
+`GameplayMenuPolicy::KeepsPause` names it and the fixture checks it.
+
 ## Native evidence and scope
 
 The supported executable is Skyrim SE 1.6.1170.0. Address Library identifiers

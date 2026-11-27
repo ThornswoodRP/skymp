@@ -1,5 +1,6 @@
 // Thornswood #4511. ScriptCallWaiting, the Promises runScriptFunction
-// (ScriptCallApi.cpp) keeps until the Papyrus VM says each call returned.
+// (ScriptCallApi.cpp) keeps until the Papyrus VM says each call returned, and
+// which values setScriptVariable takes into a script's variable.
 #include <cassert>
 #include <iostream>
 #include <string>
@@ -47,6 +48,34 @@ int main()
     f.flag = false;
     assert(s.isString && !f.isString && !f.flag);
   }
+  { // A value goes in only as the variable's own kind.
+    using K = ScriptValueKind;
+    using J = JsValueKind;
+    assert(ScriptValueMismatch(K::Int, J::Number).empty());
+    assert(ScriptValueMismatch(K::Float, J::Number).empty());
+    assert(ScriptValueMismatch(K::Bool, J::Boolean).empty());
+    assert(ScriptValueMismatch(K::String, J::String).empty());
+    assert(ScriptValueMismatch(K::Object, J::Object).empty());
+    assert(ScriptValueMismatch(K::Object, J::Nothing).empty());
+    assert(!ScriptValueMismatch(K::Int, J::String).empty());
+    assert(!ScriptValueMismatch(K::Int, J::Nothing).empty());
+    assert(!ScriptValueMismatch(K::Bool, J::Number).empty());
+    assert(!ScriptValueMismatch(K::String, J::Nothing).empty());
+    assert(!ScriptValueMismatch(K::Object, J::Number).empty());
+    assert(!ScriptValueMismatch(K::Object, J::Other).empty());
+    assert(!ScriptValueMismatch(K::Other, J::Number).empty());
+  }
+  { // An array is filled in place at its own size, never a None one.
+    assert(ScriptArrayMismatch(true, 128, true, 128).empty());
+    assert(ScriptArrayMismatch(true, 0, true, 0).empty());
+    assert(ScriptArrayMismatch(false, 0, true, 128) ==
+           "the array is None, so there is nothing to fill");
+    assert(ScriptArrayMismatch(true, 128, false, 0) ==
+           "it is an array, so an array is wanted");
+    assert(ScriptArrayMismatch(true, 128, true, 127) ==
+           "it holds 128 values and 127 were given");
+  }
   std::cout << "PASS run script function: waiting calls" << std::endl;
+  std::cout << "PASS set script variable: kinds and array sizes" << std::endl;
   return 0;
 }

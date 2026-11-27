@@ -142,7 +142,10 @@ RE::UI_MESSAGE_RESULTS Show(RE::IMenu* menu, RE::UIMessage* message)
     g_world.Title();
     g_enabled.store(0, std::memory_order_release);
   }
-  return GameplayMenuPolicy::Show(g_enabled.load(std::memory_order_acquire) != 0,
+  const char* raw = message->menu.c_str();
+  const std::string_view name{ raw ? raw : "" };
+  return GameplayMenuPolicy::Show(GameplayMenuPolicy::Unpauses(
+      g_enabled.load(std::memory_order_acquire) != 0, name),
     [&] {
       const auto result = menu->ProcessMessage(*message);
       if (result != RE::UI_MESSAGE_RESULTS::kIgnore &&

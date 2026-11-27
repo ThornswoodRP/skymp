@@ -36,6 +36,7 @@
 #include <random>
 #include <set>
 #include <string>
+#include <unordered_map>
 
 #include "ChangeValuesMessage.h"
 #include "KillMoveMessage.h"
@@ -704,9 +705,13 @@ void MpActor::ReplaceEquipment(Equipment newEquipment)
 {
   newEquipment.numChanges = GetEquipment().numChanges + 1;
   SetEquipment(newEquipment);
+  PublishEquipment();
+}
 
+void MpActor::PublishEquipment()
+{
   UpdateEquipmentMessage msg;
-  msg.data = newEquipment;
+  msg.data = GetEquipment();
   msg.idx = GetIdx();
   // Once to each person near it (Thornswood #6252). A plain loop, not
   // SendMessageToActorListeners: this runs from Init (EquipBestWeapon), before
@@ -717,6 +722,34 @@ void MpActor::ReplaceEquipment(Equipment newEquipment)
       listener->SendToUser(msg, true);
     }
   }
+}
+
+bool MpActor::DropWornPiecesThePackLacks(Equipment& equipment,
+                                         const Inventory& pack)
+{
+  std::unordered_map<uint32_t, uint64_t> unitsLeft;
+  for (const auto& entry : pack.entries) {
+    unitsLeft[entry.baseId] += entry.count;
+  }
+  std::vector<Inventory::Entry> kept;
+  kept.reserve(equipment.inv.entries.size());
+  bool dropped = false;
+  for (const auto& entry : equipment.inv.entries) {
+    if (entry.count > 0 && entry.GetWorn() != Inventory::Worn::None) {
+      auto it = unitsLeft.find(entry.baseId);
+      if (it == unitsLeft.end() || it->second == 0) {
+        dropped = true;
+        continue;
+      }
+      --it->second;
+    }
+    kept.push_back(entry);
+  }
+  if (dropped) {
+    equipment.inv.entries = std::move(kept);
+    ++equipment.numChanges;
+  }
+  return dropped;
 }
 
 bool MpActor::RenameEquipment(const Equipment& renamed)
@@ -1756,7 +1789,13 @@ bool MpActor::IsSpellLearnedFromBase(const uint32_t spellId) const
   const auto npcData = espm::GetData<espm::NPC_>(GetBaseId(), GetParent());
   const auto npc = GetParent()->GetEspm().GetBrowser().LookupById(GetBaseId());
 
-  const uint32_t raceId = npc.ToGlobalId(npcData.race);
+  // THORNSWOOD (#6716). The race is the actor's own (GetRaceId: the
+  // appearance's race, else the base record's through its templates), not
+  // the base record's. Every person is created on the Player record, whose
+  // race is Nord, so every person held the Nord power (Battle Cry) and no
+  // person of another race held their own (a Dunmer's Ancestor's Wrath was
+  // refused at the cast as not held).
+  const uint32_t raceId = GetRaceId();
 
   const auto raceData = espm::GetData<espm::RACE>(raceId, GetParent());
   const auto race = GetParent()->GetEspm().GetBrowser().LookupById(raceId);
@@ -1794,6 +1833,38 @@ bool MpActor::InheritsBaseSpell(uint32_t baseId,
     return true;
   }
   return spellType == espm::SPEL::SpellType::Ability;
+}
+
+bool MpActor::MayPickpocket(const MpActor& thief, const MpActor& mark)
+{
+  if (&thief == &mark || !thief.IsCreatedAsPlayer() ||
+      !mark.IsCreatedAsPlayer()) {
+    return false;
+  }
+  if (thief.IsDead() || mark.IsDead() || thief.IsDisabled() ||
+      mark.IsDisabled()) {
+    return false;
+  }
+  if (!thief.GetAnimationVariableBool("IsSneaking")) {
+    return false;
+  }
+  if (thief.GetCellOrWorld() != mark.GetCellOrWorld()) {
+    return false;
+  }
+  return (thief.GetPos() - mark.GetPos()).SqrLength() <=
+    kPickpocketReach * kPickpocketReach;
+}
+
+uint32_t MpActor::GetUnwornCount(uint32_t baseId) const
+{
+  const uint32_t carried = GetInventory().GetItemCount(baseId);
+  uint32_t worn = 0;
+  for (const auto& entry : GetEquipment().inv.entries) {
+    if (entry.baseId == baseId && entry.GetWorn() != Inventory::Worn::None) {
+      worn += entry.count;
+    }
+  }
+  return worn >= carried ? 0 : carried - worn;
 }
 
 std::vector<uint32_t> MpActor::GetSpellList() const
