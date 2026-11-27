@@ -12,6 +12,12 @@ namespace ScriptCallApi {
 // could not be started.
 Napi::Value RunScriptFunction(const Napi::CallbackInfo& info);
 
+// getScriptProperty(formId, scriptName, propertyName): the property's value
+// as it is now (a boolean, a number or a string), or undefined when the
+// script is not attached to the form, has no such property, or it is of
+// another kind.
+Napi::Value GetScriptProperty(const Napi::CallbackInfo& info);
+
 // Lets go of every Promise still waiting, when the plugins are reloaded.
 void Clear();
 

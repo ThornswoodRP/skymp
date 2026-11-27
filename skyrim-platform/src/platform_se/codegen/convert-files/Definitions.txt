@@ -18,6 +18,8 @@ export declare function setMenuOpenKeyBlocked(userEvent: string, code: number, b
 export declare function openBookWithText(bookFormId: number, text: string): boolean
 // Thornswood #4511: runs function `functionName` of the script `scriptName` attached to form `formId`, a script's own Papyrus function and not only a native one, with `args` (strings and booleans only). Resolves true once the function has returned, false when it could not be started (no such form, script or function, or the arguments do not match).
 export declare function runScriptFunction(formId: number, scriptName: string, functionName: string, args?: (string | boolean)[]): Promise<boolean>
+// Thornswood #4511: the property `propertyName` of the script `scriptName` attached to form `formId`, as it is now. Undefined when the script is not attached, has no such property, or it is not a boolean, number or string.
+export declare function getScriptProperty(formId: number, scriptName: string, propertyName: string): boolean | number | string | undefined
 // Thornswood #1385: while ignored, the game does not hold form `formId` to its carry weight (Actor::IsOverEncumbered answers no), so being overloaded never makes it walk.
 export declare function setOverEncumberedIgnored(formId: number, ignored: boolean): void
 export declare function isOverEncumberedIgnored(formId: number): boolean

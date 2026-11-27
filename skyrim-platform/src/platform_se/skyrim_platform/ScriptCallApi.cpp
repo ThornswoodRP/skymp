@@ -29,6 +29,12 @@ extern CallNativeApi::NativeCallRequirements g_nativeCallRequirements;
   once the VM says the function returned, so a plugin can run steps in order.
   Arguments are strings and booleans, which is what the calls it is for take;
   anything else is refused before anything is started.
+
+  getScriptProperty reads one property of such a script as it is now, so a
+  plugin can wait for the script's own state before it runs a step: QuickLoot
+  sets IsInitialLoad to False once it has read its file at the session's
+  start, and writing the file before then would put its defaults over what
+  was kept.
 */
 namespace {
 
@@ -45,12 +51,12 @@ void Settle(Napi::Env env, uint64_t id, bool ran)
   resolve->Value().Call(env.Undefined(), { Napi::Boolean::New(env, ran) });
 }
 
-// Starts the call, or says in `why` why it was not started.
-bool Dispatch(uint32_t formId, const std::string& scriptName,
-              const std::string& functionName, const std::vector<Arg>& args,
-              uint64_t id, std::string& why)
+// The script `scriptName` bound to form `formId`, or false with why not.
+bool FindBound(VM* vm, uint32_t formId, const std::string& scriptName,
+               RE::VMHandle& handle,
+               RE::BSTSmartPointer<RE::BSScript::Object>& bound,
+               std::string& why)
 {
-  auto vm = VM::GetSingleton();
   if (!vm) {
     why = "there is no Papyrus VM yet";
     return false;
@@ -65,12 +71,24 @@ bool Dispatch(uint32_t formId, const std::string& scriptName,
     why = "the VM has no handle policy";
     return false;
   }
-  const RE::VMHandle handle = policy->GetHandleForObject(
+  handle = policy->GetHandleForObject(
     static_cast<RE::VMTypeID>(form->GetFormType()), form);
-
-  RE::BSTSmartPointer<RE::BSScript::Object> bound;
   if (!vm->FindBoundObject(handle, scriptName.c_str(), bound) || !bound) {
     why = "the script is not attached to it";
+    return false;
+  }
+  return true;
+}
+
+// Starts the call, or says in `why` why it was not started.
+bool Dispatch(uint32_t formId, const std::string& scriptName,
+              const std::string& functionName, const std::vector<Arg>& args,
+              uint64_t id, std::string& why)
+{
+  auto vm = VM::GetSingleton();
+  RE::VMHandle handle = 0;
+  RE::BSTSmartPointer<RE::BSScript::Object> bound;
+  if (!FindBound(vm, formId, scriptName, handle, bound, why)) {
     return false;
   }
 
@@ -155,6 +173,41 @@ Napi::Value ScriptCallApi::RunScriptFunction(const Napi::CallbackInfo& info)
   return CreatePromise(executor);
 }
 
+Napi::Value ScriptCallApi::GetScriptProperty(const Napi::CallbackInfo& info)
+{
+  const auto env = info.Env();
+  const uint32_t formId = NapiHelper::ExtractUInt32(info[0], "formId");
+  const std::string scriptName =
+    NapiHelper::ExtractString(info[1], "scriptName");
+  const std::string propertyName =
+    NapiHelper::ExtractString(info[2], "propertyName");
+
+  RE::VMHandle handle = 0;
+  RE::BSTSmartPointer<RE::BSScript::Object> bound;
+  std::string why;
+  if (!FindBound(VM::GetSingleton(), formId, scriptName, handle, bound,
+                 why)) {
+    return env.Undefined();
+  }
+  const Variable* v =
+    bound->GetProperty(StringHolder::ThreadSingleton()[propertyName]);
+  if (!v) {
+    return env.Undefined();
+  }
+  switch (v->varType.GetUnmangledRawType()) {
+    case TypeInfo::RawType::kBool:
+      return Napi::Boolean::New(env, v->GetBool());
+    case TypeInfo::RawType::kInt:
+      return Napi::Number::New(env, v->GetSInt());
+    case TypeInfo::RawType::kFloat:
+      return Napi::Number::New(env, v->GetFloat());
+    case TypeInfo::RawType::kString:
+      return Napi::String::New(env, v->GetString().data());
+    default:
+      return env.Undefined();
+  }
+}
+
 void ScriptCallApi::Clear()
 {
   g_waiting.Clear();
@@ -165,4 +218,7 @@ void ScriptCallApi::Register(Napi::Env env, Napi::Object& exports)
   exports.Set("runScriptFunction",
               Napi::Function::New(
                 env, NapiHelper::WrapCppExceptions(RunScriptFunction)));
+  exports.Set("getScriptProperty",
+              Napi::Function::New(
+                env, NapiHelper::WrapCppExceptions(GetScriptProperty)));
 }
