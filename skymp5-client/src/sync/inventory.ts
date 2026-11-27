@@ -1025,6 +1025,28 @@ export const applyInventory = (
       }
     }
 
+    /*
+      THORNSWOOD PATCH (Thornswood #7175). The same item stacks in one row.
+
+      addItemEx made an extra list for every add that names the item, and
+      an item the server sends with no name of its own was given the form's
+      name, so every add of it came with a list of its own. The game shows
+      each such list as a row, so Firewood added five at one time and three
+      at another stood in the pack as "Firewood (5)" and "Firewood (3)". An
+      item that is never worn and never carries a condition on its name is
+      now added with no name when the server gives it none: with nothing
+      else on it, addItemEx makes no list, the units join the ones already
+      there, and takeAway takes such units as plain ones (#2146).
+    */
+    const plainName = !e.name && !worn && !wornLeft && (
+      type === FormType.Misc ||
+      type === FormType.Potion ||
+      type === FormType.Ingredient ||
+      type === FormType.Book ||
+      type === FormType.SoulGem ||
+      type === FormType.Key
+    );
+
     for (let i = 0; i < absCount; ++i) {
       if (worn || wornLeft) {
         TESModPlatform.pushWornState(!!worn, !!wornLeft);
@@ -1057,7 +1079,7 @@ export const applyInventory = (
         e.maxCharge ? e.maxCharge : 0,
         !!e.removeEnchantmentOnUnequip,
         e.chargePercent ? e.chargePercent : 0,
-        e.name ? cropName(e.name) : f.getName(),
+        e.name ? cropName(e.name) : plainName ? "" : f.getName(),
         e.soul ? e.soul : 0,
         e.poisonId ? Potion.from(Game.getFormEx(e.poisonId)) : null,
         e.poisonCount ? e.poisonCount : 0
