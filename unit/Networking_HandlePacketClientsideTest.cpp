@@ -47,14 +47,17 @@ TEST_CASE("HandlePacketClientside", "[Networking]")
   REQUIRE(state.n == 2);
   REQUIRE(state.callbackParams.packetType ==
           Networking::PacketType::ClientSideDisconnect);
-  REQUIRE(state.callbackParams.error == std::string(""));
+  REQUIRE(state.callbackParams.error ==
+          std::string("the server closed the connection"));
 
   packet.data = new uint8_t[1]{ ID_CONNECTION_LOST };
   Networking::HandlePacketClientside(increment, &state, &packet);
   REQUIRE(state.n == 3);
   REQUIRE(state.callbackParams.packetType ==
           Networking::PacketType::ClientSideDisconnect);
-  REQUIRE(state.callbackParams.error == std::string(""));
+  REQUIRE(
+    state.callbackParams.error ==
+    std::string("the connection was lost: the server stopped answering"));
 
   packet.data = new uint8_t[1]{ ID_CONNECTION_ATTEMPT_FAILED };
   Networking::HandlePacketClientside(increment, &state, &packet);
