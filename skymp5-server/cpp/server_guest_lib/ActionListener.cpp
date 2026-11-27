@@ -1496,15 +1496,16 @@ std::string PickServerNpcAttackEvent(WorldState& worldState, uint32_t raceId,
 {
   auto& browser = worldState.GetEspm().GetBrowser();
   auto& cache = worldState.GetEspmCache();
-  auto lookup = browser.LookupById(raceId);
-  auto race = espm::Convert<espm::RACE>(lookup.rec);
+  const auto lookup = browser.LookupById(raceId);
+  const auto race = espm::Convert<espm::RACE>(lookup.rec);
   if (!race) return {};
   auto data = race->GetData(cache);
   if (data.attacks.empty() && data.attackRace) {
-    lookup = browser.LookupById(lookup.ToGlobalId(data.attackRace));
-    race = espm::Convert<espm::RACE>(lookup.rec);
-    if (!race) return {};
-    data = race->GetData(cache);
+    const auto attackLookup =
+      browser.LookupById(lookup.ToGlobalId(data.attackRace));
+    const auto attackRace = espm::Convert<espm::RACE>(attackLookup.rec);
+    if (!attackRace) return {};
+    data = attackRace->GetData(cache);
   }
   using Race = espm::RACE::Data;
   constexpr uint32_t kNotStandard = Race::kAttackBash | Race::kAttackPower |
