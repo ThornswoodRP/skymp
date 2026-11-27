@@ -194,3 +194,25 @@ TEST_CASE("Thornswood #6717: a pack written without a worn piece takes it "
     REQUIRE(owner.GetInventory().GetItemCount(kGiven) == 1);
   }
 }
+
+PartOne& GetPartOne();
+
+TEST_CASE("Thornswood #6717: an NPC's leveled outfit is drawn once for its "
+          "pack and its record",
+          "[NpcBodyLoot][6717][espm]")
+{
+  PartOne& p = GetPartOne();
+  p.worldState.npcEnabled = true;
+  p.worldState.npcSettings["Skyrim.esm"].spawnInInterior = true;
+  // MS13BanditCampfire01: its outfit comes from leveled lists.
+  auto& bandit = p.worldState.GetFormAt<MpActor>(0x39fe4);
+  REQUIRE_FALSE(bandit.GetEquipment().inv.IsEmpty());
+  // Each draw is random, so look at several fresh ones.
+  for (int i = 0; i < 20; ++i) {
+    bandit.SetInventory(Inventory());
+    bandit.RelootContainer();
+    Equipment record = bandit.GetEquipment();
+    REQUIRE_FALSE(
+      MpActor::DropWornPiecesThePackLacks(record, bandit.GetInventory()));
+  }
+}

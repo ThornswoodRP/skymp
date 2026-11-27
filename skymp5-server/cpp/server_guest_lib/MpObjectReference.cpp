@@ -2426,8 +2426,15 @@ void MpObjectReference::EnsureBaseContainerAdded(espm::Loader& espm)
 
   auto outfitObjects = GetOutfitObjects(GetParent(), templateChain, lookupRes);
   for (auto& entry : outfitObjects) {
-    AddContainerObject(entry, &itemsToAdd);
-    AddContainerObject(entry, &itemsToEquip);
+    // THORNSWOOD (Thornswood #6717). A leveled outfit entry is drawn once and
+    // the same pieces go into the pack and onto the equipment record. Two
+    // separate draws gave the record pieces the pack never got.
+    std::map<uint32_t, uint32_t> drawn;
+    AddContainerObject(entry, &drawn);
+    for (auto& p : drawn) {
+      itemsToAdd[p.first] += p.second;
+      itemsToEquip[p.first] += p.second;
+    }
   }
   if (inheritedNpcGear) {
     // Do not create vanilla pockets. Only equipment needed by the NPC's
