@@ -2146,15 +2146,24 @@ Napi::Value ScampServer::GetNpcAIState(const Napi::CallbackInfo& info)
       auto values = EvaluateTemplate<espm::NPC_::UseAIData>(
         &world, actor.GetBaseId(), actor.GetTemplateChain(),
         [&](const espm::LookupResult& lookup, const espm::NPC_::Data&) {
-          std::array<uint8_t, 2> ai{ 0, 4 };
+          NpcAIProfile ai;
           espm::IterateFields_(lookup.rec, [&](const char* type, uint32_t size, const char* data) {
-            if (!std::memcmp(type, "AIDT", 4) && size >= 2) {
-              ai = { static_cast<uint8_t>(data[0]), static_cast<uint8_t>(data[1]) };
+            if (std::memcmp(type, "AIDT", 4) || size < 2) return;
+            ai.aggression = static_cast<uint8_t>(data[0]);
+            ai.confidence = static_cast<uint8_t>(data[1]);
+            // THORNSWOOD (#6493). Byte 6 turns the aggro radius on, and the
+            // three distances follow at 8, 12 and 16. The game counts a
+            // Neutral person inside it as one to fight whatever the
+            // aggression, which is why an Aggressive skeever attacks people
+            // that none of its factions names as an enemy.
+            if (size >= 20 && data[6] != 0) {
+              for (size_t i = 0; i < 3; ++i)
+                std::memcpy(&ai.aggroRadius[i], data + 8 + 4 * i, 4);
             }
           }, world.GetEspmCache());
           return ai;
         });
-      if (values[0] > 3 || values[1] > 4) {
+      if (values.aggression > 3 || values.confidence > 4) {
         throw std::invalid_argument("Invalid NPC aggression or confidence");
       }
       profile = npcAIProfiles.emplace(id, std::make_pair(profileKey, values)).first;
@@ -2202,8 +2211,12 @@ Napi::Value ScampServer::GetNpcAIState(const Napi::CallbackInfo& info)
     if (!runtimeLife) throw std::runtime_error("Actor runtime identity exhausted");
     result.Set("runtimeLifeIdentity", std::to_string(runtimeLife));
     result.Set("difficultyTier", actor.GetNpcDifficultyTier());
-    result.Set("aggression", profile->second.second[0]);
-    result.Set("confidence", profile->second.second[1]);
+    result.Set("aggression", profile->second.second.aggression);
+    result.Set("confidence", profile->second.second.confidence);
+    auto aggroRadius = Napi::Array::New(info.Env(), 3);
+    for (size_t i = 0; i < 3; ++i)
+      aggroRadius.Set(i, static_cast<double>(profile->second.second.aggroRadius[i]));
+    result.Set("aggroRadius", aggroRadius);
     const auto raceLookup = partOne->GetEspm().GetBrowser().LookupById(actor.GetRaceId());
     const auto race = espm::Convert<espm::RACE>(raceLookup.rec);
     const auto raceFlags = race ? race->GetData(world.GetEspmCache()).flags : 0;
