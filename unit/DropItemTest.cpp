@@ -338,8 +338,8 @@ TEST_CASE("Only the dropper is told a dropped item is theirs",
   REQUIRE(creates[1].size() == 1);
   REQUIRE(creates[0][0]["props"]["droppedByMe"] == true);
   const auto& other = creates[1][0];
-  REQUIRE_FALSE(other.contains("props") &&
-                other["props"].contains("droppedByMe"));
+  REQUIRE_FALSE(
+    (other.contains("props") && other["props"].contains("droppedByMe")));
 
   SECTION("Whose it is is saved, and a reference nobody dropped saves none")
   {
