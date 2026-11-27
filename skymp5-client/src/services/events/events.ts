@@ -5,6 +5,7 @@ import { SendRawMessageEvent } from "./sendRawMessageEvent";
 import { AnyMessage } from "../messages/anyMessage";
 import { SendMessageWithRefrIdEvent } from "./sendMessageWithRefrIdEvent";
 import { ApplyDeathStateEvent } from "./applyDeathStateEvent";
+import { ApplyKillMoveEvent } from "./applyKillMoveEvent";
 import { ConnectionFailed } from "./connectionFailed";
 import { ConnectionDenied } from "./connectionDenied";
 import { ConnectionAccepted } from "./connectionAccepted";
@@ -51,6 +52,7 @@ type EventTypes = {
     'sendMessageWithRefrId': [SendMessageWithRefrIdEvent<AnyMessage>],
 
     'applyDeathStateEvent': [ApplyDeathStateEvent],
+    'applyKillMoveEvent': [ApplyKillMoveEvent],
 
     'connectionFailed': [ConnectionFailed],
     'connectionDenied': [ConnectionDenied],

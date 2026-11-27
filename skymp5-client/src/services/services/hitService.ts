@@ -79,8 +79,27 @@ export class HitService extends ClientListener {
             source: e.source ? e.source.getFormID() : 0,
             target: localIdToRemoteId(e.target.getFormID())
         }
+        // THORNSWOOD PATCH (Thornswood #4507). The killmoves this game judges
+        // fit for the swing, by Skyrim's own condition code. The server plays
+        // the first that fits only when the hit's death goes through, on every
+        // machine near the target (KillMoves.cpp in skymp5-server).
+        if (this.sp.Weapon.from(e.source) && !e.isBashAttack && !e.isHitBlocked) {
+            const sp = this.sp as unknown as SpKillMoves;
+            if (typeof sp.getFittingKillMoves === "function") {
+                const killMoves = sp.getFittingKillMoves(e.aggressor.getFormID(), e.target.getFormID(), e.isPowerAttack);
+                if (killMoves.length > 0) {
+                    hitData.killMoves = killMoves;
+                }
+            }
+        }
         return hitData;
     }
 
     private recentMagicHits: Map<number, number> = new Map();
+}
+
+// Thornswood's Skyrim Platform call (KillMoveApi.cpp in skyrim-platform),
+// which the published typings this client builds against do not have
+interface SpKillMoves {
+    getFittingKillMoves?: (attackerFormId: number, targetFormId: number, isPowerAttack: boolean) => number[];
 }

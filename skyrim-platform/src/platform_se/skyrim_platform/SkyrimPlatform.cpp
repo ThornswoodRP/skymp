@@ -15,6 +15,7 @@
 #include "HttpClientApi.h"
 #include "InventoryApi.h"
 #include "BookTextApi.h"
+#include "KillMoveApi.h"
 #include "ScriptCallApi.h"
 #include "LoadGameApi.h"
 #include "MagicApi.h"
@@ -309,6 +310,7 @@ private:
       InventoryApi::Register(env, e);
       BookTextApi::Register(env, e);
       ScriptCallApi::Register(env, e);
+      KillMoveApi::Register(env, e);
       MagicApi::Register(env, e);
       ConstEnumApi::Register(env, e);
       CallNativeApi::Register(env, e, getNativeCallRequirements);

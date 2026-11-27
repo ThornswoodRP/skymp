@@ -25,6 +25,8 @@ export declare function openBookWithText(bookFormId: number, text: string): bool
 export declare function runScriptFunction(formId: number, scriptName: string, functionName: string, args?: (string | boolean)[]): Promise<boolean>
 // Thornswood #4511: the property `propertyName` of the script `scriptName` attached to form `formId`, as it is now. Undefined when the script is not attached, has no such property, or it is not a boolean, number or string.
 export declare function getScriptProperty(formId: number, scriptName: string, propertyName: string): boolean | number | string | undefined
+// Thornswood #4507: the killmoves Skyrim's own condition code judges fit for actor `attackerFormId` on actor `targetFormId`, under the killmove roots of a normal or a power attack, in the order the game takes them, leaving ShouldAttackKill and the KillMove global to the server. Empty when none fit or either actor is not loaded.
+export declare function getFittingKillMoves(attackerFormId: number, targetFormId: number, isPowerAttack: boolean): number[]
 // Thornswood #1385: while ignored, the game does not hold form `formId` to its carry weight (Actor::IsOverEncumbered answers no), so being overloaded never makes it walk.
 export declare function setOverEncumberedIgnored(formId: number, ignored: boolean): void
 export declare function isOverEncumberedIgnored(formId: number): boolean

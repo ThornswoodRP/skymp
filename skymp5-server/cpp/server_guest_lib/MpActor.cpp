@@ -1638,6 +1638,8 @@ void MpActor::NetSetPercentages(
       return;
     if (kept)
       actorValues.healthPercentage = *kept;
+    else if (aggressor)
+      SendPendingKillMove(*aggressor);
   }
   NetSendChangeValues(actorValues, avFilter);
   if (!HasRuntimeIdentity(runtimeIdentity) ||
@@ -2357,31 +2359,9 @@ void MpActor::Kill(MpActor* killer, bool shouldTeleport)
   if (killer && keepKiller.get() != killer) return;
   const auto killerLife = killer ? killer->GetRuntimeLifeIdentity() : 0;
 
-  // Thornswood #4507. The pair goes to everybody who sees the target before
-  // the death does, so each machine knows the death comes by the pair when
-  // it arrives. Reliable messages to one machine arrive in the order sent.
-  const auto killMove = pImpl->pendingKillMove;
+  // Thornswood #4507. A killmove held for this death was sent before the
+  // zero (NetSetPercentages); one held but not used ends here.
   pImpl->pendingKillMove.reset();
-  if (killer && killMove && killMove->killerId == killer->GetFormId()) {
-    KillMoveMessage message;
-    message.idx = killer->GetIdx();
-    message.targetIdx = GetIdx();
-    message.idle = killMove->idleId;
-    std::set<Networking::UserId> recipients;
-    auto sendTo = [&](MpActor& actor) {
-      const auto user = actor.GetUserId();
-      if (user != Networking::InvalidUserId && recipients.insert(user).second) {
-        actor.SendToUser(message, true);
-      }
-    };
-    VisitCurrentActorListeners(sendTo);
-    sendTo(*this);
-    sendTo(*killer);
-    spdlog::trace("MpActor::Kill {:x} - killmove {:x} by {:x} sent to {} "
-                  "machines",
-                  GetFormId(), killMove->idleId, killer->GetFormId(),
-                  recipients.size());
-  }
 
   if (!SendAndSetDeathState(true, shouldTeleport)) return;
 
@@ -2405,6 +2385,38 @@ void MpActor::SetPendingKillMove(uint32_t killerId, uint32_t idleId)
 void MpActor::ClearPendingKillMove()
 {
   pImpl->pendingKillMove.reset();
+}
+
+// Thornswood #4507. The death goes through (mp.onDying let it), so the pair
+// goes to everybody who sees the target, the target's and the killer's own
+// machines included, before the zero and before the death: each machine
+// knows the death comes by the pair when they arrive. Reliable messages to
+// one machine arrive in the order they were sent.
+void MpActor::SendPendingKillMove(MpActor& killer)
+{
+  const auto killMove = pImpl->pendingKillMove;
+  pImpl->pendingKillMove.reset();
+  if (!killMove || killMove->killerId != killer.GetFormId()) {
+    return;
+  }
+  KillMoveMessage message;
+  message.idx = killer.GetIdx();
+  message.targetIdx = GetIdx();
+  message.idle = killMove->idleId;
+  std::set<Networking::UserId> recipients;
+  auto sendTo = [&](MpActor& actor) {
+    const auto user = actor.GetUserId();
+    if (user != Networking::InvalidUserId && recipients.insert(user).second) {
+      actor.SendToUser(message, true);
+    }
+  };
+  VisitCurrentActorListeners(sendTo);
+  sendTo(*this);
+  sendTo(killer);
+  spdlog::trace("MpActor::SendPendingKillMove {:x} - killmove {:x} by {:x} "
+                "sent to {} machines",
+                GetFormId(), killMove->idleId, killer.GetFormId(),
+                recipients.size());
 }
 
 void MpActor::RespawnWithDelay(bool shouldTeleport)

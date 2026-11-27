@@ -143,7 +143,7 @@ struct KillMoveScene
 }
 
 TEST_CASE("KillMoves: a melee hit that kills sends its killmove to everybody "
-          "who sees the target, before the death",
+          "who sees the target, before the zero and the death",
           "[KillMove][espm]")
 {
   PartOne& p = GetPartOne();
@@ -166,7 +166,7 @@ TEST_CASE("KillMoves: a melee hit that kills sends its killmove to everybody "
   }
   REQUIRE(users == std::set<Networking::UserId>{ 0, 1 });
 
-  // The killmove goes out before anything that says the target is dead
+  // The killmove goes out before the zero and the death
   size_t firstKillMove = p.Messages().size(), firstDeath = p.Messages().size();
   for (size_t i = 0; i < p.Messages().size(); ++i) {
     const auto& j = p.Messages()[i].j;
@@ -176,7 +176,8 @@ TEST_CASE("KillMoves: a melee hit that kills sends its killmove to everybody "
     if (j["t"] == static_cast<int>(MsgType::KillMove)) {
       firstKillMove = std::min(firstKillMove, i);
     }
-    if (j["t"] == static_cast<int>(MsgType::DeathStateContainer)) {
+    if (j["t"] == static_cast<int>(MsgType::DeathStateContainer) ||
+        j["t"] == static_cast<int>(MsgType::ChangeValues)) {
       firstDeath = std::min(firstDeath, i);
     }
   }

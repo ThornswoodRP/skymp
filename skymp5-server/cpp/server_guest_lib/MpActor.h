@@ -219,7 +219,8 @@ public:
 
   // Thornswood #4507. The killmove one melee hit asks for, held only while
   // that hit's write runs (ActionListener::OnWeaponHit, KillMoveScope), so
-  // Kill plays it only on the death that write causes, by that killer.
+  // only the death that write causes, by that killer, plays it
+  // (NetSetPercentages, SendPendingKillMove).
   void SetPendingKillMove(uint32_t killerId, uint32_t idleId);
   void ClearPendingKillMove();
   void Respawn(bool shouldTeleport = true);
@@ -400,6 +401,7 @@ private:
   // a listener's refusal keeps the actor alive at. The caller checks the
   // actor (and the killer) are still the same lives afterwards.
   std::optional<float> AskBeforeDeath(MpActor* killer);
+  void SendPendingKillMove(MpActor& killer);
   void SendServerStateToObservers(const IMessageBase& message,
                                   bool reliable) const;
 
