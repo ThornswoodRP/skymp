@@ -60,6 +60,11 @@ bool BrowserApiNirnLab::IsVisible()
   return wantedIsVisible;
 }
 
+bool BrowserApiNirnLab::HasInputFocus() const
+{
+  return browser && browser->IsBrowserFocused();
+}
+
 Napi::Value BrowserApiNirnLab::SetFocused(const Napi::CallbackInfo& info)
 {
   wantedIsFocused = NapiHelper::ExtractBoolean(info[0], "isFocused");

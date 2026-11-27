@@ -250,9 +250,14 @@ void BrowserApiTilted::OnLoadingMenu(bool opening)
   app->ExecuteJavaScript(LoadingScreen::Script(opening));
 }
 
+bool BrowserApiTilted::HasInputFocus()
+{
+  return CEFUtils::DInputHook::ChromeFocus();
+}
+
 Napi::Value BrowserApiTilted::IsFocused(const Napi::CallbackInfo& info)
 {
-  return Napi::Boolean::New(info.Env(), CEFUtils::DInputHook::ChromeFocus());
+  return Napi::Boolean::New(info.Env(), HasInputFocus());
 }
 
 Napi::Value BrowserApiTilted::LoadUrl(const Napi::CallbackInfo& info)
