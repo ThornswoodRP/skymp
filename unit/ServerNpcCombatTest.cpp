@@ -41,8 +41,8 @@ TEST_CASE("NPC faction ranks use the SNAM rank byte rather than the form ID",
 }
 
 namespace {
-constexpr uint32_t kNpc = 0xff000100;
-constexpr uint32_t kHuman = 0xff000000;
+constexpr uint32_t kCombatNpc = 0xff000100;
+constexpr uint32_t kCombatHuman = 0xff000000;
 constexpr uint32_t kDagger = 0x1397e;
 constexpr uint32_t kUnarmed = 0x1f4;
 
@@ -92,13 +92,13 @@ struct CombatFixture
     auto npc = std::make_unique<MpActor>(
       LocationalData{ { 0, 0, 0 }, {}, FormDesc::Tamriel() },
       p.CreateFormCallbacks(), hulda->AsActor()->GetBaseId());
-    p.worldState.AddForm(std::move(npc), kNpc);
+    p.worldState.AddForm(std::move(npc), kCombatNpc);
     Npc().SetEquipment(Equipment());
     Npc().SetPercentages({ 1, 1, 1 });
     Npc().SetServerControlled(true);
     DoConnect(p, 0);
-    p.CreateActor(kHuman, { 0, 40, 0 }, 180, 0x3c);
-    p.SetUserActor(0, kHuman);
+    p.CreateActor(kCombatHuman, { 0, 40, 0 }, 180, 0x3c);
+    p.SetUserActor(0, kCombatHuman);
     Npc().ForceSubscriptionsUpdate();
     Human().SetEquipment(Equipment());
     Human().SetPercentages({ 1, 1, 1 });
@@ -108,14 +108,14 @@ struct CombatFixture
     Arm(Npc());
     p.Messages().clear();
   }
-  MpActor& Npc() { return p.worldState.GetFormAt<MpActor>(kNpc); }
-  MpActor& Human() { return p.worldState.GetFormAt<MpActor>(kHuman); }
+  MpActor& Npc() { return p.worldState.GetFormAt<MpActor>(kCombatNpc); }
+  MpActor& Human() { return p.worldState.GetFormAt<MpActor>(kCombatHuman); }
   void Arm(MpActor& actor)
   {
     actor.AddItem(kDagger, 1);
     actor.SetEquipment(DaggerEquipment());
   }
-  bool Attack() { return p.GetActionListener().ServerNpcAttack(kNpc, kHuman); }
+  bool Attack() { return p.GetActionListener().ServerNpcAttack(kCombatNpc, kCombatHuman); }
 };
 }
 
@@ -148,11 +148,11 @@ TEST_CASE("Server NPC attacks use owned equipped weapons or unarmed damage",
   REQUIRE(f.Attack());
   REQUIRE(f.damage->calls == 1);
   REQUIRE(f.damage->last.source == expectedSource);
-  REQUIRE(f.damage->last.aggressor == kNpc);
-  REQUIRE(f.damage->last.target == kHuman);
+  REQUIRE(f.damage->last.aggressor == kCombatNpc);
+  REQUIRE(f.damage->last.target == kCombatHuman);
   REQUIRE(f.Human().GetActorValues().healthPercentage < 1.f);
   REQUIRE(f.Npc().GetActorValues().healthPercentage == 1.f);
-  REQUIRE(f.p.worldState.hosters.count(kNpc) == 0);
+  REQUIRE(f.p.worldState.hosters.count(kCombatNpc) == 0);
   if (f.p.IsConnected(0)) {
     bool sentHealth = false, sentAttack = false;
     for (const auto& sent : f.p.Messages()) {
@@ -172,10 +172,10 @@ TEST_CASE("Server NPC attacks reject invalid authority and inactive actors",
           "[ServerNpcCombat][PartOne][espm]")
 {
   CombatFixture f;
-  uint32_t aggressor = kNpc;
-  uint32_t target = kHuman;
+  uint32_t aggressor = kCombatNpc;
+  uint32_t target = kCombatHuman;
   SECTION("Uncontrolled NPC") { f.Npc().SetServerControlled(false); }
-  SECTION("Human aggressor") { aggressor = kHuman; target = kNpc; }
+  SECTION("Human aggressor") { aggressor = kCombatHuman; target = kCombatNpc; }
   SECTION("NPC assigned a human profile after taking authority")
   {
     f.Npc().RegisterProfileId(123);
@@ -202,11 +202,11 @@ TEST_CASE("Server NPC attacks reject invalid authority and inactive actors",
   }
   const auto npcHealth = f.Npc().GetActorValues().healthPercentage;
   const auto humanHealth = f.Human().GetActorValues().healthPercentage;
-  const auto previousHit = f.Npc().GetLastHitTime(kHuman);
+  const auto previousHit = f.Npc().GetLastHitTime(kCombatHuman);
   REQUIRE_FALSE(f.p.GetActionListener().ServerNpcAttack(aggressor, target));
   REQUIRE(f.Npc().GetActorValues().healthPercentage == npcHealth);
   REQUIRE(f.Human().GetActorValues().healthPercentage == humanHealth);
-  REQUIRE(f.Npc().GetLastHitTime(kHuman) == previousHit);
+  REQUIRE(f.Npc().GetLastHitTime(kCombatHuman) == previousHit);
   REQUIRE(f.damage->calls == 0);
 }
 
@@ -236,7 +236,7 @@ TEST_CASE("Server combat between NPCs needs no connected humans and protects off
   REQUIRE(f.Npc().GetUserId() == Networking::InvalidUserId);
   f.p.Messages().clear();
   const auto health = npcTarget.GetActorValues().healthPercentage;
-  REQUIRE(f.p.GetActionListener().ServerNpcAttack(kNpc, targetId) == accepted);
+  REQUIRE(f.p.GetActionListener().ServerNpcAttack(kCombatNpc, targetId) == accepted);
   if (accepted) {
     REQUIRE(f.damage->calls == 1);
     REQUIRE(f.damage->last.target == targetId);
@@ -254,12 +254,12 @@ TEST_CASE("Server NPC attacks reject immediate repeats and recover after cooldow
   CombatFixture f;
   REQUIRE(f.Attack());
   const auto afterFirst = f.Human().GetActorValues().healthPercentage;
-  const auto lastHit = f.Npc().GetLastHitTime(kHuman);
+  const auto lastHit = f.Npc().GetLastHitTime(kCombatHuman);
   REQUIRE_FALSE(f.Attack());
   REQUIRE(f.Human().GetActorValues().healthPercentage == afterFirst);
-  REQUIRE(f.Npc().GetLastHitTime(kHuman) == lastHit);
+  REQUIRE(f.Npc().GetLastHitTime(kCombatHuman) == lastHit);
   REQUIRE(f.damage->calls == 1);
-  f.Npc().SetLastHitTime(kHuman,
+  f.Npc().SetLastHitTime(kCombatHuman,
     std::chrono::steady_clock::now() - std::chrono::seconds(10));
   REQUIRE(f.Attack());
   REQUIRE(f.Human().GetActorValues().healthPercentage < afterFirst);
@@ -334,11 +334,11 @@ TEST_CASE("Spoofed hosted client hits cannot drive server NPC combat",
 {
   CombatFixture f;
   // Reinstate stale hosting to prove the authority guard, not map erasure.
-  f.p.worldState.hosters[kNpc] = kHuman;
+  f.p.worldState.hosters[kCombatNpc] = kCombatHuman;
   RawMessageData raw;
   raw.userId = 0;
   HitMessage hit;
-  hit.data.aggressor = kNpc;
+  hit.data.aggressor = kCombatNpc;
   hit.data.target = 0x14;
   hit.data.source = kDagger;
   f.p.GetActionListener().OnHit(raw, hit);
@@ -358,12 +358,12 @@ TEST_CASE("Successful human hits record a server NPC retaliation target",
   raw.userId = 0;
   HitMessage hit;
   hit.data.aggressor = 0x14;
-  hit.data.target = kNpc;
+  hit.data.target = kCombatNpc;
   hit.data.source = kDagger;
   REQUIRE(f.Npc().GetServerCombatTarget() == 0);
   f.p.GetActionListener().OnHit(raw, hit);
   REQUIRE(f.Npc().GetActorValues().healthPercentage < 1.f);
-  REQUIRE(f.Npc().GetServerCombatTarget() == kHuman);
+  REQUIRE(f.Npc().GetServerCombatTarget() == kCombatHuman);
   REQUIRE(f.Human().GetActorValues().healthPercentage == 1.f);
 }
 
@@ -376,7 +376,7 @@ TEST_CASE("Server NPC health and death are replicated to every current observer"
   f.p.CreateActor(observerId, { 0, 20, 0 }, 0, 0x3c);
   f.p.SetUserActor(1, observerId);
   f.Npc().ForceSubscriptionsUpdate();
-  for (uint32_t id : { kHuman, observerId }) {
+  for (uint32_t id : { kCombatHuman, observerId }) {
     bool subscribed = false;
     for (const auto* listener : f.Npc().GetActorListeners()) {
       subscribed |= listener->GetFormId() == id;
@@ -396,7 +396,7 @@ TEST_CASE("Server NPC health and death are replicated to every current observer"
   raw.userId = 0;
   HitMessage hit;
   hit.data.aggressor = 0x14;
-  hit.data.target = kNpc;
+  hit.data.target = kCombatNpc;
   hit.data.source = kDagger;
   f.p.Messages().clear();
   f.p.GetActionListener().OnHit(raw, hit);
@@ -536,17 +536,17 @@ TEST_CASE("Rejected repeated human weapon hits cannot replace a newer retaliatio
   raw.userId = 0;
   HitMessage hit;
   hit.data.aggressor = 0x14;
-  hit.data.target = kNpc;
+  hit.data.target = kCombatNpc;
   hit.data.source = kDagger;
   f.p.GetActionListener().OnHit(raw, hit);
-  REQUIRE(f.Npc().GetServerCombatTarget() == kHuman);
+  REQUIRE(f.Npc().GetServerCombatTarget() == kCombatHuman);
   raw.userId = 1;
   f.p.GetActionListener().OnHit(raw, hit);
   REQUIRE(f.damage->calls == 2);
   REQUIRE(f.Npc().GetServerCombatTarget() == secondHuman);
   const auto health = f.Npc().GetActorValues().healthPercentage;
   // Avoid machine scheduling delays turning the replay into a valid attack.
-  f.Human().SetLastHitTime(kNpc, std::chrono::steady_clock::now());
+  f.Human().SetLastHitTime(kCombatNpc, std::chrono::steady_clock::now());
   raw.userId = 0;
   f.p.GetActionListener().OnHit(raw, hit);
   REQUIRE(f.damage->calls == 2);
@@ -563,11 +563,11 @@ TEST_CASE("Accepted human retaliation targets clear when they are no longer vali
   raw.userId = 0;
   HitMessage hit;
   hit.data.aggressor = 0x14;
-  hit.data.target = kNpc;
+  hit.data.target = kCombatNpc;
   hit.data.source = kDagger;
   f.p.GetActionListener().OnHit(raw, hit);
   REQUIRE(f.damage->calls == 1);
-  REQUIRE(f.Npc().GetServerCombatTarget() == kHuman);
+  REQUIRE(f.Npc().GetServerCombatTarget() == kCombatHuman);
   SECTION("Target dies") { f.Human().SetIsDead(true); }
   SECTION("Target is disabled") { f.Human().Disable(); }
   SECTION("Target changes cell")
@@ -602,13 +602,13 @@ TEST_CASE("Accepted equipped spell hits can establish server NPC retaliation",
   raw.userId = 0;
   HitMessage hit;
   hit.data.aggressor = 0x14;
-  hit.data.target = kNpc;
+  hit.data.target = kCombatNpc;
   hit.data.source = flames;
   REQUIRE(f.Npc().GetServerCombatTarget() == 0);
   f.p.GetActionListener().OnHit(raw, hit);
   if (equipped) {
     REQUIRE(f.Npc().GetActorValues().healthPercentage < health);
-    REQUIRE(f.Npc().GetServerCombatTarget() == kHuman);
+    REQUIRE(f.Npc().GetServerCombatTarget() == kCombatHuman);
   } else {
     REQUIRE(f.Npc().GetActorValues().healthPercentage == health);
     REQUIRE(f.Npc().GetServerCombatTarget() == 0);
@@ -638,13 +638,13 @@ struct DeliveryFixture : CombatFixture
     p.worldState.AddForm(std::move(listener), kHostedListener);
     auto& hosted = p.worldState.GetFormAt<MpActor>(kHostedListener);
     auto& disconnected = p.worldState.GetFormAt<MpActor>(kDisconnectedHuman);
-    p.worldState.hosters[kHostedListener] = kHuman;
-    p.worldState.hosters[kDisconnectedHuman] = kHuman;
+    p.worldState.hosters[kHostedListener] = kCombatHuman;
+    p.worldState.hosters[kDisconnectedHuman] = kCombatHuman;
     REQUIRE(hosted.GetUserId() == Networking::InvalidUserId);
     REQUIRE(disconnected.GetUserId() == Networking::InvalidUserId);
-    REQUIRE(hosted.GetActorToSendTo().GetFormId() == kHuman);
+    REQUIRE(hosted.GetActorToSendTo().GetFormId() == kCombatHuman);
     // Keep stale entries in the listener collection to exercise delivery itself.
-    for (uint32_t id : { kHuman, kOtherHuman, kDisconnectedHuman, kHostedListener }) {
+    for (uint32_t id : { kCombatHuman, kOtherHuman, kDisconnectedHuman, kHostedListener }) {
       auto& observer = p.worldState.GetFormAt<MpActor>(id);
       MpObjectReference::Subscribe(&Npc(), &observer);
       REQUIRE(std::find(Npc().GetActorListeners().begin(),
@@ -739,7 +739,7 @@ TEST_CASE("A disconnected observer receives no later server NPC movement or heal
   auto& stale = f.p.worldState.GetFormAt<MpActor>(DeliveryFixture::kOtherHuman);
   REQUIRE(stale.GetUserId() == Networking::InvalidUserId);
   REQUIRE_FALSE(f.p.IsConnected(1));
-  f.p.worldState.hosters[DeliveryFixture::kOtherHuman] = kHuman;
+  f.p.worldState.hosters[DeliveryFixture::kOtherHuman] = kCombatHuman;
   MpObjectReference::Subscribe(&f.Npc(), &stale);
   f.p.Messages().clear();
   f.Npc().UpdateServerMovement({ 1, 0, 0 }, { 0, 0, 90 }, 60);
@@ -760,9 +760,9 @@ TEST_CASE("Stopping server NPC movement reliably preserves position and clears c
 {
   DeliveryFixture f;
   f.Npc().UpdateServerMovement({ 1, 0, 0 }, { 0, 0, 90 }, 60);
-  f.Npc().RecordServerCombatTarget(kHuman);
+  f.Npc().RecordServerCombatTarget(kCombatHuman);
   REQUIRE(f.Npc().GetServerMovementMessage().data.speed == 60);
-  REQUIRE(f.Npc().GetServerCombatTarget() == kHuman);
+  REQUIRE(f.Npc().GetServerCombatTarget() == kCombatHuman);
   const auto position = f.Npc().GetPos();
   const auto angle = f.Npc().GetAngle();
   f.p.Messages().clear();
@@ -988,7 +988,7 @@ TEST_CASE("NPC life generation survives the save codec and fresh world restorati
   recovered.npcAllowEssential = true;
   recovered.npcAllowCrimeFaction = true;
   recovered.LoadChangeForm(saved, FormCallbacks::DoNothing());
-  auto& restored = recovered.GetFormAt<MpActor>(kNpc);
+  auto& restored = recovered.GetFormAt<MpActor>(kCombatNpc);
   REQUIRE(restored.IsServerControlled());
   REQUIRE_FALSE(restored.IsDead());
   REQUIRE(NpcLifeGeneration(restored) == 1);
@@ -1069,7 +1069,7 @@ TEST_CASE("NPC difficulty tier survives save serialization and fresh world resto
   WorldState recovered;
   recovered.AttachEspm(&f.p.GetEspm(), [] { return FormCallbacks::DoNothing(); });
   recovered.LoadChangeForm(saved, FormCallbacks::DoNothing());
-  auto& restored = recovered.GetFormAt<MpActor>(kNpc);
+  auto& restored = recovered.GetFormAt<MpActor>(kCombatNpc);
   REQUIRE(restored.IsServerControlled());
   REQUIRE(restored.GetNpcDifficultyTier() == 4);
   REQUIRE_THAT(restored.GetBaseValues().health, Catch::Matchers::WithinAbs(health, 0.001));
@@ -1080,8 +1080,8 @@ TEST_CASE("Native NPC weapon and spell damage receive exactly one difficulty mul
 {
   CombatFixture f;
   HitData weapon;
-  weapon.aggressor = kNpc;
-  weapon.target = kHuman;
+  weapon.aggressor = kCombatNpc;
+  weapon.target = kCombatHuman;
   weapon.source = kDagger;
   SpellCastData spell;
   spell.spell = 0x12fcd;
@@ -1124,7 +1124,7 @@ TEST_CASE("Incoming human dagger and Flames hits use the scaled NPC health denom
       if (source == kDagger) {
         f.Arm(f.Human());
         HitData hit;
-        hit.aggressor = kHuman; hit.target = kNpc; hit.source = source;
+        hit.aggressor = kCombatHuman; hit.target = kCombatNpc; hit.source = source;
         damage = f.p.CalculateDamage(f.Human(), f.Npc(), hit);
       } else {
         Equipment equipment;
@@ -1138,7 +1138,7 @@ TEST_CASE("Incoming human dagger and Flames hits use the scaled NPC health denom
       RawMessageData raw;
       raw.userId = 0;
       HitMessage hit;
-      hit.data.aggressor = 0x14; hit.data.target = kNpc; hit.data.source = source;
+      hit.data.aggressor = 0x14; hit.data.target = kCombatNpc; hit.data.source = source;
       f.p.GetActionListener().OnHit(raw, hit);
       const float expected = 1.f - damage / (baselineHealth * health[tier]);
       REQUIRE_THAT(f.Npc().GetActorValues().healthPercentage,
@@ -1152,7 +1152,7 @@ TEST_CASE("Server NPC tier damage reaches the authoritative attack and health re
 {
   CombatFixture f;
   HitData hit;
-  hit.aggressor = kNpc; hit.target = kHuman; hit.source = kDagger;
+  hit.aggressor = kCombatNpc; hit.target = kCombatHuman; hit.source = kDagger;
   const auto baseline = f.p.CalculateDamage(f.Npc(), f.Human(), hit);
   const auto health = f.Human().GetBaseValues().health;
   f.Npc().SetNpcDifficultyTier(4);
@@ -1288,7 +1288,7 @@ TEST_CASE("Server NPC save restoration preserves authoritative percentages with 
   WorldState recovered;
   recovered.AttachEspm(&f.p.GetEspm(), [] { return FormCallbacks::DoNothing(); });
   recovered.LoadChangeForm(saved, FormCallbacks::DoNothing());
-  auto& restored = recovered.GetFormAt<MpActor>(kNpc);
+  auto& restored = recovered.GetFormAt<MpActor>(kCombatNpc);
   CHECK(restored.IsServerControlled());
   CHECK(restored.IsDead() == dead);
   CHECK(restored.GetNpcDifficultyTier() == 4);

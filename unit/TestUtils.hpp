@@ -86,6 +86,25 @@ inline void GiveStoredAppearance(MpActor& actor,
   actor.SetAppearance(&appearance);
 }
 
+// Thornswood: helpers several test files share, said once here. The unit
+// tests are compiled in batches of eight files (unity build,
+// cmake/thornswood_unity_build.cmake), so two files of a batch that each kept
+// their own copy in an anonymous namespace would be one file saying it twice.
+
+// Skyrim.esm and the masters the tests read (GetEspmLoader). Created-actor
+// FormDesc encoding and AttachSaveStorage FF checks need the real plugin
+// list; empty espmFiles stores full ff ids and breaks the save ack.
+void AttachSkyrimFiles(PartOne& server);
+
+// The change form as a save writes it and reads it back.
+MpChangeForm ThroughSave(const MpChangeForm& changeForm);
+
+// The change form as the JSON a save writes.
+std::string DumpChangeForm(const MpChangeForm& changeForm);
+
+// One worn unit (count of them) of a base form, as an inventory entry.
+Inventory::Entry Worn(uint32_t baseId, uint32_t count = 1);
+
 class FakeListener : public PartOne::Listener
 {
 public:

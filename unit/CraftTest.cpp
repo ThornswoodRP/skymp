@@ -13,6 +13,7 @@
 #include "gamemode_events/CraftEvent.h"
 #include "gamemode_events/CraftWorkEvent.h"
 #include "gamemode_events/GameModeEvent.h"
+#include "TestFormIds.h"
 
 using Catch::Matchers::ContainsSubstring;
 
@@ -304,7 +305,6 @@ constexpr uint32_t kIronIngot = 0x5ace4;
 constexpr uint32_t kLeatherStrips = 0x800e4;
 constexpr uint32_t kSteelIngot = 0x5ace5;
 constexpr uint32_t kSteelWarhammer = 0x1398a;
-constexpr uint32_t kForge = 0x1ad6e;
 
 MpActor& MakeCrafter(PartOne& p, uint32_t nearRefrId)
 {
@@ -564,12 +564,10 @@ namespace {
 // judges each craft by the inputs onCraft now carries as its seventh
 // argument. The person's rank is set by the test. Only acts while armed,
 // because PartOne is shared and keeps every listener.
-constexpr uint32_t kPettySoulGem = 0x2e4e2;
 constexpr uint32_t kLesserSoulGem = 0x2e4e4;
 constexpr uint32_t kCommonSoulGem = 0x2e4e6;
 constexpr uint32_t kGreaterSoulGem = 0x2e4f4;
 constexpr uint32_t kGrandSoulGem = 0x2e4fc;
-constexpr uint32_t kIronDagger = 0x1397e;
 
 class SoulGemRankGate : public PartOneListener
 {
@@ -765,16 +763,11 @@ TEST_CASE("A petty soul gem works at every rank (Thornswood #1648)",
 namespace {
 // THORNSWOOD PATCH (Thornswood #1389). Skyrim.esm's ingredients and the
 // magic effects their records carry, read off the plugin on 12 Oct.
-constexpr uint32_t kBlueMountainFlower = 0x77e1c; // 3eb15 3eb25 3eaf3 73f2b
-constexpr uint32_t kWheat = 0x4b0ba;              // 3eb15 3eaf3 73f2c 10de5f
 constexpr uint32_t kNightshade = 0x2f44c;         // 3eb42 73f2b 10de5e 3eb26
 constexpr uint32_t kLavender = 0x45c28;           // 39e51 3eaf9 73f27 3eb25
 constexpr uint32_t kTundraCotton = 0x3f7f8;       // 39e51 3eaf8 3eb1c 3eb23
 constexpr uint32_t kSaltPile = 0x34cdf;           // 73f51 3eb28 73f25 3eb07
-constexpr uint32_t kRestoreHealth = 0x3eb15;
-constexpr uint32_t kFortifyHealth = 0x3eaf3;
 constexpr uint32_t kDamageMagickaRegen = 0x73f2b;
-constexpr uint32_t kResistMagic = 0x39e51;
 // What a lab hands back is a bottle the brewing client made, a runtime form
 // the server has no record of. A plain healing potion's record stands in for
 // it here (Potion of Minor Healing), because the bottle is added to the pack

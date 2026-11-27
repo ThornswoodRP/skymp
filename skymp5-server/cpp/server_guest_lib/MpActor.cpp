@@ -2279,8 +2279,6 @@ std::map<uint32_t, uint32_t> MpActor::EvaluateDeathItem()
     return {};
   }
 
-  constexpr int kPlayerCharacterLevel = 1;
-
   auto& loader = worldState->GetEspm();
 
   auto base = loader.GetBrowser().LookupById(GetBaseId());
@@ -2331,7 +2329,7 @@ std::map<uint32_t, uint32_t> MpActor::EvaluateDeathItem()
   const auto kCountMult = 1;
   auto map = LeveledListUtils::EvaluateListRecurse(
     loader.GetBrowser(), deathItemLookupRes, kCountMult,
-    kPlayerCharacterLevel);
+    LeveledListUtils::kPlayerCharacterLevel);
   return map;
 }
 

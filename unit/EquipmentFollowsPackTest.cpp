@@ -1,5 +1,6 @@
 #include "TestUtils.hpp"
 #include "UpdateEquipmentMessage.h"
+#include "TestFormIds.h"
 
 // THORNSWOOD (Thornswood #6717). A granted item stayed out of the game until
 // a later login. The owner's client dresses its character at login from the
@@ -16,17 +17,9 @@
 namespace {
 constexpr uint32_t kCuirass = 0x13961; // Iron Armor, Skyrim.esm
 constexpr uint32_t kBoots = 0x1394d;   // Iron Boots
-constexpr uint32_t kSword = 0x12eb7;   // Iron Sword
 constexpr uint32_t kGiven = 0x13965;   // Iron Helmet
 constexpr uint32_t kOwner = 0xff000abc;
 constexpr uint32_t kViewer = 0xffabcabc;
-
-Inventory::Entry Worn(uint32_t baseId, uint32_t count = 1)
-{
-  Inventory::ExtraData extra;
-  extra.worn_ = true;
-  return Inventory::Entry(baseId, count, extra);
-}
 
 Inventory::Entry WornLeft(uint32_t baseId)
 {

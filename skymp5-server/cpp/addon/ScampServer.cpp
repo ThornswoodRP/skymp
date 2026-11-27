@@ -78,11 +78,6 @@ std::string GetPropertyAlphabet()
   return alphabet;
 }
 
-bool StartsWith(const std::string& str, const char* prefix)
-{
-  return str.compare(0, strlen(prefix), prefix) == 0;
-}
-
 }
 
 Napi::FunctionReference ScampServer::constructor;
@@ -2622,8 +2617,8 @@ Napi::Value ScampServer::FindFormsByPropertyValue(
     auto propertyName = NapiHelper::ExtractString(info[0], "propertyName");
     auto propertyValue = info[1];
 
-    if (!StartsWith(propertyName,
-                    MpObjectReference::GetPropertyPrefixPrivateIndexed())) {
+    if (!propertyName.starts_with(
+          MpObjectReference::GetPropertyPrefixPrivateIndexed())) {
       spdlog::error("FindFormsByPropertyValue - Attempt to search for "
                     "non-indexed property '{}'",
                     propertyName);

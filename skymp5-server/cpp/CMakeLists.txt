@@ -1,6 +1,7 @@
 enable_testing()
 
 include(${CMAKE_SOURCE_DIR}/cmake/apply_default_settings.cmake)
+include(${CMAKE_SOURCE_DIR}/cmake/thornswood_unity_build.cmake)
 
 #
 # MpClientPlugin
@@ -72,6 +73,8 @@ list(APPEND src "${CMAKE_SOURCE_DIR}/.clang-format")
 add_library(server_guest_lib STATIC ${src})
 target_include_directories(server_guest_lib PUBLIC "${CMAKE_CURRENT_LIST_DIR}/server_guest_lib")
 apply_default_settings(TARGETS server_guest_lib)
+# THORNSWOOD: compiled in batches (Thornswood #7247, cmake/thornswood_unity_build.cmake says why)
+thornswood_unity_build(TARGETS server_guest_lib)
 list(APPEND VCPKG_DEPENDENT server_guest_lib)
 target_link_libraries(server_guest_lib PUBLIC viet mp_common espm papyrus-vm-lib geo serialization)
 

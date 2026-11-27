@@ -1,13 +1,12 @@
 #include <catch2/catch_all.hpp>
 
 #include "OverEncumberedIgnores.h"
+#include "TestIds.h"
 
 // THORNSWOOD PATCH (Thornswood #1385): the characters the game does not hold
 // to their carry weight. 0x14 is the person's own character.
 
 namespace {
-constexpr uint32_t kPlayer = 0x14;
-constexpr uint32_t kOther = 0xff000a2c;
 }
 
 TEST_CASE("An empty list holds everybody to their carry weight",

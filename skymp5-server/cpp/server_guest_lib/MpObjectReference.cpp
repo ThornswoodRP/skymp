@@ -44,8 +44,6 @@
 
 #include "script_classes/PapyrusObjectReference.h" // kOriginalNameExpression
 
-constexpr uint32_t kPlayerCharacterLevel = 1;
-
 UpdatePropertyMessage MpObjectReference::CreatePropertyMessage_(
   MpObjectReference* self, const char* name, const std::string& valueDump)
 {
@@ -1727,7 +1725,7 @@ void MpObjectReference::GivePickupItemsToActivationSource(
     const auto kCountMult = 1;
     auto map = LeveledListUtils::EvaluateListRecurse(
       loader.GetBrowser(), resultItemLookupRes, kCountMult,
-      kPlayerCharacterLevel, chanceNoneOverride.get());
+      LeveledListUtils::kPlayerCharacterLevel, chanceNoneOverride.get());
     std::vector<Inventory::Entry> entries;
     for (auto& p : map) {
       entries.push_back({ p.first, p.second });
@@ -2448,8 +2446,8 @@ void MpObjectReference::AddContainerObject(
   if (leveledItem) {
     constexpr uint32_t kCountMult = 1;
     auto map = LeveledListUtils::EvaluateListRecurse(
-      espm.GetBrowser(), formLookupRes, kCountMult, kPlayerCharacterLevel,
-      chanceNoneOverride.get());
+      espm.GetBrowser(), formLookupRes, kCountMult,
+      LeveledListUtils::kPlayerCharacterLevel, chanceNoneOverride.get());
     for (auto& p : map) {
       (*itemsToAdd)[p.first] += p.second;
     }

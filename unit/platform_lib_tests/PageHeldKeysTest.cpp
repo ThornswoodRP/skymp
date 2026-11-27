@@ -16,7 +16,7 @@
 // A character repeated after the key came up is the fault.
 
 namespace {
-constexpr uint32_t kJ = 0x4A;
+constexpr uint32_t kVkJ = 0x4A;
 constexpr uint32_t kA = 0x41;
 constexpr uint32_t kBack = 0x08;
 constexpr uint32_t kEscape = 0x1B;
@@ -85,11 +85,11 @@ TEST_CASE("J let go after the journal gives the keyboard back comes up in "
   // tap is let go after that.
   PageHeldKeys k;
   Page page;
-  Key(k, page, kJ, true, true, 1000);
+  Key(k, page, kVkJ, true, true, 1000);
   Read(k, page, false, 1050);
-  Key(k, page, kJ, false, false, 1120);
-  REQUIRE(page.ups == std::vector<uint32_t>{ kJ });
-  REQUIRE_FALSE(k.PageHolds(kJ));
+  Key(k, page, kVkJ, false, false, 1120);
+  REQUIRE(page.ups == std::vector<uint32_t>{ kVkJ });
+  REQUIRE_FALSE(k.PageHolds(kVkJ));
 
   // A second later the chat box opens and has the keyboard. Nothing types
   // itself into it.
@@ -124,7 +124,7 @@ TEST_CASE("Keys pressed while the game has the keyboard reach the page not "
   Page page;
   Key(k, page, kA, true, false, 1000);
   Key(k, page, kA, false, false, 1100);
-  Key(k, page, kJ, true, false, 1200);
+  Key(k, page, kVkJ, true, false, 1200);
   Read(k, page, false, 2000);
   Read(k, page, true, 2000);
   REQUIRE(page.downs.empty());
@@ -156,10 +156,10 @@ TEST_CASE("A key that went down in the game and comes up in the page is "
   // nothing repeating.
   PageHeldKeys k;
   Page page;
-  Key(k, page, kJ, true, false, 1000);
-  Key(k, page, kJ, false, true, 1100);
+  Key(k, page, kVkJ, true, false, 1000);
+  Key(k, page, kVkJ, false, true, 1100);
   REQUIRE(page.downs.empty());
-  REQUIRE(page.ups == std::vector<uint32_t>{ kJ });
+  REQUIRE(page.ups == std::vector<uint32_t>{ kVkJ });
   Read(k, page, true, 3000);
   REQUIRE(page.repeats.empty());
 }
