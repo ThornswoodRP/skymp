@@ -81,6 +81,8 @@ export declare function getExteriorCellCoordinates(cellId: number): number[] | u
 export declare function loadGame(pos: number[], angle: number[], worldOrCell: number, changeFormNpc?: ChangeFormNpc, loadOrder?: string[], time?: { seconds: number, minutes: number, hours: number }, inventory?: InitialInventory, lightLoadOrder?: string[]): void
 
 export declare function worldPointToScreenPoint(...args: number[][]): number[][]
+// Thornswood #7200: sets the player camera's field of view in degrees, the angle the world is drawn with and the one the first person arms are drawn with, each above 0 and below 180. Throws on any other value.
+export declare function setCameraFOV(worldFov: number, firstPersonFov: number): void
 
 export type PacketType = 'message' | 'disconnect' | 'connectionAccepted' | 'connectionFailed' | 'connectionDenied'
 

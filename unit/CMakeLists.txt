@@ -65,6 +65,12 @@ if(BUILD_UNIT_TESTS AND NOT EMSCRIPTEN)
   apply_default_settings(TARGETS gameplay-menu-test)
   add_test(NAME gameplay_menu COMMAND gameplay-menu-test)
 
+  # The angles sp.setCameraFOV takes (Thornswood #7200).
+  add_executable(camera-fov-test "${CMAKE_SOURCE_DIR}/misc/tests/camera_fov_test.cpp")
+  target_include_directories(camera-fov-test PRIVATE "${CMAKE_SOURCE_DIR}/skyrim-platform/src/platform_lib")
+  apply_default_settings(TARGETS camera-fov-test)
+  add_test(NAME camera_fov COMMAND camera-fov-test)
+
   # The furniture load cancel (Thornswood #6884), run on the game's own bytes.
   add_executable(interaction-load-patch-test "${CMAKE_SOURCE_DIR}/misc/tests/interaction_load_patch_test.cpp")
   target_include_directories(interaction-load-patch-test PRIVATE "${CMAKE_SOURCE_DIR}/skyrim-platform/src/platform_lib")
