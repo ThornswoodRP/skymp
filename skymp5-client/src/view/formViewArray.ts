@@ -6,7 +6,13 @@ import { GamemodeUpdateService } from "../services/services/gamemodeUpdateServic
 
 export class FormViewArray {
   updateForm(form: FormModel, i: number) {
-    const view = this.formViews[i];
+    let view = this.formViews[i];
+    // THORNSWOOD (#6492). A reconnect can refill a slot before a world tick
+    // sees it empty. A view and its name tag belong to its original reference.
+    if (view && view.getRemoteRefrId() !== form.refrId) {
+      this.destroyForm(i);
+      view = undefined;
+    }
     if (!view) {
       this.formViews[i] = new FormView(form.refrId);
     } else {
