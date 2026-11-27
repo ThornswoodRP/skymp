@@ -2797,6 +2797,14 @@ void MpActor::DropItem(const uint32_t baseId, const Inventory::Entry& entry)
     placedObject->SetPickupExtra(extra);
   }
 
+  // THORNSWOOD PATCH (Thornswood #6718). Whose drop it is, so the dropper's
+  // own client makes it theirs (PartOne, droppedByMe). The game's own drop
+  // would have, and that is the one dropItemService deletes. Only a
+  // character's: an NPC's id is a load order id and no client is an NPC.
+  if (IsCreatedAsPlayer()) {
+    placedObject->SetDroppedBy(GetFormId());
+  }
+
   uint32_t droppedItemFormId = placedObject->GetFormId();
 
   // Filter our dropped items queue

@@ -72,4 +72,7 @@ export interface CreateActorMessageAdditionalProps {
     inventory?: Inventory;
 
     isDead?: boolean; // TODO: take a look why doubles CreateActorMessageMainProps
+
+    // Thornswood #6718: this client's own character dropped this reference.
+    droppedByMe?: boolean;
 }

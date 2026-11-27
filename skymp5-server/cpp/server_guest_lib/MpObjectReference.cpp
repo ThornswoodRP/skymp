@@ -1728,6 +1728,18 @@ const std::optional<Inventory::ExtraData>& MpObjectReference::GetPickupExtra()
   return ChangeForm().pickupExtra;
 }
 
+void MpObjectReference::SetDroppedBy(uint32_t characterFormId)
+{
+  EditChangeForm([&](MpChangeFormREFR& changeForm) {
+    changeForm.droppedBy = characterFormId;
+  });
+}
+
+uint32_t MpObjectReference::GetDroppedBy() const noexcept
+{
+  return ChangeForm().droppedBy;
+}
+
 void MpObjectReference::SetDeleteDatetime(
   std::chrono::system_clock::time_point when)
 {

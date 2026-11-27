@@ -91,7 +91,8 @@ struct CreateActorMessageAdditionalProps
       .Serialize("magickaPercentage", magickaPercentage)
       .Serialize("templateChain", templateChain)
       .Serialize("inventory", inventory)
-      .Serialize("isDead", isDead);
+      .Serialize("isDead", isDead)
+      .Serialize("droppedByMe", droppedByMe);
   }
 
   std::optional<bool> isOpen;
@@ -125,6 +126,11 @@ struct CreateActorMessageAdditionalProps
 
   // TODO: take a look why doubles CreateActorMessageMainProps
   std::optional<bool> isDead;
+
+  // THORNSWOOD PATCH (Thornswood #6718). Sent only to the character who
+  // dropped this reference (MpObjectReference::GetDroppedBy), whose client
+  // then owns it as the game's own drop would.
+  std::optional<bool> droppedByMe;
 };
 
 struct CreateActorMessageMainProps

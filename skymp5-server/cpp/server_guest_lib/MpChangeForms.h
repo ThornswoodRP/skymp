@@ -143,6 +143,15 @@ public:
   std::optional<Inventory::ExtraData> pickupExtra;
   uint64_t deleteDatetime = 0;
 
+  // THORNSWOOD PATCH (Thornswood #6718). The character who dropped this
+  // reference, by form id, or 0. Only a character's drop is kept (their ids
+  // are the server's own, 0xff000000 and up, so no load order moves them).
+  // The server places a dropped item itself and every client spawns it with
+  // no owner, which in a shop reads as the shop's: the dropper's client makes
+  // it theirs from this (PartOne's droppedByMe). Saved, so it is still theirs
+  // after a restart, for as long as the drop lasts.
+  uint32_t droppedBy = 0;
+
   static nlohmann::json PickupExtraToJson(
     const std::optional<Inventory::ExtraData>& extra);
 
@@ -161,7 +170,8 @@ public:
       magickaRespawnPercentage, staminaRespawnPercentage, spawnPoint,
       dynamicFields, spawnDelay, learnedSpells, templateChain, lastAnimation,
       setNodeTextureSet, setNodeScale, displayName,
-      PickupExtraToJson(pickupExtra), deleteDatetime, learnedEnchantments);
+      PickupExtraToJson(pickupExtra), deleteDatetime, learnedEnchantments,
+      droppedBy);
   }
 
   static nlohmann::json ToJson(const MpChangeFormREFR& changeForm);
