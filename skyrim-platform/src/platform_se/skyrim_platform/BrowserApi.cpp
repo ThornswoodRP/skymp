@@ -75,6 +75,19 @@ bool IsVisible()
   return false;
 }
 
+bool HasInputFocus()
+{
+  switch (GetBackend()) {
+    case Backend::kTilted:
+      return BrowserApiTilted::HasInputFocus();
+    case Backend::kNirnLab:
+      return BrowserApiNirnLab::GetInstance().HasInputFocus();
+    case Backend::kOff:
+      return false;
+  }
+  return false;
+}
+
 void Register(Napi::Env env, Napi::Object& exports)
 {
   logger::info("registering browser api");
