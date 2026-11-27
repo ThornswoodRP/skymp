@@ -12,6 +12,7 @@ enum class Backend
 };
 Backend GetBackend();
 bool IsVisible();
+bool HasInputFocus();
 // Thornswood #3129: [Browser] ShowAtStart, true unless the ini says false.
 bool ShowAtStart();
 void Register(Napi::Env env, Napi::Object& exports);

@@ -246,6 +246,13 @@ jobs:
             -I skyrim-platform/src/platform_lib \
             misc/tests/gameplay_menu_test.cpp -o "$RUNNER_TEMP/gameplay-menu-test"
           "$RUNNER_TEMP/gameplay-menu-test"
+      - name: A mapped inventory key requests a close only for the open menu
+        shell: bash
+        run: |
+          g++ -std=c++17 -Wall -Wextra -Werror \
+            -I skyrim-platform/src/platform_lib \
+            misc/tests/inventory_shortcut_test.cpp -o "$RUNNER_TEMP/inventory-shortcut-test"
+          "$RUNNER_TEMP/inventory-shortcut-test"
       - name: A delivered interaction set still cancels its queued load (Thornswood #6884)
         shell: bash
         run: |
