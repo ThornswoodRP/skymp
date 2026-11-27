@@ -149,3 +149,27 @@ export const applyEquipment = (ac: Actor, eq: Equipment): boolean => {
 
   return true;
 };
+
+// THORNSWOOD #6746 measurement. What an outfit wears, for one log line: the
+// base ids in hex, an L after a left-hand one, then the spells by hand. The
+// owner's send, the server's store and each viewer's apply print it the same
+// way, so the three lines of one change can be laid side by side.
+export const wornList = (eq: Equipment | undefined): string => {
+  if (!eq) {
+    return '[none]';
+  }
+  const ids = (eq.inv?.entries ?? [])
+    .filter((e) => e.worn || e.wornLeft)
+    .map((e) => e.baseId.toString(16) + (e.wornLeft ? 'L' : ''));
+  let res = '[' + ids.join(',') + ']';
+  const spells: [string, number | undefined][] = [
+    ['left', eq.leftSpell], ['right', eq.rightSpell],
+    ['voice', eq.voiceSpell], ['instant', eq.instantSpell],
+  ];
+  for (const [hand, spell] of spells) {
+    if (spell) {
+      res += ` ${hand}=${spell.toString(16)}`;
+    }
+  }
+  return res;
+};

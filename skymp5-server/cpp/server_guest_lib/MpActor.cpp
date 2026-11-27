@@ -91,6 +91,8 @@ struct MpActor::Impl
   float serverMovementSpeed = 0;
   uint32_t serverCombatTarget = 0;
   std::chrono::steady_clock::time_point serverCombatUntil{};
+  // Thornswood #6720. See MpActor::DrawServerWeapon.
+  std::chrono::steady_clock::time_point serverWeaponDrawnAt{};
   // Thornswood #4507. See MpActor::SetPendingKillMove.
   struct PendingKillMove
   {
@@ -603,10 +605,31 @@ void MpActor::RecordServerCombatTarget(uint32_t targetId)
   pImpl->serverCombatUntil = std::chrono::steady_clock::now() + std::chrono::seconds(30);
 }
 
+// Thornswood #6720. A server NPC's weapon comes out before its first swing,
+// as a game actor's does. Until 27 Nov 2026 the swing itself set the weapon
+// drawn, after its damage, so every game was sent the attack event while it
+// still showed the weapon sheathed, and the movement that drew it came on the
+// next step: the first blow of each fight landed with no swing to see. The
+// draw goes to every observer reliably, ahead of any swing, and the time it
+// was sent paces the first swing (ActionListener::ServerNpcAttack).
+void MpActor::DrawServerWeapon(std::chrono::steady_clock::time_point at)
+{
+  if (!IsServerControlled() || IsDead() || IsDisabled()) {
+    throw std::invalid_argument("Drawing a weapon requires a living server NPC");
+  }
+  SetAnimationVariableBool(AnimationVariableBool::kVariable__skymp_isWeapDrawn, true);
+  pImpl->serverWeaponDrawnAt = at;
+  SendServerStateToObservers(GetServerMovementMessage(), true);
+}
+
+std::chrono::steady_clock::time_point MpActor::GetServerWeaponDrawnAt() const
+{
+  return pImpl->serverWeaponDrawnAt;
+}
+
 void MpActor::PublishServerAttackAnimation(const AnimationData& animation)
 {
-  if (!IsServerControlled() || IsDead() || IsDisabled()) return;
-  SetAnimationVariableBool(AnimationVariableBool::kVariable__skymp_isWeapDrawn, true);
+  if (!IsServerControlled() || IsDead() || IsDisabled() || !IsWeaponDrawn()) return;
   SetLastAnimEvent(animation);
   UpdateAnimationMessage message;
   message.idx = GetIdx();
@@ -713,6 +736,14 @@ void MpActor::PublishEquipment()
   UpdateEquipmentMessage msg;
   msg.data = GetEquipment();
   msg.idx = GetIdx();
+  // THORNSWOOD #6746 measurement. A change the server makes to a person's
+  // outfit (a worn piece leaving the pack, a gamemode write) is numbered on
+  // the same record as the game's own changes, so it gets the same line as
+  // OnUpdateEquipment. An NPC's outfit is left out: there are thousands.
+  if (IsCreatedAsPlayer()) {
+    spdlog::info("PublishEquipment {:x} - server change {}, worn {}",
+                 GetFormId(), msg.data.numChanges, msg.data.WornList());
+  }
   // Once to each person near it (Thornswood #6252). A plain loop, not
   // SendMessageToActorListeners: this runs from Init (EquipBestWeapon), before
   // the form is in the world, where that one's lookup of the form would load

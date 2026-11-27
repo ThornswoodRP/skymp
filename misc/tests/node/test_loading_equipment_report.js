@@ -4,12 +4,14 @@ const ts = require('../../../skymp5-client/node_modules/typescript');
 const source = fs.readFileSync(path.join(__dirname, '../../../skymp5-client/src/services/services/sendInputsService.ts'), 'utf8');
 const platform = {};
 vm.runInNewContext(fs.readFileSync(path.join(__dirname, '../../../skyrim-platform/src/platform_se/skyrim_platform/assets/storageProxy.js'), 'utf8'))(platform);
-const reports = [], callbacks = {}, storage = platform.storage;
+const reports = [], callbacks = {}, traces = [], storage = platform.storage;
 storage.ownerInventorySettling = true;
 let reads = 0;
 const sandbox = {exports: {}, require(name) {
   if (name === './clientListener') return {ClientListener: class {}};
-  if (name.endsWith('/equipment')) return {getEquipment() { reads++; return {inv:{entries:[{baseId:100,count:1,worn:true}]}}; }};
+  if (name.endsWith('/equipment')) return {getEquipment() { reads++; return {inv:{entries:[{baseId:100,count:1,worn:true}]}}; },
+    wornList(eq) { return '[' + eq.inv.entries.filter(e => e.worn).map(e => e.baseId.toString(16)).join(',') + ']'; }};
+  if (name.endsWith('/logging')) return {logTrace(_from, line) { traces.push(line); }};
   if (name.endsWith('/messages')) return {MsgType:{UpdateEquipment:1}};
   return new Proxy({}, {get: () => class {}});
 }};
@@ -24,5 +26,6 @@ delete storage.ownerInventorySettling;
 assert.equal(typeof storage.ownerInventorySettling, 'function', 'use the actual native storage contract for deleted keys');
 input.sendEquipment();
 assert.equal(reports.length,1); assert.equal(reports[0].message.data.inv.entries[0].worn,true);
+assert.deepEqual(traces,['Equipment sent change ' + reports[0].message.data.numChanges + ', worn [64]'],'the send writes one line naming what is worn (Thornswood #6746)');
 input.sendEquipment(); assert.equal(reports.length,1,'release one complete report, not duplicates');
 console.log('PASS equipment reports wait for the loaded owner outfit');

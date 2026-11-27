@@ -1,7 +1,9 @@
 import { Actor, ActorBase, Cell, WorldSpace, createText, destroyText, Form, FormType, Game, Keyword, NetImmerse, ObjectReference, once, printConsole, setTextPos, setTextSize, setTextString, storage, TESModPlatform, Utility, worldPointToScreenPoint } from "skyrimPlatform";
 import { setDefaultAnimsDisabled, applyAnimation } from "../sync/animation";
 import { Appearance, applyAppearance } from "../sync/appearance";
-import { isBadMenuShown, applyEquipment } from "../sync/equipment";
+import { isBadMenuShown, applyEquipment, wornList, Equipment } from "../sync/equipment";
+import { getInventory } from "../sync/inventory";
+import { logTrace } from "../logging";
 import { RespawnNeededError } from "../lib/errors";
 import { FormModel } from "./model";
 import { applyMovement } from "../sync/movementApply";
@@ -642,6 +644,9 @@ export class FormView {
           //if (this.spawnMoment > 0 && Date.now() - this.spawnMoment > 5000) {
           if (applyEquipment(ac, model.equipment)) {
             this.eqState.lastNumChanges = model.equipment.numChanges;
+            if (model.appearance) {
+              this.traceEquipmentDrawn(ac, model.refrId || 0, model.equipment);
+            }
           }
           this.eqState.lastEqMoment = Date.now();
           //}
@@ -738,6 +743,32 @@ export class FormView {
     }
 
     return this.leveledBaseId;
+  }
+
+  // THORNSWOOD #6746 measurement: a viewer's second half of one outfit
+  // change. The line when it is put on, and three seconds later what the
+  // game really draws on that actor, so a put-on outfit that does not show
+  // is told apart from one never put on.
+  private traceEquipmentDrawn(ac: Actor, remoteId: number, eq: Equipment) {
+    const who = remoteId.toString(16);
+    const wanted = wornList(eq);
+    logTrace("FormView", `Equipment applied on ${who} change ${eq.numChanges}, worn ${wanted}`);
+    const localId = ac.getFormID();
+    Utility.wait(3).then(() => {
+      const now = Actor.from(Game.getFormEx(localId));
+      if (!now || this.eqState.lastNumChanges !== eq.numChanges) {
+        return;
+      }
+      const drawnEq: Equipment = {
+        inv: getInventory(now), numChanges: eq.numChanges,
+        leftSpell: eq.leftSpell, rightSpell: eq.rightSpell,
+        voiceSpell: eq.voiceSpell, instantSpell: eq.instantSpell,
+      };
+      const sorted = (list: string) => list.replace(/^\[|\].*$/g, '').split(',').sort().join(',');
+      const drawn = wornList(drawnEq);
+      logTrace("FormView", `Equipment drawn on ${who} change ${eq.numChanges}: `
+        + (sorted(drawn) === sorted(wanted) ? 'matches' : `DIFFERS, drawn ${drawn}, wanted ${wanted}`));
+    });
   }
 
   private getDefaultEquipState() {

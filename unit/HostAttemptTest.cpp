@@ -1,3 +1,4 @@
+#include <chrono>
 #include "ActionListener.h"
 #include "ChangeValuesMessage.h"
 #include "gamemode_events/GameModeEvent.h"
@@ -582,6 +583,7 @@ TEST_CASE("Server attack animation stops after stamina publication replaces a pa
   p.worldState.espmFiles = espm::LoadOrder::FullPlugins(files);
   p.animationSystem.Init(&p.worldState);
   p.worldState.espmFiles = loadOrder;
+  npc.DrawServerWeapon(std::chrono::steady_clock::now() - std::chrono::seconds(10));
   armed = true;
   REQUIRE(p.GetActionListener().ServerNpcAttack(npcId, humanId) == (change == "none"));
   REQUIRE(published);
