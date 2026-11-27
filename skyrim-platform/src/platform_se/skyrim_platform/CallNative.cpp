@@ -586,7 +586,7 @@ CallNative::AnySafe CallNative::DynamicCast(const std::string& outputTypeName,
   return ObjectPtr();
 }
 
-CallNative::AnySafe CallNative::VariableToAnySafe(const Variable& v)
+CallNative::AnySafe CallNative::ScriptValueToAnySafe(const Variable& v)
 {
   return ::VariableToAnySafe(v);
 }

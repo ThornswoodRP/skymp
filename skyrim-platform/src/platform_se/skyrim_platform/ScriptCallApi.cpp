@@ -108,7 +108,7 @@ Napi::Value ReadValue(Napi::Env env, const Variable* v, const char* what)
   }
   try {
     return SP3NativeValueCasts::GetSingleton().NativeValueToJsValue(
-      env, CallNative::VariableToAnySafe(*v));
+      env, CallNative::ScriptValueToAnySafe(*v));
   } catch (std::exception& e) {
     spdlog::warn("getScript{}: {}", what, e.what());
     return env.Undefined();
