@@ -262,6 +262,12 @@ public:
     extra and the count to take from it, to hand to RemoveItems; nothing
     here changes the inventory. Throws std::runtime_error, with
     RemoveItems's words, when the stacks it may take hold too few.
+
+    THORNSWOOD PATCH (Thornswood #4608). A wanted entry that carries a name
+    names its stack, and takes from that stack alone: the client says which
+    piece went on an arcane enchanter ("Iron Sword (85%)" and not the plain
+    sword beside it), and taking another stack in its place would spend the
+    wrong piece. Only an entry that names no stack goes on to the others.
   */
   std::vector<Entry> ResolveRemoval(const std::vector<Entry>& wanted) const;
   bool HasItem(uint32_t baseId) const;

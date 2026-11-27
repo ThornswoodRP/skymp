@@ -1,9 +1,9 @@
 // TODO: refactor this out
 import { localIdToRemoteId } from "../../view/worldViewMisc";
 
-import { Actor, ContainerChangedEvent, ObjectReference } from "skyrimPlatform";
+import { Actor, ContainerChangedEvent, Form, ObjectReference } from "skyrimPlatform";
 import { ClientListener, CombinedController, Sp } from "./clientListener";
-import { Inventory, Made, MadeEnchantment, ensureMadePotion, ensureMadeEnchantment, readMadePotion, readMadeEnchantment } from "../../sync/inventory";
+import { Entry, Inventory, Made, MadeEnchantment, cropName, ensureMadePotion, ensureMadeEnchantment, getDiff, getInventory, inventoryEntriesEqual, readMadePotion, readMadeEnchantment } from "../../sync/inventory";
 import { MsgType } from "../../messages";
 import { logTrace, logError } from "../../logging";
 import { ConnectionMessage } from "../events/connectionMessage";
@@ -47,11 +47,15 @@ export class CraftService extends ClientListener {
           counting only changes made while it is open leaves corrections out.
         */
         controller.on('menuOpen', (e) => {
-            if (e.name === CRAFTING_MENU) { this.furnitureStreak.clear(); }
+            if (e.name === CRAFTING_MENU) {
+                this.furnitureStreak.clear();
+                this.readPack();
+            }
         });
         controller.on('menuClose', (e) => {
             if (e.name === CRAFTING_MENU) {
                 this.furnitureStreak.clear();
+                this.packBefore = null;
                 this.leaveBench();
             }
         });
@@ -136,6 +140,9 @@ export class CraftService extends ClientListener {
         // Thornswood #4513: an enchanted piece goes back with the enchantment
         // the server keeps, built under the server's id, as applyInventory
         // adds one.
+        // Thornswood #4608: the name the server gave what it made, such as an
+        // enchanted piece keeping "Iron Sword (85%)".
+        const name = typeof content["name"] === "string" && content["name"] ? cropName(content["name"]) : "";
         const madeEnchantment = content["madeEnchantment"];
         const enchantmentId = content["enchantmentId"];
         if (madeEnchantment !== undefined && typeof enchantmentId === "number") {
@@ -148,11 +155,17 @@ export class CraftService extends ClientListener {
             }
             this.ownChanges.push({ baseId, count, out: false });
             this.sp.TESModPlatform.addItemEx(pc, form, count, 1, enchantment,
-                typeof maxCharge === "number" ? maxCharge : 0, false, 0, form.getName(), 0, null, 0);
+                typeof maxCharge === "number" ? maxCharge : 0, false, 0, name || form.getName(), 0, null, 0);
+            this.readPack();
             return;
         }
         this.ownChanges.push({ baseId, count, out: false });
-        pc.addItem(form, count, true);
+        if (name) {
+            this.sp.TESModPlatform.addItemEx(pc, form, count, 1, null, 0, false, 0, name, 0, null, 0);
+        } else {
+            pc.addItem(form, count, true);
+        }
+        this.readPack();
     }
 
     private leaveBench() {
@@ -222,16 +235,19 @@ export class CraftService extends ClientListener {
                     },
                     reliability: "reliable"
                 });
+                this.readPack();
                 return;
             }
             let craftInputObjects = this.furnitureStreak.get(furnitureId);
             if (!craftInputObjects) {
                 craftInputObjects = { entries: [] };
             }
-            craftInputObjects.entries.push({
-                baseId: baseObjId,
-                count: e.numItems,
-            });
+            const input: Entry = { baseId: baseObjId, count: e.numItems };
+            const name = this.stackLeft(baseObjId, e.numItems);
+            if (name) {
+                input.name = name;
+            }
+            craftInputObjects.entries.push(input);
             this.furnitureStreak.set(furnitureId, craftInputObjects);
             logTrace(this,
                 `Adding baseObjId`, baseObjId.toString(16), `numItems`, e.numItems, `to craft`,
@@ -275,8 +291,63 @@ export class CraftService extends ClientListener {
 
                 // Thornswood #3161: out of the pack until the server makes it.
                 this.hide(resultObjectId, e.numItems);
+                this.readPack();
             }
         }
+    }
+
+    /*
+      THORNSWOOD PATCH (Thornswood #4608). WHICH STACK WENT ON THE ENCHANTER.
+
+      A worn, crude or masterwork piece is a stack of its own in the pack,
+      told apart by its name ("Iron Sword (85%)"), and the event that says a
+      piece left the pack names only its record. So with a plain sword and a
+      worn one in the pack the server took the plain one, whichever went on
+      the enchanter. The pack is read when the menu opens at an enchanter
+      (packBefore), and when a piece leaves it the pack is read again: the
+      stack of that record that now holds fewer is the one that went. Its
+      name goes with the input, and the server takes that stack alone
+      (CraftService::PlanInputs). A plain stack sends no name, as before.
+
+      packBefore is moved on by each piece that leaves, so two pieces of one
+      record in the same craft each find their own stack, and read again once
+      a craft is sent and once the made item is put back, the changes this
+      service makes itself. Only at an arcane enchanter: everywhere else an
+      input is still named by its record and the server's plain-first rule
+      picks its stacks (Thornswood #3163).
+    */
+    private readPack() {
+        this.packBefore = null;
+        const pc = this.sp.Game.getPlayer();
+        const furnitureRef = pc ? (pc as Actor).getFurnitureReference() : null;
+        if (pc && furnitureRef && this.isEnchanter(furnitureRef)) {
+            this.packBefore = getInventory(pc);
+        }
+    }
+
+    private stackLeft(baseId: number, count: number): string | undefined {
+        const pc = this.sp.Game.getPlayer();
+        if (!this.packBefore || !pc) {
+            return undefined;
+        }
+        const gone = getDiff(this.packBefore, getInventory(pc), true).entries
+            .find((x) => x.baseId === baseId && x.count >= count);
+        if (!gone) {
+            logError(this, `Could not tell which stack of`, baseId.toString(16), `left the pack at the enchanter`);
+            return undefined;
+        }
+        const before = this.packBefore.entries.find((x) => inventoryEntriesEqual(x, gone, true));
+        if (before) {
+            before.count -= count;
+            this.packBefore.entries = this.packBefore.entries.filter((x) => x.count > 0);
+        }
+        return typeof gone.name === "string" && gone.name ? gone.name : undefined;
+    }
+
+    private isEnchanter(furnitureRef: ObjectReference): boolean {
+        const base = furnitureRef.getBaseObject();
+        const keyword = this.sp.Keyword.getKeyword(ENCHANTER_KEYWORD);
+        return !!base && !!keyword && base.hasKeyword(keyword);
     }
 
     /*
@@ -294,11 +365,10 @@ export class CraftService extends ClientListener {
       (CraftService::Disenchant), which checks it all again.
     */
     private isDisenchant(furnitureRef: ObjectReference, e: ContainerChangedEvent): boolean {
-        const base = furnitureRef.getBaseObject();
-        const keyword = this.sp.Keyword.getKeyword(ENCHANTER_KEYWORD);
-        if (!base || !keyword || !base.hasKeyword(keyword)) {
+        if (!this.isEnchanter(furnitureRef)) {
             return false;
         }
+        const base = furnitureRef.getBaseObject() as Form;
         const staff = this.sp.Keyword.getKeyword(STAFF_ENCHANTER_KEYWORD);
         if (staff && base.hasKeyword(staff)) {
             return false;
@@ -315,6 +385,10 @@ export class CraftService extends ClientListener {
     }
 
     private furnitureStreak = new Map<FurnitureId, Inventory>();
+
+    // Thornswood #4608: the pack as it was before the pieces now leaving it at
+    // an arcane enchanter, or null anywhere else.
+    private packBefore: Inventory | null = null;
     // Thornswood #3161. Crafts sent and not yet made, this time at the bench.
     private awaitingMade = 0;
     // Thornswood #3161. Changes to the pack this service made itself and has

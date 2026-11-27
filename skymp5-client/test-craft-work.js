@@ -43,7 +43,13 @@
 //      enchanted leaves the pack, and nothing comes back) tells the server
 //      the bench and the piece, and is no craft (Thornswood #4579);
 //  17. the disenchanted piece is not an input of the next enchanting there;
-//  18. the same piece leaving at any other bench is no disenchant.
+//  18. the same piece leaving at any other bench is no disenchant;
+//  21. at an arcane enchanter, the stack of the piece that left the pack goes
+//      with the input by its name, so the server takes that copy and not the
+//      plain one beside it (Thornswood #4608);
+//  22. a plain piece leaving there sends no name;
+//  23. at any other bench an input is named by its record alone;
+//  24. craftMade's name is the name the piece is put back with.
 //
 // Against the code before #4579, 16 and 17 fail: nothing is sent, and the
 // piece goes into the next craft's inputs.
@@ -154,8 +160,8 @@ const sp = {
   Weapon: { from: function (f) { return f ? { getEnchantment: function () { return f.getFormID() === FIRE_DAGGER ? {} : null; } } : null; } },
   Armor: { from: function () { return null; } },
   TESModPlatform: {
-    addItemEx: function (refr, f, count, health, ench, maxCharge) {
-      calls.push(['addItemEx', f.getFormID(), count, ench ? ench.enchantmentId : 0, maxCharge]);
+    addItemEx: function (refr, f, count, health, ench, maxCharge, removeOnUnequip, chargePercent, name) {
+      calls.push(['addItemEx', f.getFormID(), count, ench ? ench.enchantmentId : 0, maxCharge, name]);
       moved(f.getFormID(), count, 0, PLAYER);
     },
   },
@@ -175,7 +181,23 @@ const BOTTLE = 0xff000801, MADE_ID = 0xff812345, UNBUILDABLE = 0xff8abcde;
 const BREW_CONTENTS = { name: 'Potion of Healing', poison: false,
   effects: [{ effectId: 0x3eb15, magnitude: 15, area: 0, duration: 0 }] };
 const built = [];
+// Thornswood #4608. The pack as sync/inventory reads it: entries of a base,
+// a count and a name. Empty unless a check below fills it, so the checks
+// before it see no stack to name.
+let pack = [];
+function sameStack(a, b) { return a.baseId === b.baseId && (a.name || '') === (b.name || ''); }
 const inventoryStub = {
+  getInventory: function () { return { entries: JSON.parse(JSON.stringify(pack)) }; },
+  inventoryEntriesEqual: function (a, b) { return sameStack(a, b); },
+  getDiff: function (lhs, rhs) {
+    const out = JSON.parse(JSON.stringify(lhs.entries));
+    rhs.entries.forEach(function (e) {
+      const same = out.find(function (x) { return sameStack(x, e); });
+      if (same) { same.count -= e.count; } else { out.push(Object.assign({}, e, { count: -e.count })); }
+    });
+    return { entries: out.filter(function (x) { return x.count !== 0; }) };
+  },
+  cropName: function (s) { return s; },
   readMadePotion: function (f) { return f && f.getFormID() === BOTTLE ? BREW_CONTENTS : undefined; },
   ensureMadePotion: function (id, made) { built.push([id, made]); return id !== UNBUILDABLE; },
   // Thornswood #4513. A piece the game enchanted this session reads as
@@ -347,6 +369,53 @@ moved(FIRE_DAGGER, 1, PLAYER, 0);
 run();
 yes('20. nor at a bench that only borrows the enchanting animation', disenchants().length === 1);
 closeMenu();
+
+// Thornswood #4608. A plain dagger and a worn one in the pack at an arcane
+// enchanter; the game takes the worn one and gives the enchanted piece back.
+const WORN = 'Iron Dagger (85%)';
+function enchantFromPack(name) {
+  const i = pack.findIndex(function (x) { return x.baseId === DAGGER && (x.name || '') === (name || ''); });
+  pack[i].count -= 1;
+  pack = pack.filter(function (x) { return x.count > 0; });
+  pack.find(function (x) { return x.baseId === PETTY_GEM; }).count -= 1;
+  moved(DAGGER, 1, PLAYER, 0);
+  moved(PETTY_GEM, 1, PLAYER, 0);
+  moved(DAGGER, 1, 0, PLAYER);
+  run();
+  return sent(13)[sent(13).length - 1];
+}
+bench = ENCHANTER;
+pack = [{ baseId: DAGGER, count: 1 }, { baseId: DAGGER, count: 1, name: WORN }, { baseId: PETTY_GEM, count: 2 }];
+openMenu();
+let named = enchantFromPack(WORN);
+yes('21. at an arcane enchanter the worn piece that left the pack goes with the input by its name',
+    JSON.stringify(named.data.craftInputObjects.entries) ===
+      JSON.stringify([{ baseId: DAGGER, count: 1, name: WORN }, { baseId: PETTY_GEM, count: 1 }]));
+named = enchantFromPack(undefined);
+yes('22. and the plain one, enchanted next in the same menu, sends no name',
+    JSON.stringify(named.data.craftInputObjects.entries) ===
+      JSON.stringify([{ baseId: DAGGER, count: 1 }, { baseId: PETTY_GEM, count: 1 }]));
+
+const callsBeforeNamed = calls.length;
+serverSays({ customPacketType: 'craftMade', baseId: ENCHANTED_PIECE, count: 1, name: WORN,
+  madeEnchantment: ENCHANTMENT, enchantmentId: ENCHANTMENT_ID, maxCharge: 250 });
+const putNamed = calls.slice(callsBeforeNamed);
+yes('24. craftMade\'s name is the name the piece is put back with',
+    putNamed.length === 1 && putNamed[0][0] === 'addItemEx' && putNamed[0][5] === WORN);
+closeMenu();
+
+bench = FORGE;
+pack = [{ baseId: DAGGER, count: 1, name: WORN }];
+openMenu();
+pack = [];
+moved(DAGGER, 1, PLAYER, 0);
+moved(WARHAMMER, 1, 0, PLAYER);
+run();
+const atForge = sent(13)[sent(13).length - 1];
+yes('23. at any other bench an input is named by its record alone',
+    JSON.stringify(atForge.data.craftInputObjects.entries) === JSON.stringify([{ baseId: DAGGER, count: 1 }]));
+closeMenu();
+pack = [];
 
 console.log('');
 console.log(pass + ' passed, ' + fail + ' failed');

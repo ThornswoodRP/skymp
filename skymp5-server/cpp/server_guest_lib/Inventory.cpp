@@ -300,7 +300,10 @@ std::vector<Inventory::Entry> Inventory::ResolveRemoval(
     }
     uint32_t remaining = e.count;
     take(e, remaining, false);
-    take(e, remaining, true);
+    if (!e.name) {
+      // Thornswood #4608: a wanted entry with a name takes its own stack.
+      take(e, remaining, true);
+    }
     if (remaining) {
       throw std::runtime_error(
         fmt::format("Source inventory doesn't have enough {:#x} ({} is "
