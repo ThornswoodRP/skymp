@@ -84,7 +84,18 @@ public:
   ~Client() override
   {
     packetGuard.reset(); // Depends on peer, so must be reset first
-    peer->Shutdown(0);
+    // THORNSWOOD (#6724). Shutdown(0) closes the socket without telling the
+    // server: with no time to send it, RakPeer::Shutdown sends no
+    // ID_DISCONNECTION_NOTIFICATION at all. So the server held a game that
+    // had changed character, been ended or closed until its own 60 s
+    // timeout, and the same Discord account picking again inside that minute
+    // was turned away as a second game (24 Nov 2026, main: three refusals,
+    // each 1 to 3 s after the game closed, the old connection gone 48 to
+    // 58 s later). With time given, Shutdown tells the server first and
+    // returns as soon as the server has the goodbye, which is one round
+    // trip; kGoodbyeMs is only the most it waits for a server that does not
+    // answer.
+    peer->Shutdown(kGoodbyeMs);
   }
 
   void Send(Networking::PacketData data, size_t length, bool reliable) override
@@ -124,6 +135,8 @@ public:
   bool IsConnected() const override { return isConnected; }
 
 private:
+  static constexpr unsigned int kGoodbyeMs = 500;
+
   const std::string ip;
   const unsigned short port;
   const std::string password;
