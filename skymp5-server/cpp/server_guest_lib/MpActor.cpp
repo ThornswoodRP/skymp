@@ -1778,7 +1778,13 @@ bool MpActor::IsSpellLearnedFromBase(const uint32_t spellId) const
   const auto npcData = espm::GetData<espm::NPC_>(GetBaseId(), GetParent());
   const auto npc = GetParent()->GetEspm().GetBrowser().LookupById(GetBaseId());
 
-  const uint32_t raceId = npc.ToGlobalId(npcData.race);
+  // THORNSWOOD (#6716). The race is the actor's own (GetRaceId: the
+  // appearance's race, else the base record's through its templates), not
+  // the base record's. Every person is created on the Player record, whose
+  // race is Nord, so every person held the Nord power (Battle Cry) and no
+  // person of another race held their own (a Dunmer's Ancestor's Wrath was
+  // refused at the cast as not held).
+  const uint32_t raceId = GetRaceId();
 
   const auto raceData = espm::GetData<espm::RACE>(raceId, GetParent());
   const auto race = GetParent()->GetEspm().GetBrowser().LookupById(raceId);
