@@ -271,6 +271,27 @@ export class RemoteServer extends ClientListener {
         }
       }
 
+      /*
+        THORNSWOOD (Thornswood #6622). Pickpocketing is between people only.
+        The server opens another person's pack to a sneaking person who
+        pressed them, with the pack sent just before (MpObjectReference,
+        ProcessActivateNormal). This game never puts somebody else's pack on
+        their character (FormView applies a pack only to what is not an
+        actor), so it is put there now, and the press below is the game's
+        own: a sneaking press on a character opens the steal window over
+        that pack, and the game rolls each take. A take comes back as a
+        TakeItem from that person (ContainersService).
+      */
+      const npcMark = refr.getBaseObject()?.getType() === FormType.NPC ? Actor.from(refr) : null;
+      if (npcMark) {
+        const markModel = this.worldModel.forms.find((f) => f?.refrId === remoteId);
+        if (!markModel?.inventory) {
+          logError(this, 'onOpenContainerMessage - no pack for the person', 'remoteId', remoteId.toString(16));
+          return;
+        }
+        ModelApplyUtils.applyModelInventory(npcMark, markModel.inventory);
+      }
+
       refr.activate(Game.getPlayer(), true);
 
       const baseObject = refr.getBaseObject();
@@ -279,7 +300,8 @@ export class RemoteServer extends ClientListener {
       let functionChecker: (() => boolean) | null = null;
       let factName = "";
       let delaySeconds = -1.0;
-      if (baseType === FormType.Container) {
+      if (baseType === FormType.Container || baseType === FormType.NPC) {
+        // A person's pack in the steal window is the same menu (#6622).
         functionChecker = () => Ui.isMenuOpen("ContainerMenu");
         factName = "'ContainerMenu open'";
         delaySeconds = 0.0;

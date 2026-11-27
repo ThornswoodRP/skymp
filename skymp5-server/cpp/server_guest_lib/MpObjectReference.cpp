@@ -709,6 +709,22 @@ void MpObjectReference::TakeItem(MpActor& ac, const Inventory::Entry& e)
     throw std::runtime_error(err.str());
   }
 
+  // THORNSWOOD (#6622). A pickpocket takes only what the mark carries and
+  // does not wear, and only while still able to pickpocket them.
+  if (auto mark = AsActor()) {
+    if (!MpActor::MayPickpocket(ac, *mark)) {
+      throw std::runtime_error(
+        fmt::format("Actor {:#x} can no longer pickpocket {:#x}",
+                    ac.GetFormId(), GetFormId()));
+    }
+    if (mark->GetUnwornCount(e.baseId) < e.count) {
+      throw std::runtime_error(fmt::format(
+        "Actor {:#x} can't take {} of {:#x} from {:#x}: it wears them or "
+        "carries fewer",
+        ac.GetFormId(), e.count, e.baseId, GetFormId()));
+    }
+  }
+
   TakeItemEvent takeItemEvent(&ac, this, e);
   takeItemEvent.Fire(GetParent());
 }
@@ -1895,6 +1911,40 @@ void MpObjectReference::ProcessActivateNormal(
     } else {
       SetOpen(!IsOpen());
     }
+  } else if (t == espm::NPC_::kType && actorActivator && AsActor()) {
+    // THORNSWOOD (#6622). Pickpocketing is between people only (Patrick,
+    // 26 Nov 2026): a sneaking person's press on another person opens that
+    // person's pack in Skyrim's steal window, the way a container opens.
+    // The client draws the window and rolls the steal; a take comes back as
+    // a TakeItem from this actor, which TakeItem holds to what it does not
+    // wear. A press on an NPC, or by somebody not sneaking, does nothing
+    // here, as before.
+    auto& mark = *AsActor();
+    if (!MpActor::MayPickpocket(*actorActivator, mark)) {
+      return;
+    }
+    if (CheckIfObjectCanStartOccupyThis(activationSource,
+                                        MpActor::kPickpocketReach)) {
+      if (this->occupant) {
+        this->occupant->RemoveEventSink(this->occupantDestroySink);
+        this->occupant->RemoveEventSink(this->occupantDisableSink);
+      }
+      actorActivator->GetActorToSendTo().SendToUser(
+        CreatePropertyMessage_(this, "inventory",
+                               GetInventory().ToJson().dump()),
+        true);
+      activationSource.SendOpenContainer(GetFormId());
+
+      this->occupant = actorActivator;
+
+      this->occupantDestroySink.reset(
+        new OccupantDestroyEventSink(*GetParent(), this));
+      this->occupant->AddEventSink(this->occupantDestroySink);
+
+      this->occupantDisableSink.reset(
+        new OccupantDisableEventSink(*GetParent(), this));
+      this->occupant->AddEventSink(this->occupantDisableSink);
+    }
   } else if (t == espm::CONT::kType && actorActivator) {
     EnsureBaseContainerAdded(loader);
 
@@ -1985,6 +2035,14 @@ bool MpObjectReference::ProcessActivateSecond(
     if (this->occupant == &activationSource) {
       SetOpen(false);
       this->occupant->RemoveEventSink(this->occupantDestroySink);
+      this->occupant = nullptr;
+      return true;
+    }
+  } else if (t == espm::NPC_::kType && actorActivator && AsActor()) {
+    // THORNSWOOD (#6622). The steal window closed.
+    if (this->occupant == &activationSource) {
+      this->occupant->RemoveEventSink(this->occupantDestroySink);
+      this->occupant->RemoveEventSink(this->occupantDisableSink);
       this->occupant = nullptr;
       return true;
     }
