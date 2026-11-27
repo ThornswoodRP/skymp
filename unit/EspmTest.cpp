@@ -366,6 +366,22 @@ TEST_CASE("Loads Weapon", "[espm]")
   REQUIRE(npc->GetData(cache).weapData->weight == 9.f);
 }
 
+TEST_CASE("A key is an item, with its weight", "[espm]")
+{
+  // Thornswood #7171. KEYM RiftenConfiscatedGoodsChestKey; Skyrim's keys
+  // weigh nothing.
+  auto& br = GetEspmLoader().GetBrowser();
+  espm::CompressedFieldsCache cache;
+
+  auto form = br.LookupById(0x10e7e6);
+  REQUIRE(form.rec);
+  REQUIRE(form.rec->GetType() == espm::KEYM::kType);
+  REQUIRE(espm::utils::IsItem(form.rec->GetType()));
+  auto key = espm::Convert<espm::KEYM>(form.rec);
+  REQUIRE(key);
+  REQUIRE(key->GetData(cache).weight == 0.f);
+}
+
 TEST_CASE("Loads NPC factions", "[espm]")
 {
   enum

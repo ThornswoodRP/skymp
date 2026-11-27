@@ -87,8 +87,8 @@ TEST_CASE("A dropped piece keeps its extra through the pickup",
   constexpr uint32_t ironDagger = 0x0001397E;
   constexpr uint32_t ironSword = 0x00012EB7;
   constexpr uint32_t ironHelmet = 0x00012E4D;
-  // MISC dunRagnTorstensKey in Skyrim.esm. Thornswood's keys are MISC
-  // records; KEYM is not in espm::utils::IsItem, so it is not picked up.
+  // MISC dunRagnTorstensKey in Skyrim.esm, a named piece of a plain MISC.
+  // A KEYM key has its own case below (Thornswood #7171).
   constexpr uint32_t houseKey = 0x000AADB7;
   DoConnect(partOne, 0);
 
@@ -151,6 +151,49 @@ TEST_CASE("A dropped piece keeps its extra through the pickup",
     REQUIRE(it->count == 1);
     REQUIRE(it->EqualExceptCount(piece));
   }
+}
+
+TEST_CASE("A key is dropped and picked up like any other thing",
+          "[DropItemTest]")
+{
+  // Thornswood #7171: a KEYM was not an item to the server, so a key could
+  // not be dropped, picked up or carried in a transaction, and Thornswood's
+  // keys were MISC records sorted under Misc. KEYM
+  // RiftenConfiscatedGoodsChestKey in Skyrim.esm.
+  auto& partOne = GetPartOne();
+  constexpr uint32_t ironDagger = 0x0001397E;
+  constexpr uint32_t chestKey = 0x0010E7E6;
+  DoConnect(partOne, 0);
+  partOne.CreateActor(0xff000000, { 1, 2, 3 }, 0, 0x3c);
+  partOne.SetUserActor(0, 0xff000000);
+  MpActor& ac = partOne.worldState.GetFormAt<MpActor>(0xff000000);
+
+  Inventory::ExtraData named;
+  named.name = "Key to Breezehome";
+  ac.RemoveAllItems();
+  ac.AddItem(ironDagger, 1);
+  ac.AddItems({ Inventory::Entry(chestKey, 1, named) });
+
+  DoMessage(partOne, 0,
+            nlohmann::json{ { "t", MsgType::DropItem },
+                            { "baseId", chestKey },
+                            { "count", 1 } });
+  partOne.Tick();
+  REQUIRE(ac.GetInventory().GetItemCount(chestKey) == 0);
+  REQUIRE(ac.GetInventory().GetItemCount(ironDagger) == 1);
+
+  MpObjectReference* refr = FindDrop(partOne, chestKey);
+  REQUIRE(refr != nullptr);
+  REQUIRE(refr->GetPickupExtra().has_value());
+  REQUIRE(refr->GetPickupExtra()->name == named.name);
+
+  refr->Activate(ac);
+  auto& entries = ac.GetInventory().entries;
+  auto it = std::find_if(entries.begin(), entries.end(),
+                         [&](auto& e) { return e.baseId == chestKey; });
+  REQUIRE(it != entries.end());
+  REQUIRE(it->count == 1);
+  REQUIRE(it->name == named.name);
 }
 
 TEST_CASE("A drop takes a plain stack before a named one", "[DropItemTest]")
