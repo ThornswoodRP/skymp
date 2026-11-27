@@ -216,6 +216,12 @@ public:
     std::chrono::steady_clock::time_point now);
 
   void Kill(MpActor* killer = nullptr, bool shouldTeleport = false);
+
+  // Thornswood #4507. The killmove one melee hit asks for, held only while
+  // that hit's write runs (ActionListener::OnWeaponHit, KillMoveScope), so
+  // Kill plays it only on the death that write causes, by that killer.
+  void SetPendingKillMove(uint32_t killerId, uint32_t idleId);
+  void ClearPendingKillMove();
   void Respawn(bool shouldTeleport = true);
   void RespawnWithDelay(bool shouldTeleport = true);
   void Teleport(const LocationalData& position);

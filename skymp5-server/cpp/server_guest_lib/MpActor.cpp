@@ -34,9 +34,11 @@
 #include <limits>
 #include <optional>
 #include <random>
+#include <set>
 #include <string>
 
 #include "ChangeValuesMessage.h"
+#include "KillMoveMessage.h"
 #include "SetInventoryMessage.h"
 #include "TeleportMessage.h"
 #include "UpdateEquipmentMessage.h"
@@ -88,6 +90,13 @@ struct MpActor::Impl
   float serverMovementSpeed = 0;
   uint32_t serverCombatTarget = 0;
   std::chrono::steady_clock::time_point serverCombatUntil{};
+  // Thornswood #4507. See MpActor::SetPendingKillMove.
+  struct PendingKillMove
+  {
+    uint32_t killerId = 0;
+    uint32_t idleId = 0;
+  };
+  std::optional<PendingKillMove> pendingKillMove;
 
   // this is a hot fix attempt to make permanent restoration potions work
   std::chrono::system_clock::time_point nextRestorationTime{};
@@ -2347,6 +2356,33 @@ void MpActor::Kill(MpActor* killer, bool shouldTeleport)
     ? killer->GetParent()->LookupFormById(killer->GetFormId()) : nullptr;
   if (killer && keepKiller.get() != killer) return;
   const auto killerLife = killer ? killer->GetRuntimeLifeIdentity() : 0;
+
+  // Thornswood #4507. The pair goes to everybody who sees the target before
+  // the death does, so each machine knows the death comes by the pair when
+  // it arrives. Reliable messages to one machine arrive in the order sent.
+  const auto killMove = pImpl->pendingKillMove;
+  pImpl->pendingKillMove.reset();
+  if (killer && killMove && killMove->killerId == killer->GetFormId()) {
+    KillMoveMessage message;
+    message.idx = killer->GetIdx();
+    message.targetIdx = GetIdx();
+    message.idle = killMove->idleId;
+    std::set<Networking::UserId> recipients;
+    auto sendTo = [&](MpActor& actor) {
+      const auto user = actor.GetUserId();
+      if (user != Networking::InvalidUserId && recipients.insert(user).second) {
+        actor.SendToUser(message, true);
+      }
+    };
+    VisitCurrentActorListeners(sendTo);
+    sendTo(*this);
+    sendTo(*killer);
+    spdlog::trace("MpActor::Kill {:x} - killmove {:x} by {:x} sent to {} "
+                  "machines",
+                  GetFormId(), killMove->idleId, killer->GetFormId(),
+                  recipients.size());
+  }
+
   if (!SendAndSetDeathState(true, shouldTeleport)) return;
 
   const auto runtimeIdentity = GetRuntimeIdentity();
@@ -2359,6 +2395,16 @@ void MpActor::Kill(MpActor* killer, bool shouldTeleport)
   deathEvent.Fire(GetParent());
 
   if (HasRuntimeIdentity(runtimeIdentity)) AddDeathItem(runtimeIdentity);
+}
+
+void MpActor::SetPendingKillMove(uint32_t killerId, uint32_t idleId)
+{
+  pImpl->pendingKillMove = Impl::PendingKillMove{ killerId, idleId };
+}
+
+void MpActor::ClearPendingKillMove()
+{
+  pImpl->pendingKillMove.reset();
 }
 
 void MpActor::RespawnWithDelay(bool shouldTeleport)

@@ -192,6 +192,10 @@ export class NetworkingService extends ClientListener {
             const event = { message: msgAny };
             this.controller.emitter.emit("teleportMessage2", event);
             this.controller.emitter.emit("anyMessage", event);
+          } else if (msgAny.t === MsgType.KillMove) {
+            const event = { message: msgAny };
+            this.controller.emitter.emit("killMoveMessage", event);
+            this.controller.emitter.emit("anyMessage", event);
           } else {
             // throw new NeverError(msgAny);
             throw new Error("Unhandled MsgType " + msgAny.t);
