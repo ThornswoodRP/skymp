@@ -1,4 +1,6 @@
 #include "CameraApi.h"
+#include "CameraFov.h"
+#include "InvalidArgumentException.h"
 #include "NullPointerException.h"
 
 Napi::Value CameraApi::WorldPointToScreenPoint(const Napi::CallbackInfo& info)
@@ -51,4 +53,27 @@ Napi::Value CameraApi::WorldPointToScreenPoint(const Napi::CallbackInfo& info)
   }
 
   return res;
+}
+
+// Thornswood #7200. Skyrim Platform had no call that sets the camera's field
+// of view (SetCameraFOV is only a console command, and a plugin cannot run
+// one), so the Settings page's field of view never reached the camera. The
+// player camera keeps the angle it draws the world with in worldFOV, and the
+// one it draws the first person arms with in firstPersonFOV: the same two
+// angles the console's fov command takes.
+Napi::Value CameraApi::SetCameraFov(const Napi::CallbackInfo& info)
+{
+  auto worldFov = NapiHelper::ExtractDouble(info[0], "worldFov");
+  auto firstPersonFov = NapiHelper::ExtractDouble(info[1], "firstPersonFov");
+  if (!CameraFov::IsValid(worldFov))
+    throw InvalidArgumentException("worldFov", worldFov);
+  if (!CameraFov::IsValid(firstPersonFov))
+    throw InvalidArgumentException("firstPersonFov", firstPersonFov);
+
+  auto camera = RE::PlayerCamera::GetSingleton();
+  if (!camera)
+    throw NullPointerException("camera");
+  camera->worldFOV = static_cast<float>(worldFov);
+  camera->firstPersonFOV = static_cast<float>(firstPersonFov);
+  return info.Env().Undefined();
 }

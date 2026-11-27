@@ -84,6 +84,7 @@ An object providing [access to the Chromium Embedded Framework][Browser].
 More info and samples for these will be added later:
 
 - `worldPointToScreenPoint` - convert an array of points in the game world to an array of points on the user's screen. The dot on the screen is indicated by 3 numbers from -1 to 1.
+- `setCameraFOV(worldFov: number, firstPersonFov: number): void` - set the camera's field of view in degrees: the angle the world is drawn with, and the one the first person arms are drawn with. Each must be above 0 and below 180.
 - `callNative (className: string, functionName: string, self ?: object, ... args: any): any` - call a function from the original game by name.
 - `getJsMemoryUsage (): number` - get the amount of RAM used by the embedded JS engine, in bytes.
 - `storage` - an object used to save data between reloading scripts. See the [Plugin Initialization][PluginInit] recipe for an example of how to use it.
