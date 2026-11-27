@@ -151,12 +151,18 @@ function makeGame() {
       },
     },
   };
-  const sandbox = { exports: {}, require: (m) => (m === 'skyrimPlatform' ? sp : {}) };
+  const nativeApply = require('./inventory_apply_fixture').install(sp, pc);
+  const sandbox = { exports: {}, require: (m) => m === 'skyrimPlatform' ? sp
+    : m === './inventoryApplyCoordinator' ? nativeApply.coordinator : {} };
   sandbox.module = { exports: sandbox.exports };
   vm.runInNewContext(js, sandbox);
   game.inv = sandbox.exports;
   game.pc = pc;
-  game.apply = (entries) => game.inv.applyInventory(pc, { entries }, false, true);
+  game.apply = (entries) => {
+    game.inv.applyInventory(pc, { entries }, false, true);
+    nativeApply.drain();
+    return game.inv.getDiff({ entries }, game.inv.getInventory(pc), true).entries.length === 0;
+  };
   game.diff = (entries) => game.inv.getDiff({ entries }, game.inv.getInventory(pc), true).entries;
   return game;
 }

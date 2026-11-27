@@ -4,11 +4,11 @@ import {
   Game,
   ObjectReference,
   Spell,
-  Ui,
   setInventory,
 } from 'skyrimPlatform';
 
 import { Entry, Inventory, getInventory } from './inventory';
+export { isBadMenuShown } from './inventoryMenus';
 
 export const enum SpellType {
   Left,
@@ -172,14 +172,4 @@ export const wornList = (eq: Equipment | undefined): string => {
     }
   }
   return res;
-};
-
-export const isBadMenuShown = (): boolean => {
-  return (
-    Ui.isMenuOpen('InventoryMenu') ||
-    Ui.isMenuOpen('FavoritesMenu') ||
-    Ui.isMenuOpen('MagicMenu') ||
-    Ui.isMenuOpen('ContainerMenu') ||
-    Ui.isMenuOpen('Crafting Menu') // Actually I don't think it causes crashes
-  );
 };

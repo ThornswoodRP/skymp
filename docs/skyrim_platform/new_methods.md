@@ -9,6 +9,7 @@ There are methods such as `printConsole ()` that can be called immediately after
   - [printConsole](#printconsole)
   - [settings](#settings)
   - [writeLogs](#writelogs)
+  - [Complete inventory application](inventory_apply.md)
   - [Other methods and properties](#other-methods-and-properties)
 
 

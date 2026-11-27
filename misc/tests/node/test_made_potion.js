@@ -129,13 +129,23 @@ function makeGame({ native = true } = {}) {
       return true;
     };
   }
-  const sandbox = { exports: {}, require: (m) => (m === 'skyrimPlatform' ? sp : {}) };
+  const nativeApply = require('./inventory_apply_fixture').install(sp, pc);
+  const sandbox = { exports: {}, require: (m) => m === 'skyrimPlatform' ? sp : m === './inventoryApplyCoordinator' ? nativeApply.coordinator : {} };
   sandbox.module = { exports: sandbox.exports };
   vm.runInNewContext(js, sandbox);
   game.inv = sandbox.exports;
   game.sp = sp;
   game.pc = pc;
-  game.apply = (entries) => game.inv.applyInventory(pc, { entries }, false, true);
+  game.beginApply = (entries) => game.inv.applyInventory(pc, { entries }, false, true);
+  game.nativeApply = nativeApply;
+  game.advance = nativeApply.advance;
+  game.applyAndDrain = (entries) => {
+    const before = nativeApply.creations;
+    const accepted = game.beginApply(entries);
+    if (nativeApply.creations === before) return accepted;
+    nativeApply.drain();
+    return game.inv.getDiff({entries}, game.inv.getInventory(pc), true).entries.length === 0;
+  };
   game.count = (id) => game.lists.filter((l) => l.baseId === id).reduce((n, l) => n + l.count, 0);
   return game;
 }
@@ -159,7 +169,7 @@ const made = () => JSON.parse(JSON.stringify(MADE));
 // A new session: the server sends two bottles by their contents.
 {
   const g = makeGame();
-  g.apply([{ baseId: H, count: 2, made: made() }]);
+  g.applyAndDrain([{ baseId: H, count: 2, made: made() }]);
   const built = g.calls.filter((c) => c[0] === 'createMadePotion');
   yes('the bottle is built once, under the server\'s id', built.length === 1 && built[0][1] === H);
   yes('from its contents: effects, magnitudes, areas, durations, name',
@@ -169,7 +179,7 @@ const made = () => JSON.parse(JSON.stringify(MADE));
   yes('no "Bad form ID"', !g.console.some((l) => /Bad form ID/.test(l)));
 
   g.calls.length = 0;
-  g.apply([{ baseId: H, count: 2, made: made() }]);
+  g.applyAndDrain([{ baseId: H, count: 2, made: made() }]);
   yes('the next pass finds nothing to do', g.calls.length === 0);
 
   const read = g.inv.readMadePotion ? g.inv.readMadePotion(g.sp.Game.getFormEx(H)) : 'x';
@@ -184,7 +194,7 @@ const made = () => JSON.parse(JSON.stringify(MADE));
 {
   const g = makeGame();
   g.lists.push({ baseId: BREWED, count: 1 });
-  g.apply([{ baseId: H, count: 1, made: made() }]);
+  g.applyAndDrain([{ baseId: H, count: 1, made: made() }]);
   yes('the runtime bottle only that session had is taken out', g.count(BREWED) === 0);
   yes('and the server\'s bottle is in its place', g.count(H) === 1);
 }
@@ -192,23 +202,23 @@ const made = () => JSON.parse(JSON.stringify(MADE));
 // A bottle drunk or given away on the server: the game gives it up too.
 {
   const g = makeGame();
-  g.apply([{ baseId: H, count: 2, made: made() }]);
+  g.applyAndDrain([{ baseId: H, count: 2, made: made() }]);
   g.calls.length = 0;
-  g.apply([{ baseId: H, count: 1, made: made() }]);
+  g.applyAndDrain([{ baseId: H, count: 1, made: made() }]);
   const removes = g.calls.filter((c) => c[0] === 'remove');
   yes('a bottle the server no longer holds is taken away as a plain unit',
     removes.length === 1 && removes[0][1] === H && removes[0][2].length === 0 && removes[0][4] === 1);
   yes('and the game holds the one bottle the server does', g.count(H) === 1);
   yes('with nothing left over to take away', !g.console.some((l) => /fewer than the difference/.test(l)));
   g.calls.length = 0;
-  g.apply([{ baseId: H, count: 1, made: made() }]);
+  g.applyAndDrain([{ baseId: H, count: 1, made: made() }]);
   yes('and the next pass finds nothing to do', g.calls.length === 0);
 }
 
 // The same id with other contents in one session: left out, not thrown.
 {
   const g = makeGame();
-  g.apply([{ baseId: H, count: 1, made: made() }]);
+  g.applyAndDrain([{ baseId: H, count: 1, made: made() }]);
   const other = made(); other.effects[0].magnitude = 99;
   let threw = false, ok = true;
   try { ok = g.inv.ensureMadePotion(H, other); } catch (e) { threw = true; }
@@ -219,7 +229,7 @@ const made = () => JSON.parse(JSON.stringify(MADE));
 {
   const g = makeGame({ native: false });
   let threw = false;
-  try { g.apply([{ baseId: H, count: 1, made: made() }]); } catch (e) { threw = true; }
+  try { g.applyAndDrain([{ baseId: H, count: 1, made: made() }]); } catch (e) { threw = true; }
   yes('without createMadePotion nothing is built and nothing throws', !threw && g.count(H) === 0);
 }
 

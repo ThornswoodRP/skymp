@@ -1,7 +1,7 @@
 'use strict';
 const fs = require('node:fs'), path = require('node:path'), os = require('node:os'), cp = require('node:child_process');
 const source = fs.readFileSync(path.join(__dirname, '../../../skyrim-platform/src/platform_se/skyrim_platform/PapyrusTESModPlatform.cpp'), 'utf8');
-const begin = source.indexOf('void TESModPlatform::AddItemEx('), end = source.indexOf('\nvoid TESModPlatform::UpdateEquipment(', begin);
+const begin = source.indexOf('// ==== inventory add operation ===='), end = source.indexOf('// ==== end inventory add operation ====', begin);
 if (begin < 0 || end < 0) throw Error('Native AddItemEx boundary missing');
 const work = fs.mkdtempSync(path.join(os.tmpdir(), 'thornswood-native-outfit-'));
 try {

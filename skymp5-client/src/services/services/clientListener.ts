@@ -9,6 +9,8 @@ export interface ClientListenerEvents {
 // these are only available in the git version, so we augment the module
 // TODO: use typings from the current codebase, not npm module
 declare module "skyrimPlatform" {
+    function createInventoryApply(refrId: number): import("../../sync/inventoryApplyCoordinator").InventoryApplyScope;
+    function cancelInventoryApply(refrId: number): void;
     // Poll completion of work queued before this call. It does not imply
     // successful mutation: compare inventory after completion and retry.
     function getInventoryQueueFence(): () => boolean;

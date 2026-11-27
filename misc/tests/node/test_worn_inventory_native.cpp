@@ -95,14 +95,16 @@ struct Queue {
   void flush() { native.Update({}); }
 } queue;
 struct Requirements { Queue* gameThrQ = &queue; } g_nativeCallRequirements;
-namespace TESModPlatform {
-bool g_worn = false, g_wornLeft = false;
+namespace {
+thread_local bool g_worn = false, g_wornLeft = false;
 RE::ExtraDataList* CreateExtraDataList() { return new RE::ExtraDataList; }
+}
+namespace TESModPlatform {
 void AddItemEx(IVM*, StackID, RE::StaticFunctionTag*, RE::TESObjectREFR*, RE::TESForm*, int32_t, float, RE::EnchantmentItem*, int32_t, bool, float, FixedString, int32_t, RE::AlchemyItem*, int32_t);
 }
 #include "WornInventoryUnderTest.inc"
 void add(RE::Actor& actor, RE::TESForm& item, bool worn, bool left = false, const char* name = "", int count = 1, float health = 1) {
-  TESModPlatform::g_worn = worn; TESModPlatform::g_wornLeft = left;
+  g_worn = worn; g_wornLeft = left;
   TESModPlatform::AddItemEx(nullptr, 0, nullptr, &actor, &item, count, health, nullptr, 0, false, 0, {name}, 0, nullptr, 0);
 }
 int main() {
@@ -165,5 +167,19 @@ int main() {
   assert(!actor.bag.count(9) && !actor.worn.count(9));
   add(actor, hood, true); queue.flush();
   assert(actor.bag[9] == 1 && actor.worn.count(9)); // Adds after the load land.
+  RE::TESObjectARMO immediate(10), cancelledBeforeEquip(11);
+  int guardCalls = 0;
+  const auto pendingBefore = queue.pending;
+  assert(TESModPlatform::AddItemExImmediate(nullptr, 0, nullptr, &actor, &immediate, 1, 1.5f, nullptr, 0, false, 0, {"Immediate"}, 0, nullptr, 0, true, false, [] {return true;}));
+  assert(actor.bag[10] == 1 && actor.worn.count(10) && queue.pending == pendingBefore);
+  assert(TESModPlatform::AddItemExImmediate(nullptr, 0, nullptr, &actor, &cancelledBeforeEquip, 1, 1, nullptr, 0, false, 0, {""}, 0, nullptr, 0, true, false, [&] {return ++guardCalls == 1;}));
+  assert(actor.bag[11] == 1 && !actor.worn.count(11) && queue.pending == pendingBefore);
+  RE::UI::GetSingleton()->paused = true;
+  assert(!TESModPlatform::AddItemExImmediate(nullptr, 0, nullptr, &actor, &immediate, 1, 1, nullptr, 0, false, 0, {""}, 0, nullptr, 0, false, false, [] {return true;}));
+  assert(actor.bag[10] == 1 && queue.pending == pendingBefore);
+  RE::UI::GetSingleton()->paused = false;
+  // The new inline route must not change the old API's deferred behavior.
+  add(actor, immediate, false); assert(actor.bag[10] == 1 && queue.pending == pendingBefore + 1);
+  queue.flush(); assert(actor.bag[10] == 2);
   std::cout << "PASS native worn clothing, exact extras, queue order, hands, ammunition, paused-call isolation and load epoch\n";
 }

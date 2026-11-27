@@ -13,6 +13,7 @@ bool Installed();
 void RequestClient(bool requested);
 void WorldLoading();
 void WorldLoaded(bool success);
+bool HasLoadedWorld();
 void PostLoad(void* outcome);
 void InventoryChanged(bool opened);
 void InventoryKey(const RE::ButtonEvent& button);

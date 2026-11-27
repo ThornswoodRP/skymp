@@ -135,12 +135,23 @@ function makeGame() {
       },
     },
   };
-  const sandbox = { exports: {}, require: (m) => (m === 'skyrimPlatform' ? sp : {}) };
+  const nativeApply = require('./inventory_apply_fixture').install(sp, pc);
+  const sandbox = { exports: {}, require: (m) => m === 'skyrimPlatform' ? sp : m === './inventoryApplyCoordinator' ? nativeApply.coordinator : {} };
   sandbox.module = { exports: sandbox.exports };
   vm.runInNewContext(js, sandbox);
   game.inv = sandbox.exports;
+  game.sp = sp;
   game.pc = pc;
-  game.apply = (entries) => game.inv.applyInventory(pc, { entries }, false, true);
+  game.beginApply = (entries) => game.inv.applyInventory(pc, { entries }, false, true);
+  game.nativeApply = nativeApply;
+  game.advance = nativeApply.advance;
+  game.applyAndDrain = (entries) => {
+    const before = nativeApply.creations;
+    const accepted = game.beginApply(entries);
+    if (nativeApply.creations === before) return accepted;
+    nativeApply.drain();
+    return game.inv.getDiff({entries}, game.inv.getInventory(pc), true).entries.length === 0;
+  };
   game.diff = (entries) => game.inv.getDiff({ entries }, game.inv.getInventory(pc), true).entries;
   return game;
 }
@@ -152,7 +163,7 @@ function makeGame() {
   g.lists = [{ baseId: SWORD, count: 1, name: 'Iron Sword (Fine)', health: Math.fround(1.1) }];
   yes('the server\'s 1.100000023841858 is the game\'s fine sword, so there is no difference',
     g.diff(server).length === 0);
-  g.apply(server);
+  g.applyAndDrain(server);
   yes('and nothing is taken away or added for it', g.calls.length === 0);
 }
 
@@ -169,12 +180,12 @@ function makeGame() {
   const g = makeGame();
   const server = [{ baseId: SWORD, count: 1, health: 1.2000000476837158 }];
   g.lists = [{ baseId: SWORD, count: 1, name: 'Iron Sword' }];
-  g.apply(server);
+  g.applyAndDrain(server);
   const adds = g.calls.filter((c) => c[0] === 'addItemEx');
   yes('a plain sword the server holds tempered is taken away by its own list and added tempered',
     adds.length === 1 && adds[0][2] === 1 && g.calls.some((c) => c[0] === 'remove' && c[2][0] === 0));
   g.calls.length = 0;
-  g.apply(server);
+  g.applyAndDrain(server);
   yes('and the next pass finds nothing to do (it used to add it again every pass)', g.calls.length === 0);
 }
 
@@ -183,7 +194,7 @@ function makeGame() {
   const g = makeGame();
   const server = [{ baseId: BOOTS, count: 1 }];
   g.lists = [{ baseId: BOOTS, count: 1, name: 'Boots (Fine)', health: Math.fround(1.1), worn: true }];
-  g.apply(server);
+  g.applyAndDrain(server);
   const removes = g.calls.filter((c) => c[0] === 'remove');
   const adds = g.calls.filter((c) => c[0] === 'addItemEx');
   yes('the worn tempered boots are taken away by their own list',
@@ -193,7 +204,7 @@ function makeGame() {
   yes('and the game holds just the plain boots', g.lists.length === 1 && !g.lists[0].health);
   for (let pass = 0; pass < 3; ++pass) {
     g.calls.length = 0;
-    g.apply(server);
+    g.applyAndDrain(server);
   }
   yes('three passes later nothing has been added again', g.calls.length === 0);
 }
@@ -202,7 +213,7 @@ function makeGame() {
 {
   const g = makeGame();
   g.lists = [{ baseId: SWORD, count: 1, name: 'Iron Sword', worn: true }, { baseId: SWORD, count: 1, name: 'Iron Sword' }];
-  g.apply([{ baseId: SWORD, count: 1 }]);
+  g.applyAndDrain([{ baseId: SWORD, count: 1 }]);
   const r = g.calls.find((c) => c[0] === 'remove');
   yes('of two equal swords, the one not worn is taken away', !!r && JSON.stringify(r[2]) === '[1]' &&
     g.lists.length === 1 && g.lists[0].worn);
@@ -212,7 +223,7 @@ function makeGame() {
 {
   const g = makeGame();
   g.base[GOLD] = 40;
-  g.apply([]);
+  g.applyAndDrain([]);
   const r = g.calls.find((c) => c[0] === 'remove');
   yes('40 gold with no list of their own are taken away as plain units', !!r && r[1] === GOLD && r[2].length === 0 && r[4] === 40);
 }
@@ -222,11 +233,11 @@ function makeGame() {
   const g = makeGame();
   g.lists = [{ baseId: SWORD, count: 1, name: 'Iron Sword', health: Math.fround(1.2) }];
   g.arrives = { baseId: SWORD, count: 1, name: 'Iron Sword' };
-  g.apply([]);
+  g.applyAndDrain([]);
   yes('a removal whose lists changed takes nothing and says so in the log',
     g.lists.length === 2 && g.console.some((l) => /refused to take away 12eb7/.test(l)));
   g.calls.length = 0;
-  g.apply([]);
+  g.applyAndDrain([]);
   yes('and the next pass, reading the lists again, takes both away',
     g.lists.length === 0 && g.calls.filter((c) => c[0] === 'remove').length === 1);
 }
@@ -238,13 +249,13 @@ for (const baseId of [SWORD, BOOTS]) {
     const g = makeGame();
     const name = `${NAMES[baseId]} (75%)`;
     const server = [{ baseId, count, name, health: Math.fround(1.4) }];
-    g.apply(server);
+    g.applyAndDrain(server);
     yes(`${NAMES[baseId]} difference ${count} closes in one pass`,
       g.diff(server).length === 0 && g.lists.reduce((n, l) => n + l.count, 0) === count);
     yes(`${NAMES[baseId]} difference ${count} retains each name and temper`,
       g.lists.every(l => l.name === name && l.health === Math.fround(1.4)));
     g.calls.length = 0;
-    g.apply(server);
+    g.applyAndDrain(server);
     yes(`${NAMES[baseId]} difference ${count} has no second-pass add or removal`,
       g.calls.length === 0);
   }
@@ -260,7 +271,7 @@ for (const baseId of [SWORD, BOOTS]) {
     poisonId: POISON, poisonCount: 2 },
     { baseId: SWORD, count: 1, name: 'Left Sword', wornLeft: true },
     { baseId: BOOTS, count: 1, name: 'Other Boots', worn: true }];
-  g.apply(server);
+  g.applyAndDrain(server);
   const large = g.lists.filter(l => l.name === 'Charged Sword (75%)');
   yes('large enchanted/poisoned differences close with every extra unchanged',
     g.diff(server).length === 0 && large.length === 1001 &&
@@ -272,7 +283,7 @@ for (const baseId of [SWORD, BOOTS]) {
     g.lists.filter(l => l.baseId === BOOTS).every(l => l.worn && !l.wornLeft) &&
     g.nodeUpdates === 2 && g.wornState === null);
   g.calls.length = 0;
-  g.apply(server);
+  g.applyAndDrain(server);
   yes('a settled extra-bearing difference schedules no second-pass mutation', g.calls.length === 0);
 }
 
@@ -281,7 +292,7 @@ for (const baseId of [SWORD, BOOTS]) {
 {
   const g = makeGame();
   const server = [{ baseId: SWORD, count: 100000 }];
-  g.apply(server);
+  g.applyAndDrain(server);
   const adds = g.calls.filter(c => c[0] === 'addItemEx');
   yes('the 100000-piece grant schedules all units in the first pass',
     adds.length === 100000 && adds.every(c => c[2] === 1));
@@ -291,7 +302,7 @@ for (const baseId of [SWORD, BOOTS]) {
 {
   const g = makeGame();
   const server = [{ baseId: GOLD, count: 100000 }];
-  g.apply(server);
+  g.applyAndDrain(server);
   yes('the existing misc-item bulk path still uses one unchanged native count',
     g.calls.length === 1 && g.calls[0][0] === 'addItemEx' && g.calls[0][2] === 100000 &&
     g.diff(server).length === 0);
@@ -302,7 +313,7 @@ for (const count of [Infinity, NaN, -1, 1.5, 0x100000000, '1001', null, undefine
   const g = makeGame();
   const before = [{ baseId: BOOTS, count: 1, name: 'Keep these boots', worn: true }];
   g.lists = before.map(l => ({ ...l }));
-  const result = g.apply([{ baseId: SWORD, count: 2 }, { baseId: BOOTS, count }]);
+  const result = g.applyAndDrain([{ baseId: SWORD, count: 2 }, { baseId: BOOTS, count }]);
   yes(`invalid target count ${String(count)} refuses before any inventory mutation`,
     result === false && g.calls.length === 0 && g.nodeUpdates === 0 &&
     JSON.stringify(g.lists) === JSON.stringify(before));
@@ -310,7 +321,7 @@ for (const count of [Infinity, NaN, -1, 1.5, 0x100000000, '1001', null, undefine
 {
   const g = makeGame();
   let result;
-  try { result = g.apply([{ baseId: SWORD, count: 2 }, null]); } catch (_) { result = 'threw'; }
+  try { result = g.applyAndDrain([{ baseId: SWORD, count: 2 }, null]); } catch (_) { result = 'threw'; }
   yes('a null wire entry refuses without throwing or changing earlier valid items',
     result === false && g.calls.length === 0 && g.lists.length === 0);
 }
@@ -318,7 +329,7 @@ for (const count of [Infinity, NaN, -1, 1.5, 0x100000000, '1001', null, undefine
   const g = makeGame();
   g.base[SWORD] = 0xffffffff;
   yes('the canonical uint32 maximum remains valid when already held',
-    g.apply([{ baseId: SWORD, count: 0xffffffff }]) === true && g.calls.length === 0);
+    g.applyAndDrain([{ baseId: SWORD, count: 0xffffffff }]) === true && g.calls.length === 0);
 }
 
 // The give-up counter is gone from remoteServer.ts.

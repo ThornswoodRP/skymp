@@ -1,4 +1,6 @@
 #include "EventHandler.h"
+#include "InventoryApplyApi.h"
+#include "InventoryLoadEpoch.h"
 #include "BrowserApiTilted.h"
 #include "CastDurationsGame.h"
 #include "EventManager.h"
@@ -88,11 +90,16 @@ void EventHandler::HandleSKSEMessage(SKSE::MessagingInterface::Message* msg)
       SendSimpleEventOnTick("skyrimLoaded");
     } break;
     case SKSE::MessagingInterface::kNewGame:
+      GameplayMenuUnpaused::WorldLoading();
+      InventoryLoadEpoch::Advance();
+      InventoryApplyApi::CancelAll();
       GameplayMenuUnpaused::WorldLoaded(true);
       SendSimpleEventOnTick("newGame");
       break;
     case SKSE::MessagingInterface::kPreLoadGame:
       GameplayMenuUnpaused::WorldLoading();
+      InventoryLoadEpoch::Advance();
+      InventoryApplyApi::CancelAll();
       SendSimpleEventOnTick("preLoadGame");
       break;
     case SKSE::MessagingInterface::kPostLoadGame:
@@ -443,6 +450,10 @@ EventResult EventHandler::ProcessEvent(const RE::TESDeathEvent* event,
 
   auto actorDyingId =
     event->actorDying.get() ? event->actorDying.get()->GetFormID() : 0;
+
+  // Retire active work before the deferred JS death notification. A rapid
+  // death/revival must not let an old unit resume on the same actor handle.
+  InventoryApplyApi::CancelReference(actorDyingId);
 
   auto actorKillerId =
     event->actorKiller.get() ? event->actorKiller.get()->GetFormID() : 0;

@@ -37,6 +37,7 @@ function fixture(type = 40, bench = false, locked = false) {
     if (name.endsWith('/objectReferenceEx')) return { ObjectReferenceEx: Ex };
     if (name.endsWith('/messages')) return { MsgType: { Activate: 1 } };
     if (name.endsWith('/worldViewMisc')) return { localIdToRemoteId: id => id, remoteIdToLocalId: id => id };
+    if (name.endsWith('/inventoryApplyCoordinator')) return {inventoryApplyFence: () => Object.assign(sp.getInventoryQueueFence(), {isCurrent:()=>true})};
     if (name.endsWith('/inventory')) return inventoryApi;
     if (name.endsWith('/equipment')) return { isBadMenuShown: () => false };
     if (name.endsWith('/logging')) return { logTrace() {}, logError() {} };

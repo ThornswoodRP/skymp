@@ -26,6 +26,7 @@ import { setActorValuePercentage } from '../../sync/actorvalues';
 import { applyAppearanceToPlayer } from '../../sync/appearance';
 import { isBadMenuShown, syncSpellEquipment, SpellType, wornList } from '../../sync/equipment';
 import { Inventory, acceptPreloadedInventoryBase, applyInventory, getDiff, getInventory, inventoryEntriesEqual, resetInventoryBase } from '../../sync/inventory';
+import { inventoryApplyPending, inventoryApplyFence, cancelInventoryApplication, cancelAllInventoryApplications } from '../../sync/inventoryApplyCoordinator';
 import { Movement, Transform } from '../../sync/movement';
 import { learnSpells, removeAllSpells } from '../../sync/spell';
 import { markEnchantmentsKnown } from '../../sync/enchantments';
@@ -63,6 +64,7 @@ import {
   remoteIdToLocalId,
 } from '../../view/worldViewMisc';
 import { TimeService } from './timeService';
+import { LastInvService } from './lastInvService';
 import { logTrace, logError } from '../../logging';
 
 import { SpellCastMessage } from '../messages/spellCastMessage';
@@ -110,6 +112,7 @@ let pcInvAppliedSig = '';
 let pcInvReportedSig = '';
 
 on('update', () => {
+  if (inventoryApplyPending(0x14)) { return; }
   if (storage['ownerInventorySettling'] === true) { return; }
   if (isBadMenuShown() || Ui.isMenuOpen('RaceSex Menu')) {
     return;
@@ -225,6 +228,9 @@ export class RemoteServer extends ClientListener {
     this.numSetInventory++;
 
     const msg = event.message;
+    if (JSON.stringify(this.ownerInventory) !== JSON.stringify(msg.inventory)) {
+      cancelInventoryApplication(0x14);
+    }
     this.ownerInventory = msg.inventory;
     this.ownerInventoryIsSnapshot = false;
     const epoch = this.ownerSpawnEpoch;
@@ -247,9 +253,10 @@ export class RemoteServer extends ClientListener {
 
   private onOpenContainerMessage(event: ConnectionMessage<OpenContainerMessage>): void {
     const epoch = this.ownerSpawnEpoch;
+    const request = this.containerOpenRequest = {};
     once('update', async () => {
       await Utility.wait(0.1); // Give a chance to update inventory
-      if (epoch !== this.ownerSpawnEpoch) { return; }
+      if (epoch !== this.ownerSpawnEpoch || this.containerOpenRequest !== request) { return; }
 
       const remoteId = event.message.target;
       const localId = remoteIdToLocalId(remoteId);
@@ -260,13 +267,25 @@ export class RemoteServer extends ClientListener {
         return;
       }
 
-      // THORNSWOOD PATCH (Thornswood #3159). See packBeforeBench.
-      if (refr.getBaseObject()?.getType() === FormType.Furniture) {
-        await this.packBeforeBench();
-        if (epoch !== this.ownerSpawnEpoch) { return; }
+      const requestedType = refr.getBaseObject()?.getType();
+      const requestedBase = refr.getBaseObject()?.getFormID();
+      const currentTarget = (): ObjectReference | null => {
+        if (epoch !== this.ownerSpawnEpoch || this.containerOpenRequest !== request || remoteIdToLocalId(remoteId) !== localId) return null;
+        const current = ObjectReference.from(Game.getFormEx(localId));
+        if (!current || current.getBaseObject()?.getType() !== requestedType || current.getBaseObject()?.getFormID() !== requestedBase) return null;
+        if (requestedType === FormType.NPC) {
+          const actor = Actor.from(current);
+          if (!actor || actor.isDead() || actor.isDisabled()) return null;
+        }
+        return current;
+      };
+      // A container/person transfer baseline must not precede later grant units.
+      // It shares the whole-job gate with furniture before native activation.
+      if (requestedType === FormType.Furniture || requestedType === FormType.Container || requestedType === FormType.NPC) {
+        if (!await this.packBeforeBench()) { return; }
         // SP3 wrappers expire on Papyrus updates. Keep the id across the
         // inventory wait, then resolve again in the current update.
-        refr = ObjectReference.from(Game.getFormEx(remoteIdToLocalId(remoteId)));
+        refr = currentTarget();
         if (refr === null) {
           logError(this, 'onOpenContainerMessage - furniture left while waiting for inventory', 'remoteId', remoteId.toString(16));
           return;
@@ -287,14 +306,42 @@ export class RemoteServer extends ClientListener {
       const npcMark = refr.getBaseObject()?.getType() === FormType.NPC ? Actor.from(refr) : null;
       if (npcMark) {
         const markModel = this.worldModel.forms.find((f) => f?.refrId === remoteId);
-        if (!markModel?.inventory) {
+        if (!markModel?.inventory || markModel.isDead === true || markModel.isDisabled === true || npcMark.getFormID() === 0x14) {
           logError(this, 'onOpenContainerMessage - no pack for the person', 'remoteId', remoteId.toString(16));
           return;
         }
-        ModelApplyUtils.applyModelInventory(npcMark, markModel.inventory);
+        const markInventory = markModel.inventory;
+        ModelApplyUtils.applyModelInventory(npcMark, markInventory);
+        const targetRan = inventoryApplyFence(localId);
+        const targetStillCurrent = () => {
+          const pc = Game.getPlayer();
+          return !!pc && !pc.isDead() && !pc.isDisabled() && !!currentTarget() &&
+            this.worldModel.forms.find((f) => f?.refrId === remoteId) === markModel &&
+            markModel.inventory === markInventory && markModel.isDead !== true && markModel.isDisabled !== true;
+        };
+        if (!await this.inventoryQueueRan(localId, targetStillCurrent)) {
+          // Do not cancel a replacement request's job at the same local id.
+          if (this.containerOpenRequest === request && targetRan.isCurrent()) {
+            cancelInventoryApplication(localId);
+          }
+          return;
+        }
+        // A grant can arrive while the other person's pack is being filled.
+        // Both complete jobs and the latest real owner baseline must agree.
+        if (!await this.packBeforeBench()) return;
+        refr = currentTarget();
+        const latestModel = this.worldModel.forms.find((f) => f?.refrId === remoteId);
+        if (!refr || !targetRan.isCurrent() || !targetRan() || latestModel !== markModel ||
+            latestModel.inventory !== markInventory || latestModel.isDead === true || latestModel.isDisabled === true ||
+            getDiff(markInventory, getInventory(refr), true).entries.length !== 0) return;
       }
 
-      refr.activate(Game.getPlayer(), true);
+      const currentPlayer = Game.getPlayer();
+      if (!currentPlayer || requestedType === FormType.NPC && (currentPlayer.isDead() || currentPlayer.isDisabled())) return;
+      if (requestedType === FormType.Container || requestedType === FormType.NPC) {
+        this.controller.lookupListener(LastInvService).lastInv = getInventory(currentPlayer);
+      }
+      refr.activate(currentPlayer, true);
 
       const baseObject = refr.getBaseObject();
       const baseType = baseObject?.getType();
@@ -373,34 +420,42 @@ export class RemoteServer extends ClientListener {
     the owner's inventory is settling at a spawn, while a menu is open, or with
     no pack from the server yet. The bench then opens as it always did.
   */
-  private async packBeforeBench(): Promise<void> {
+  private async packBeforeBench(): Promise<boolean> {
     if (!Game.getPlayer() || !getPcInventory() || storage['ownerInventorySettling'] === true || isBadMenuShown() || Utility.isInMenuMode()) {
-      return;
+      return !getPcInventory();
     }
     const epoch = this.ownerSpawnEpoch;
-    await this.inventoryQueueRan();
+    if (!await this.inventoryQueueRan()) return false;
     if (epoch !== this.ownerSpawnEpoch || storage['ownerInventorySettling'] === true || isBadMenuShown() || Utility.isInMenuMode()) {
-      return;
+      return false;
     }
     // A native player wrapper cannot cross that await. The server may have
     // sent a newer pack while the queue drained, so read both again.
     const pc = Game.getPlayer();
     const inv = getPcInventory();
-    if (!pc || !inv) { return; }
+    if (!pc || !inv) { return false; }
     if (getDiff(inv, getInventory(pc), true).entries.length === 0) {
-      return;
+      return true;
     }
     // The periodic apply waits its five seconds from this one.
     pcInvLastApply = Date.now();
     applyInventory(pc, inv, false, true);
-    await this.inventoryQueueRan();
+    if (!await this.inventoryQueueRan()) return false;
+    if (epoch !== this.ownerSpawnEpoch || storage['ownerInventorySettling'] === true || isBadMenuShown() || Utility.isInMenuMode()) return false;
+    const current = Game.getPlayer();
+    const latest = getPcInventory();
+    // A drained/cancelled/uncertain job is not a successful reconciliation.
+    // Do not open a bench on an old target or a still different actual pack.
+    return !!current && !!latest && latest === inv && getDiff(latest, getInventory(current), true).entries.length === 0;
   }
 
-  private async inventoryQueueRan(): Promise<void> {
-    const ran = this.sp.getInventoryQueueFence();
-    while (!ran()) {
+  private async inventoryQueueRan(refrId = 0x14, isCurrent: () => boolean = () => true): Promise<boolean> {
+    const ran = inventoryApplyFence(refrId);
+    const epoch = this.ownerSpawnEpoch;
+    while (epoch === this.ownerSpawnEpoch && ran.isCurrent() && isCurrent() && !ran()) {
       await Utility.wait(0.05);
     }
+    return epoch === this.ownerSpawnEpoch && ran.isCurrent() && isCurrent() && ran();
   }
 
   private onTeleportMessage(event: ConnectionMessage<TeleportMessage> | ConnectionMessage<TeleportMessage2>): void {
@@ -723,7 +778,7 @@ export class RemoteServer extends ClientListener {
         // Even a partial apply that throws may have queued earlier entries.
         // Fence those entries before the next diff so they cannot duplicate.
         try { applyInventory(pc, inv, false, true); }
-        finally { this.ownerInventoryPending = this.sp.getInventoryQueueFence(); }
+        finally { this.ownerInventoryPending = inventoryApplyFence(0x14); }
         return false;
       }
       let ready = true;
@@ -1063,6 +1118,8 @@ export class RemoteServer extends ClientListener {
     const msg = event.message;
 
     const i = this.getIdManager().getId(msg.idx);
+    const destroyed = this.worldModel.forms[i];
+    cancelInventoryApplication(i === this.worldModel.playerCharacterFormIdx ? 0x14 : remoteIdToLocalId(destroyed?.refrId ?? 0));
     this.worldModel.forms[i] = undefined;
     getViewFromStorage()?.syncFormArray(this.worldModel);
 
@@ -1268,6 +1325,8 @@ export class RemoteServer extends ClientListener {
       return;
     }
 
+    cancelInventoryApplication(id === this.worldModel.playerCharacterFormIdx ? 0x14 : remoteIdToLocalId(form.refrId ?? 0));
+
     if (msg.tChangeValues) {
       this.onChangeValuesMessage({ message: msg.tChangeValues });
     }
@@ -1329,6 +1388,7 @@ export class RemoteServer extends ClientListener {
   }
 
   private handleConnectionAccepted(): void {
+    cancelAllInventoryApplications();
     this.cancelOwnerSpawn();
     // THORNSWOOD. A new connection starts at 0, as the server does when it
     // attaches the character (PartOne::SetUserActor).
@@ -1366,6 +1426,7 @@ export class RemoteServer extends ClientListener {
   }
 
   private cancelOwnerSpawn(): void {
+    cancelInventoryApplication(0x14);
     this.ownerSpawnEpoch++;
     this.raceMenuRequest++;
     this.raceMenuRequested = false;
@@ -1596,6 +1657,7 @@ export class RemoteServer extends ClientListener {
   private masterRefFlags = new Map<number, { harvested: boolean, disabled: boolean }>();
   private teleportsOnTheirWay = new Map<number, { msg: TeleportMessage | TeleportMessage2, isMyCharacter: boolean }>();
   private ownerSpawnEpoch = 0;
+  private containerOpenRequest?: object;
   private ownerSpawnReady?: Promise<boolean>;
   private finishOwnerSpawn?: (ready: boolean) => void;
   private ownerInventory?: Inventory;

@@ -5,16 +5,17 @@ const source=fs.readFileSync(path.join(__dirname,'../../../skymp5-client/src/ser
 const inv={entries:[{baseId:114202,count:1,worn:true},{baseId:114203,count:1,worn:true},{baseId:15,count:40}]};
 const js=ts.transpileModule(source,{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2018}}).outputText;
 function service(refuse) {
- const calls=[], errors=[], sp={loadGame(...args){calls.push(args);if(refuse) throw Error(refuse);}}, controller={on(){}};
- const sandbox={exports:{},require:m=>m.endsWith('logging')?{logError:(...a)=>errors.push(a)}:{ClientListener:class{}}};
+ const calls=[], errors=[], order=[], sp={loadGame(...args){order.push('load');calls.push(args);if(refuse) throw Error(refuse);}}, controller={on(){}};
+ const sandbox={exports:{},require:m=>m.endsWith('/inventoryApplyCoordinator')?{cancelAllInventoryApplications(){order.push('cancel');}}:m.endsWith('logging')?{logError:(...a)=>errors.push(a)}:{ClientListener:class{}}};
  sandbox.globalThis=sandbox;
  vm.runInNewContext(js,sandbox);
- return {svc:new sandbox.exports.LoadGameService(sp,controller),calls,errors,sandbox};
+ return {svc:new sandbox.exports.LoadGameService(sp,controller),calls,errors,sandbox,order};
 }
 const face={name:'Adventurer'};
 {
- const {svc,calls}=service('');
+ const {svc,calls,order}=service('');
  svc.loadGame([1,2,3],[0,0,0],9,face,['Skyrim.esm'],{hours:12,minutes:0,seconds:0},inv);
+ assert.deepEqual(order,['cancel','load'],'old inventory work is cancelled before the native load can run synchronously');
  assert.equal(calls.length,1); assert.equal(calls[0][3],face); assert.equal(calls[0][6],inv);
  calls.length=0; svc.loadGame([1,2,3],[0,0,0],9,face,['Skyrim.esm'],{hours:12,minutes:0,seconds:0});
  assert.equal(calls[0][6],undefined,'returning six-argument calls retain their established path');
