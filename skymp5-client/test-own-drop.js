@@ -68,7 +68,7 @@ const CLOTHES = 0x0001be1a;       // a base the dropped reference stands for
 const PLAYER_BASE = { formId: 7 };
 
 function rig() {
-  const w = { once: [], spawned: [], forms: {}, nextId: 0xff000100 };
+  const w = { cancelled: [], once: [], spawned: [], forms: {}, nextId: 0xff000100 };
   const baseForm = { getFormID: function () { return CLOTHES; }, getType: function () { return MISC; } };
   function refr(id, base) {
     const r = {
@@ -105,6 +105,7 @@ function rig() {
   const controller = { lookupListener: function () { return cleaner; }, emitter: { emit: function () { } } };
   const stubs = {
     skyrimPlatform: sp,
+    '../sync/inventoryApplyCoordinator': { cancelInventoryApplication: id => w.cancelled.push(id) },
     './spawnProcess': { SpawnProcess: function () { } },
     './spawnTrace': { traceSpawnChosen: function () { }, traceRespawnNeeded: function () { } },
     '../extensions/objectReferenceEx': { ObjectReferenceEx: { getWorldOrCell: function () { return 0x3c; }, getPos: function () { return [0, 0, 0]; }, dealWithRef: function () { } } },
@@ -144,6 +145,7 @@ run('respawned on a new base', function () {
   const other = { getFormID: function () { return 0x0001be1b; }, getType: function () { return MISC; } };
   w.forms[0x0001be1b] = other;
   view.update(w.model({ droppedByMe: true, baseId: 0x0001be1b }));
+  yes('changing base cancels the old local inventory before respawning', w.cancelled.includes(w.spawned[0].getFormID()));
   yes('a reference spawned again is yours again', w.spawned.length === 2 && w.spawned[1].owner === PLAYER_BASE);
 });
 

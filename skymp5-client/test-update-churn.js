@@ -95,7 +95,7 @@ function load(file, stubs) {
 
 function formViewRig() {
   const w = {
-    once: [], deleted: [], wc: [], drawn: [], texts: [], logs: [],
+    cancelled: [], once: [], deleted: [], wc: [], drawn: [], texts: [], logs: [],
     playerWorld: 0x3c,
     forms: {},
   };
@@ -121,6 +121,7 @@ function formViewRig() {
   };
   const stubs = {
     skyrimPlatform: sp,
+    '../sync/inventoryApplyCoordinator': { cancelInventoryApplication: id => w.cancelled.push(id) },
     '../extensions/objectReferenceEx': {
       ObjectReferenceEx: { getWorldOrCell: function () { return w.playerWorld; } },
     },
@@ -179,6 +180,7 @@ function elsewhere(remoteId) {
   yes('a spawned actor whose form leaves for another worldOrCell asks for the next update exactly once, asked ' +
       w.once.length, w.once.length === 1 && w.once[0].ev === 'update');
   yes('its name over the head is taken down at once', w.texts.length === 1 && w.texts[0] === 7);
+  yes('the departing local inventory is cancelled before deferred deletion', w.cancelled[0] === 0xff000b02 && w.deleted.length === 0);
   yes('nothing is deleted before that update', w.deleted.length === 0);
   w.runOnce();
   yes('on that update the spawned reference is deleted', w.deleted.length === 1 && w.deleted[0] === 0xff000b02);

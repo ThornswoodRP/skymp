@@ -70,7 +70,7 @@ const WIRE = KEPT + 0x100000000;  // how the server sends it
 const BASE = 0x00013bbd;
 
 function rig() {
-  const w = { once: [], wc: [], deleted: [], disabled: [], spawnedAt: [], spawnProcess: [], forms: {}, nextId: 0xff000100 };
+  const w = { cancelled: [], once: [], wc: [], deleted: [], disabled: [], spawnedAt: [], spawnProcess: [], forms: {}, nextId: 0xff000100 };
   const baseForm = { getFormID: function () { return BASE; }, getType: function () { return NPC; } };
   w.base = baseForm;
   function actor(id, base) {
@@ -109,6 +109,7 @@ function rig() {
   const controller = { lookupListener: function () { return cleaner; }, emitter: { emit: function () { } } };
   const stubs = {
     skyrimPlatform: sp,
+    '../sync/inventoryApplyCoordinator': { cancelInventoryApplication: id => w.cancelled.push(id) },
     './spawnProcess': { SpawnProcess: function (app, pos, id) { w.spawnProcess.push(id); } },
     // The spawn log (Thornswood #1287) only reads; stood in so it writes nothing here.
     './spawnTrace': { traceSpawnChosen: function () { }, traceRespawnNeeded: function () { } },
@@ -138,6 +139,7 @@ run('kept NPC whose placed copy is loaded', function () {
   yes('a second update keeps it, no respawn', w.spawnedAt.length === 0 && view.getLocalRefrId() === KEPT);
 
   view.destroy();
+  yes('destroy cancels the adopted local reference inventory before deferral', w.cancelled.at(-1) === KEPT);
   yes('destroy gives back its protection at once', w.wc.some(function (x) { return x[0] === KEPT && x[1] === -1; }));
   w.runOnce();
   yes('and switches it off next frame', placed.disabledFlag === true);

@@ -21,6 +21,7 @@ function load(file, stubs) { return compile(fs.readFileSync(path.join(root, file
 
 function rig() {
   const storage = {};
+  const cancelled = [];
   const texts = new Map();
   let nextId = 0;
   const emitter = new EventEmitter();
@@ -32,6 +33,7 @@ function rig() {
   });
   new SweetTaffyNicknamesService(sp, controller);
   const { FormView } = load('view/formView.ts', {
+    '../sync/inventoryApplyCoordinator': { cancelInventoryApplication: id => cancelled.push(id) },
     skyrimPlatform: {
       storage, once() {}, Actor: { from: () => null },
       Game: { getPlayer: () => ({ getDistance: () => visibility.distance, hasLOS: () => true }) },
@@ -59,7 +61,7 @@ function rig() {
     './formView': { FormView },
     '../services/spApiInteractor': { SpApiInteractor: { getControllerInstance: () => controller } },
   });
-  return { storage, texts, visibility, views: new FormViewArray() };
+  return { storage, texts, visibility, cancelled, views: new FormViewArray() };
 }
 const form = (refrId, name) => ({ refrId, appearance: { name } });
 function tick(w, forms) {
@@ -86,6 +88,7 @@ test('replaced slot destroys the old tag before a new owner publishes', () => {
   draw(w, [a]);
   const oldView = w.views.getNthFormView(0); const oldText = w.storage.idTextNickname[a.refrId];
   tick(w, [b]);
+  assert.deepEqual(w.cancelled, [0xff000001], 'replacement cancels the old local inventory before publishing the new view');
   assert.equal(w.storage.idTextNickname[a.refrId], undefined, 'old name ownership ends with the old character');
   assert.notEqual(w.views.getNthFormView(0), oldView);
   assert.equal(w.views.getNthFormView(0).getRemoteRefrId(), b.refrId);
@@ -155,11 +158,13 @@ test('real connection reset followed by create before a world tick replaces stal
   const js = ts.transpileModule('class Reset { ' + reset.getText(ast) + ' }', {
     compilerOptions: { target: ts.ScriptTarget.ES2020 },
   }).outputText;
-  const connectionReset = new Function('storage', 'carriedOutTeleportSeqKey', 'logTrace',
-    js + '\nreturn Reset.prototype.handleConnectionAccepted;')(w.storage, 'teleport-seq', () => {});
+  let cancelledAll = 0;
+  const connectionReset = new Function('storage', 'carriedOutTeleportSeqKey', 'logTrace', 'cancelAllInventoryApplications',
+    js + '\nreturn Reset.prototype.handleConnectionAccepted;')(w.storage, 'teleport-seq', () => {}, () => ++cancelledAll);
   const server = { cancelOwnerSpawn() {}, teleportsOnTheirWay: new Map(), worldModel: {
     forms: [old], playerCharacterFormIdx: -1, playerCharacterRefrId: 0 } };
   connectionReset.call(server);
+  assert.equal(cancelledAll, 1, 'the actual connection reset cancels every old inventory application');
   assert.deepEqual(server.worldModel.forms, []);
   assert.equal(w.texts.size, 1, 'the old view can still exist before the next world update');
   server.worldModel.forms[0] = fresh; // The next create packet fills the reused slot.
