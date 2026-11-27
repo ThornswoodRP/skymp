@@ -79,6 +79,11 @@ public:
   UpdateMovementMessage GetServerMovementMessage() const;
   uint32_t GetServerCombatTarget() const;
   void RecordServerCombatTarget(uint32_t targetId);
+  // Thornswood #6720. Draws a server NPC's weapon in every game, ahead of
+  // its first swing, and keeps when that was sent.
+  void DrawServerWeapon(std::chrono::steady_clock::time_point at =
+                          std::chrono::steady_clock::now());
+  std::chrono::steady_clock::time_point GetServerWeaponDrawnAt() const;
   void PublishServerAttackAnimation(const AnimationData& animation);
 
   bool IsSpellLearned(uint32_t spellId) const; // including from base

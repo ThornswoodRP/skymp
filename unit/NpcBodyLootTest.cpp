@@ -1,3 +1,4 @@
+#include <chrono>
 #include "TestUtils.hpp"
 #include "ActionListener.h"
 #include "archives/BitStreamInputArchive.h"
@@ -248,6 +249,7 @@ TEST_CASE("An NPC can fight with inherited gear after an attempted loot transfer
   f.Npc().RemoveAllItems(&f.Human());
   REQUIRE(f.Human().GetInventory().IsEmpty());
   REQUIRE(f.Npc().GetEquipment() == gear);
+  f.Npc().DrawServerWeapon(std::chrono::steady_clock::now() - std::chrono::seconds(10));
   REQUIRE(f.p.GetActionListener().ServerNpcAttack(kLootNpc, kLooter));
   REQUIRE(f.Human().GetActorValues().healthPercentage < 1.f);
 }
