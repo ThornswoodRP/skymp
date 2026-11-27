@@ -76,6 +76,7 @@ struct CreateActorMessageAdditionalProps
       .Serialize("isHostedByOther", isHostedByOther)
       .Serialize("isRaceMenuOpen", isRaceMenuOpen)
       .Serialize("learnedSpells", learnedSpells)
+      .Serialize("learnedEnchantments", learnedEnchantments)
       .Serialize("healRate", healRate)
       .Serialize("healRateMult", healRateMult)
       .Serialize("health", health)
@@ -90,7 +91,8 @@ struct CreateActorMessageAdditionalProps
       .Serialize("magickaPercentage", magickaPercentage)
       .Serialize("templateChain", templateChain)
       .Serialize("inventory", inventory)
-      .Serialize("isDead", isDead);
+      .Serialize("isDead", isDead)
+      .Serialize("droppedByMe", droppedByMe);
   }
 
   std::optional<bool> isOpen;
@@ -103,6 +105,10 @@ struct CreateActorMessageAdditionalProps
   std::optional<bool> isHostedByOther;
   std::optional<bool> isRaceMenuOpen;
   std::optional<std::vector<uint32_t>> learnedSpells;
+  // THORNSWOOD PATCH (Thornswood #4579). For the person's own character only:
+  // the magic effects disenchanting taught it (MpChangeForm), which the
+  // client marks known in its fresh game.
+  std::optional<std::vector<uint32_t>> learnedEnchantments;
   std::optional<float> healRate;
   std::optional<float> healRateMult;
   std::optional<float> health;
@@ -120,6 +126,11 @@ struct CreateActorMessageAdditionalProps
 
   // TODO: take a look why doubles CreateActorMessageMainProps
   std::optional<bool> isDead;
+
+  // THORNSWOOD PATCH (Thornswood #6718). Sent only to the character who
+  // dropped this reference (MpObjectReference::GetDroppedBy), whose client
+  // then owns it as the game's own drop would.
+  std::optional<bool> droppedByMe;
 };
 
 struct CreateActorMessageMainProps

@@ -254,6 +254,11 @@ public:
   void SetPickupExtra(const std::optional<Inventory::ExtraData>& extra);
   const std::optional<Inventory::ExtraData>& GetPickupExtra() const noexcept;
 
+  // THORNSWOOD PATCH (Thornswood #6718). The character who dropped this
+  // reference, or 0 (MpChangeFormREFR::droppedBy). Saved with it.
+  void SetDroppedBy(uint32_t characterFormId);
+  uint32_t GetDroppedBy() const noexcept;
+
   // THORNSWOOD PATCH (Thornswood #3498). The reference is deleted at `when`,
   // on the world's timer clock. The moment is saved with the reference, so
   // ApplyChangeForm sets the timer again after a restart, and a moment that

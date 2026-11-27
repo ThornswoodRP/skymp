@@ -1,6 +1,7 @@
 #pragma once
 #include "MinPacketId.h"
 #include <cstddef>
+#include <cstdint>
 #include <cstdio>
 #include <string>
 #include <vector>
@@ -48,6 +49,25 @@ public:
                     bool reliable) = 0;
 };
 
+// How one connection is doing, as the transport sees it (Thornswood #5053:
+// "the dev server lags at the Whiterun market", and nothing on the server said
+// what a connection did, only how busy the server was). The byte counts run
+// from when the connection opened; a reader takes the difference between two
+// reads for a rate. -1 is a ping the transport has not measured yet.
+struct ConnectionStats
+{
+  int lastPingMs = -1;
+  int averagePingMs = -1;
+  int lowestPingMs = -1;
+  uint64_t bytesSent = 0;        // on the wire, resends and headers included
+  uint64_t bytesResent = 0;      // of the messages' own bytes, sent again
+  uint64_t bytesReceived = 0;    // on the wire
+  unsigned messagesWaiting = 0;  // queued to send now, every priority
+  unsigned messagesToResend = 0; // sent and not yet acknowledged
+  float packetLoss = 0;          // since it opened, 0 to 1
+  bool limitedByCongestion = false;
+};
+
 class IServer : public ISendTarget
 {
 public:
@@ -59,6 +79,8 @@ public:
   virtual void Tick(OnPacket onPacket, void* state) = 0;
 
   virtual std::string GetIp(UserId userId) const = 0;
+
+  virtual ConnectionStats GetConnectionStats(UserId userId) const = 0;
 
   virtual void CloseConnection(UserId userId) = 0;
 };

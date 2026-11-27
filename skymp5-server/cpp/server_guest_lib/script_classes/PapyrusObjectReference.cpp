@@ -13,10 +13,6 @@
 #include <algorithm>
 #include <cstring>
 
-namespace {
-constexpr uint32_t kPlayerCharacterLevel = 1;
-}
-
 VarValue PapyrusObjectReference::IsHarvested(
   VarValue self, const std::vector<VarValue>& arguments)
 {
@@ -154,7 +150,7 @@ VarValue PapyrusObjectReference::AddItem(
       const auto kCountMult = 1;
       auto map = LeveledListUtils::EvaluateListRecurse(
         worldState->GetEspm().GetBrowser(), resultItemLookupRes, kCountMult,
-        kPlayerCharacterLevel);
+        LeveledListUtils::kPlayerCharacterLevel);
       for (auto& p : map) {
         selfRefr->AddItem(p.first, p.second);
       }
@@ -382,6 +378,13 @@ VarValue PapyrusObjectReference::GetAnimationVariableBool(
 VarValue PapyrusObjectReference::PlaceAtMe(
   VarValue self, const std::vector<VarValue>& arguments)
 {
+  return PlaceAtMeBeforeShown(self, arguments, nullptr);
+}
+
+VarValue PapyrusObjectReference::PlaceAtMeBeforeShown(
+  VarValue self, const std::vector<VarValue>& arguments,
+  const std::function<void(MpObjectReference&)>& beforeShown)
+{
   auto selfRefr = GetFormPtr<MpObjectReference>(self);
 
   if (!selfRefr || arguments.size() < 4) {
@@ -437,6 +440,9 @@ VarValue PapyrusObjectReference::PlaceAtMe(
   worldState->AddForm(std::move(newRefr), newRefrId);
 
   auto& refr = worldState->GetFormAt<MpObjectReference>(newRefrId);
+  if (beforeShown) {
+    beforeShown(refr);
+  }
   refr.ForceSubscriptionsUpdate();
 
   if (abInitiallyDisabled) {

@@ -1,7 +1,10 @@
 #pragma once
 #include "MessageBase.h"
 #include "MsgType.h"
+#include <cstdint>
+#include <optional>
 #include <type_traits>
+#include <vector>
 
 struct HitMessage : public MessageBase<HitMessage>
 {
@@ -26,7 +29,8 @@ struct HitMessage : public MessageBase<HitMessage>
         .Serialize("isSneakAttack", isSneakAttack)
         .Serialize("projectile", projectile)
         .Serialize("source", source)
-        .Serialize("target", target);
+        .Serialize("target", target)
+        .Serialize("killMoves", killMoves);
     }
 
     uint32_t aggressor = 0;
@@ -37,6 +41,12 @@ struct HitMessage : public MessageBase<HitMessage>
     uint32_t projectile = 0;
     uint32_t source = 0;
     uint32_t target = 0;
+    // Thornswood #4507. The killmoves the attacker's game judged fit for
+    // this swing, in the idle tree's order, with the two conditions the
+    // server owns left out (ShouldAttackKill and the KillMove global). The
+    // server plays the first that fits only when the hit's death goes
+    // through.
+    std::optional<std::vector<uint32_t>> killMoves;
   };
 
   Data data;

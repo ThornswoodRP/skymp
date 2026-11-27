@@ -9,6 +9,9 @@ export interface Hit {
     projectile: number;
     source: number;
     target: number;
+    // Thornswood #4507: the killmoves the attacker's game judged fit for
+    // this swing, in the idle tree's order (HitMessage.h)
+    killMoves?: number[];
 }
 
 export interface HitMessage {

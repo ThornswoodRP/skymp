@@ -6,14 +6,14 @@
 #include <chrono>
 #include <filesystem>
 #include <memory>
+#include "TestFormIds.h"
 
 extern espm::Loader& GetEspmLoader();
 
 namespace {
-constexpr uint32_t kGold = 0xF;
 constexpr uint32_t kGoods = 0x12eb7;
 
-class ControlledFileStorage
+class MerchantFileStorage
   : public Viet::ISaveStorage<MpChangeForm, FormDesc, std::vector<FormDesc>>
 {
 public:
@@ -31,7 +31,7 @@ public:
   bool failBeforeConsumption = false;
   uint32_t writes = 0;
 
-  ~ControlledFileStorage() { std::filesystem::remove_all(root); }
+  ~MerchantFileStorage() { std::filesystem::remove_all(root); }
   void IterateSync(const IterateSyncCallback& cb) override
   {
     database.Iterate(cb, std::nullopt);
@@ -130,12 +130,7 @@ Inventory MerchantStock()
   return inventory;
 }
 
-void AttachSkyrimFiles(PartOne& server)
-{
-  server.AttachEspm(&GetEspmLoader());
-}
-
-MpActor& AddHuman(PartOne& server, uint32_t formId)
+MpActor& AddCustomer(PartOne& server, uint32_t formId)
 {
   if (!server.HasEspm()) {
     AttachSkyrimFiles(server);
@@ -180,7 +175,7 @@ MerchantTransferController::Result BeginTransfer(
                          sequence);
 }
 
-void CompleteSave(PartOne& server, ControlledFileStorage& storage)
+void CompleteSave(PartOne& server, MerchantFileStorage& storage)
 {
   server.Tick();
   REQUIRE(static_cast<bool>(storage.completion));
@@ -189,7 +184,7 @@ void CompleteSave(PartOne& server, ControlledFileStorage& storage)
   REQUIRE_FALSE(static_cast<bool>(storage.completion));
 }
 
-bool PendingHasForm(const ControlledFileStorage& storage, const FormDesc& desc)
+bool PendingHasForm(const MerchantFileStorage& storage, const FormDesc& desc)
 {
   for (const auto& form : storage.pending) {
     if (form && form->formDesc == desc) {
@@ -204,9 +199,9 @@ TEST_CASE("RetriedMetadataDoesNotSplitMerchantSettlement", "[merchant-transfer][
 {
   PartOne server;
   AttachSkyrimFiles(server);
-  auto storage = std::make_shared<ControlledFileStorage>();
+  auto storage = std::make_shared<MerchantFileStorage>();
   server.AttachSaveStorage(storage);
-  auto& human = AddHuman(server, 0xff000abc);
+  auto& human = AddCustomer(server, 0xff000abc);
   auto& merchant = AddMerchant(server, 0xff000def);
   auto& transfers = server.worldState.GetMerchantTransfers();
   auto began = BeginTransfer(transfers, human, merchant, 10, 1, 1);
@@ -232,7 +227,7 @@ TEST_CASE("HumanChangeUsesCompareAndSetInventoryReceiptPair",
           "[merchant-transfer]")
 {
   PartOne server;
-  auto& human = AddHuman(server, 0xff000abc);
+  auto& human = AddCustomer(server, 0xff000abc);
   auto& merchant = AddMerchant(server, 0xff000def);
   auto merchantBefore = merchant.GetInventory().ToJson();
   auto& transfers = server.worldState.GetMerchantTransfers();
@@ -257,7 +252,7 @@ TEST_CASE("Merchant transfers keep inherited gear separate from assigned stock",
           "[merchant-transfer][NpcBodyLoot][espm]")
 {
   PartOne server;
-  auto& human = AddHuman(server, 0xff000abc);
+  auto& human = AddCustomer(server, 0xff000abc);
   auto& merchant = AddMerchant(server, 0xff000def);
   Inventory::ExtraData origin;
   origin.npcEquipment = true;
@@ -296,9 +291,9 @@ TEST_CASE("HumanSuccessAckMatchesGetSavedInventoryReceipt",
 {
   PartOne server;
   AttachSkyrimFiles(server);
-  auto storage = std::make_shared<ControlledFileStorage>();
+  auto storage = std::make_shared<MerchantFileStorage>();
   server.AttachSaveStorage(storage);
-  auto& human = AddHuman(server, 0xff000abc);
+  auto& human = AddCustomer(server, 0xff000abc);
   auto& merchant = AddMerchant(server, 0xff000def);
   auto& transfers = server.worldState.GetMerchantTransfers();
   auto began = BeginTransfer(transfers, human, merchant, 10, 1, 1);
@@ -322,9 +317,9 @@ TEST_CASE("FailedHumanWriteLeavesAckUnchangedAndRequeuesForm",
   // Re-queue is the storage completion left set. The controller has no requeue method.
   PartOne server;
   AttachSkyrimFiles(server);
-  auto storage = std::make_shared<ControlledFileStorage>();
+  auto storage = std::make_shared<MerchantFileStorage>();
   server.AttachSaveStorage(storage);
-  auto& human = AddHuman(server, 0xff000abc);
+  auto& human = AddCustomer(server, 0xff000abc);
   auto& merchant = AddMerchant(server, 0xff000def);
   auto merchantBefore = merchant.GetInventory().ToJson();
   auto& transfers = server.worldState.GetMerchantTransfers();
@@ -350,7 +345,7 @@ TEST_CASE("FailedHumanWriteLeavesAckUnchangedAndRequeuesForm",
 TEST_CASE("TransferLocksHumanAndMerchantTogether", "[merchant-transfer]")
 {
   PartOne server;
-  auto& human = AddHuman(server, 0xff000abc);
+  auto& human = AddCustomer(server, 0xff000abc);
   auto& merchant = AddMerchant(server, 0xff000def);
   auto& transfers = server.worldState.GetMerchantTransfers();
   auto began = BeginTransfer(transfers, human, merchant, 1, 0, 1);
@@ -369,9 +364,9 @@ TEST_CASE("SecondTransferOnEitherActorWaitsOrRefuses", "[merchant-transfer]")
 {
   // Begin has no wait result. A second offer on either locked actor refuses.
   PartOne server;
-  auto& human = AddHuman(server, 0xff000abc);
+  auto& human = AddCustomer(server, 0xff000abc);
   auto& merchant = AddMerchant(server, 0xff000def);
-  auto& otherHuman = AddHuman(server, 0xff000ab1);
+  auto& otherHuman = AddCustomer(server, 0xff000ab1);
   auto& otherMerchant = AddMerchant(server, 0xff000de1);
   auto& transfers = server.worldState.GetMerchantTransfers();
   auto began = BeginTransfer(transfers, human, merchant, 1, 0, 1);
@@ -391,7 +386,7 @@ TEST_CASE("UnlockOnEveryFailureIncludingThrownSave", "[merchant-transfer]")
 {
   // Header has no unlock-on-throw method. Commit catches the error, and Forget drops locks.
   PartOne server;
-  auto& human = AddHuman(server, 0xff000abc);
+  auto& human = AddCustomer(server, 0xff000abc);
   auto& merchant = AddMerchant(server, 0xff000def);
   auto humanBefore = human.GetInventory().ToJson();
   auto merchantBefore = merchant.GetInventory().ToJson();
@@ -414,7 +409,7 @@ TEST_CASE("UnlockOnEveryFailureIncludingThrownSave", "[merchant-transfer]")
   human.SetInventory(Purse(40));
 
   AttachSkyrimFiles(server);
-  auto storage = std::make_shared<ControlledFileStorage>();
+  auto storage = std::make_shared<MerchantFileStorage>();
   server.AttachSaveStorage(storage);
   auto again = BeginTransfer(transfers, human, merchant, 10, 1, 1);
   REQUIRE(again.ok);
@@ -436,9 +431,9 @@ TEST_CASE("IncomingCreditsStayQuarantinedUntilMatchingDebitIsDurable",
 {
   PartOne server;
   AttachSkyrimFiles(server);
-  auto storage = std::make_shared<ControlledFileStorage>();
+  auto storage = std::make_shared<MerchantFileStorage>();
   server.AttachSaveStorage(storage);
-  auto& human = AddHuman(server, 0xff000abc);
+  auto& human = AddCustomer(server, 0xff000abc);
   auto& merchant = AddMerchant(server, 0xff000def);
   auto& transfers = server.worldState.GetMerchantTransfers();
   auto began = BeginTransfer(transfers, human, merchant, 10, 1, 1);
@@ -473,7 +468,7 @@ TEST_CASE("InsufficientHumanFundsRefuseBeforePreparation",
           "[merchant-transfer]")
 {
   PartOne server;
-  auto& human = AddHuman(server, 0xff000abc);
+  auto& human = AddCustomer(server, 0xff000abc);
   auto& merchant = AddMerchant(server, 0xff000def);
   auto humanBefore = human.GetInventory().ToJson();
   auto merchantBefore = merchant.GetInventory().ToJson();
@@ -493,9 +488,9 @@ TEST_CASE("MerchantChangeJoinsSameFileDatabaseBatchUpsertAsHuman",
   // Batch Upsert is not a controller method. Both forms show up in the controlled storage pending vector.
   PartOne server;
   AttachSkyrimFiles(server);
-  auto storage = std::make_shared<ControlledFileStorage>();
+  auto storage = std::make_shared<MerchantFileStorage>();
   server.AttachSaveStorage(storage);
-  auto& human = AddHuman(server, 0xff000abc);
+  auto& human = AddCustomer(server, 0xff000abc);
   auto& merchant = AddMerchant(server, 0xff000def);
   auto& transfers = server.worldState.GetMerchantTransfers();
   auto began = BeginTransfer(transfers, human, merchant, 10, 1, 1);
@@ -530,9 +525,9 @@ TEST_CASE("MerchantDurabilityAckIsBatchUpsertCompletionNotInventoryReceipt",
   // Header has no merchant receipt stamp. SetInventory publishes the merchant, and the receipt dump stays null.
   PartOne server;
   AttachSkyrimFiles(server);
-  auto storage = std::make_shared<ControlledFileStorage>();
+  auto storage = std::make_shared<MerchantFileStorage>();
   server.AttachSaveStorage(storage);
-  auto& human = AddHuman(server, 0xff000abc);
+  auto& human = AddCustomer(server, 0xff000abc);
   auto& merchant = AddMerchant(server, 0xff000def);
   auto& transfers = server.worldState.GetMerchantTransfers();
   auto began = BeginTransfer(transfers, human, merchant, 10, 1, 1);
@@ -562,7 +557,7 @@ TEST_CASE("MerchantPathDoesNotCallCompareAndSetInventory",
   REQUIRE_THROWS(merchant.CompareAndSetInventory(before, "null", before, 1));
   REQUIRE(merchant.GetInventoryReceiptDump() == "null");
 
-  auto& human = AddHuman(server, 0xff000abc);
+  auto& human = AddCustomer(server, 0xff000abc);
   auto& transfers = server.worldState.GetMerchantTransfers();
   auto began = BeginTransfer(transfers, human, merchant, 10, 1, 1);
   REQUIRE(began.ok);
@@ -585,7 +580,7 @@ TEST_CASE("ControllerDoesNotTreatNpcCompareAndSetInventoryAsSuccess",
   REQUIRE(merchant.GetInventory().ToJson() == before.ToJson());
   REQUIRE(merchant.GetInventoryReceiptDump() == "null");
 
-  auto& human = AddHuman(server, 0xff000abc);
+  auto& human = AddCustomer(server, 0xff000abc);
   auto& transfers = server.worldState.GetMerchantTransfers();
   auto began = BeginTransfer(transfers, human, merchant, 10, 1, 1);
   REQUIRE(began.ok);
@@ -606,9 +601,9 @@ TEST_CASE("MerchantPathDoesNotSetInventoryReceiptViaSetPropertyValueDump",
 {
   PartOne server;
   AttachSkyrimFiles(server);
-  auto storage = std::make_shared<ControlledFileStorage>();
+  auto storage = std::make_shared<MerchantFileStorage>();
   server.AttachSaveStorage(storage);
-  auto& human = AddHuman(server, 0xff000abc);
+  auto& human = AddCustomer(server, 0xff000abc);
   auto& merchant = AddMerchant(server, 0xff000def);
   REQUIRE_THROWS(merchant.SetPropertyValueDump(
     MpObjectReference::kInventoryReceiptProperty, "{\"sequence\":99}", true,
@@ -632,9 +627,9 @@ TEST_CASE("MerchantAckStampIsNotInventoryReceiptProperty",
   // Header stores no merchant ack field. A finished offer still leaves kInventoryReceiptProperty null on the NPC.
   PartOne server;
   AttachSkyrimFiles(server);
-  auto storage = std::make_shared<ControlledFileStorage>();
+  auto storage = std::make_shared<MerchantFileStorage>();
   server.AttachSaveStorage(storage);
-  auto& human = AddHuman(server, 0xff000abc);
+  auto& human = AddCustomer(server, 0xff000abc);
   auto& merchant = AddMerchant(server, 0xff000def);
   auto& transfers = server.worldState.GetMerchantTransfers();
   auto began = BeginTransfer(transfers, human, merchant, 10, 1, 1);
@@ -665,7 +660,7 @@ TEST_CASE("PendingCapIs25IncludingOfflineAndRefused", "[merchant-transfer]")
   uint64_t pendingId = 0;
   for (uint32_t i = 0; i < MerchantTransferController::kMaxPendingRecords;
        ++i) {
-    auto& human = AddHuman(server, 0xff100000 + i);
+    auto& human = AddCustomer(server, 0xff100000 + i);
     auto& merchant = AddMerchant(server, 0xff200000 + i);
     auto began = BeginTransfer(transfers, human, merchant, 1, 0, 1);
     REQUIRE(began.ok);
@@ -695,7 +690,7 @@ TEST_CASE("TwentySixthOfferRefusesWithoutMutatingPursesOrStock",
   auto& transfers = server.worldState.GetMerchantTransfers();
   for (uint32_t i = 0; i < MerchantTransferController::kMaxPendingRecords;
        ++i) {
-    auto& human = AddHuman(server, 0xff110000 + i);
+    auto& human = AddCustomer(server, 0xff110000 + i);
     auto& merchant = AddMerchant(server, 0xff210000 + i);
     auto began = BeginTransfer(transfers, human, merchant, 1, 0, 1);
     REQUIRE(began.ok);
@@ -705,7 +700,7 @@ TEST_CASE("TwentySixthOfferRefusesWithoutMutatingPursesOrStock",
       REQUIRE(transfers.MarkOffline(began.offerId).ok);
     }
   }
-  auto& extraHuman = AddHuman(server, 0xff110100);
+  auto& extraHuman = AddCustomer(server, 0xff110100);
   auto& extraMerchant = AddMerchant(server, 0xff210100);
   auto humanBefore = extraHuman.GetInventory().ToJson();
   auto merchantBefore = extraMerchant.GetInventory().ToJson();
@@ -735,7 +730,7 @@ TEST_CASE("RefusedOfferStaysPendingAndStillCountsTowardCapUntilDropped",
        ++i) {
     uint32_t humanId = 0xff120000 + i;
     uint32_t merchantId = 0xff220000 + i;
-    auto& human = AddHuman(server, humanId);
+    auto& human = AddCustomer(server, humanId);
     auto& merchant = AddMerchant(server, merchantId);
     auto began = BeginTransfer(transfers, human, merchant, 1, 0, 1);
     REQUIRE(began.ok);
@@ -759,12 +754,12 @@ TEST_CASE("RefusedOfferStaysPendingAndStillCountsTowardCapUntilDropped",
           MerchantTransferController::State::Refused);
   REQUIRE(transfers.IsLocked(keptHuman));
 
-  auto& human = AddHuman(server, 0xff120100);
+  auto& human = AddCustomer(server, 0xff120100);
   auto& merchant = AddMerchant(server, 0xff220100);
   auto again = BeginTransfer(transfers, human, merchant, 1, 0, 1);
   REQUIRE(again.ok);
   REQUIRE(transfers.PendingCount() == 25);
-  auto overflow = BeginTransfer(transfers, AddHuman(server, 0xff120101),
+  auto overflow = BeginTransfer(transfers, AddCustomer(server, 0xff120101),
                                 AddMerchant(server, 0xff220101), 1, 0, 1);
   REQUIRE_FALSE(overflow.ok);
   REQUIRE(transfers.PendingCount() == 25);
@@ -775,7 +770,7 @@ TEST_CASE("RefusedOfferStaysPendingAndStillCountsTowardCapUntilDropped",
 TEST_CASE("AppliedMerchantDebitCannotBeForgotten", "[merchant-transfer-regression]")
 {
   PartOne server;
-  auto& human = AddHuman(server, 0xff000abc);
+  auto& human = AddCustomer(server, 0xff000abc);
   auto& merchant = AddMerchant(server, 0xff000def);
   auto& transfers = server.worldState.GetMerchantTransfers();
   auto began = BeginTransfer(transfers, human, merchant, 10, 1, 1);
@@ -794,7 +789,7 @@ TEST_CASE("AppliedMerchantDebitCannotBeForgotten", "[merchant-transfer-regressio
 TEST_CASE("MerchantAvailabilityIsCheckedBeforeHumanDebit", "[merchant-transfer-regression]")
 {
   PartOne server;
-  auto& human = AddHuman(server, 0xff000abc);
+  auto& human = AddCustomer(server, 0xff000abc);
   auto& merchant = AddMerchant(server, 0xff000def);
   auto& transfers = server.worldState.GetMerchantTransfers();
   SECTION("empty shelf") { merchant.SetInventory(Purse(250)); }
@@ -811,7 +806,7 @@ TEST_CASE("MerchantAvailabilityIsCheckedBeforeHumanDebit", "[merchant-transfer-r
 TEST_CASE("MerchantTransferCannotDebitReplacementProfile", "[merchant-transfer-regression]")
 {
   PartOne server;
-  auto& human = AddHuman(server, 0xff000abc);
+  auto& human = AddCustomer(server, 0xff000abc);
   auto& merchant = AddMerchant(server, 0xff000def);
   auto& transfers = server.worldState.GetMerchantTransfers();
   auto began = BeginTransfer(transfers, human, merchant, 10, 1, 1);
@@ -827,8 +822,8 @@ TEST_CASE("MerchantTransferCannotDebitReplacementProfile", "[merchant-transfer-r
 TEST_CASE("MerchantTransferCannotUseHumanAsMerchant", "[merchant-transfer-regression]")
 {
   PartOne server;
-  auto& human = AddHuman(server, 0xff000abc);
-  auto& otherHuman = AddHuman(server, 0xff000def);
+  auto& human = AddCustomer(server, 0xff000abc);
+  auto& otherHuman = AddCustomer(server, 0xff000def);
   auto& transfers = server.worldState.GetMerchantTransfers();
   REQUIRE_FALSE(BeginTransfer(transfers, human, otherHuman, 10, 0, 1).ok);
   REQUIRE(transfers.PendingCount() == 0);
@@ -838,9 +833,9 @@ TEST_CASE("MerchantFinalSaveKeepsBothActorsLocked", "[merchant-transfer-regressi
 {
   PartOne server;
   AttachSkyrimFiles(server);
-  auto storage = std::make_shared<ControlledFileStorage>();
+  auto storage = std::make_shared<MerchantFileStorage>();
   server.AttachSaveStorage(storage);
-  auto& human = AddHuman(server, 0xff000abc);
+  auto& human = AddCustomer(server, 0xff000abc);
   auto& merchant = AddMerchant(server, 0xff000def);
   auto& transfers = server.worldState.GetMerchantTransfers();
   auto began = BeginTransfer(transfers, human, merchant, 10, 1, 1);
@@ -857,10 +852,10 @@ TEST_CASE("MerchantFinalSaveKeepsBothActorsLocked", "[merchant-transfer-regressi
 TEST_CASE("SynchronousSubmissionFailureRetriesMerchantDebit", "[merchant-submit-regression]")
 {
   PartOne server;
-  auto storage = std::make_shared<ControlledFileStorage>();
+  auto storage = std::make_shared<MerchantFileStorage>();
   AttachSkyrimFiles(server);
   server.AttachSaveStorage(storage);
-  auto& human = AddHuman(server, 0xff000abc);
+  auto& human = AddCustomer(server, 0xff000abc);
   auto& merchant = AddMerchant(server, 0xff000def);
   auto& transfers = server.worldState.GetMerchantTransfers();
   auto began = BeginTransfer(transfers, human, merchant, 10, 1, 1);
@@ -879,10 +874,10 @@ TEST_CASE("SynchronousSubmissionFailureRetriesMerchantDebit", "[merchant-submit-
 TEST_CASE("PruningCompletedTradePreservesNewTradeLocks", "[merchant-review-regression]")
 {
   PartOne server;
-  auto storage = std::make_shared<ControlledFileStorage>();
+  auto storage = std::make_shared<MerchantFileStorage>();
   AttachSkyrimFiles(server);
   server.AttachSaveStorage(storage);
-  auto& human = AddHuman(server, 0xff000abc);
+  auto& human = AddCustomer(server, 0xff000abc);
   auto& merchant = AddMerchant(server, 0xff000def);
   auto& transfers = server.worldState.GetMerchantTransfers();
   auto first = BeginTransfer(transfers, human, merchant, 10, 1, 1);
@@ -902,7 +897,7 @@ TEST_CASE("PruningCompletedTradePreservesNewTradeLocks", "[merchant-review-regre
 TEST_CASE("ChangedMerchantCannotStrandHumanDebit", "[merchant-review-regression]")
 {
   PartOne server;
-  auto& human = AddHuman(server, 0xff000abc);
+  auto& human = AddCustomer(server, 0xff000abc);
   auto& merchant = AddMerchant(server, 0xff000def);
   auto& transfers = server.worldState.GetMerchantTransfers();
   auto began = BeginTransfer(transfers, human, merchant, 10, 1, 1);
@@ -916,10 +911,10 @@ TEST_CASE("ChangedMerchantCannotStrandHumanDebit", "[merchant-review-regression]
 TEST_CASE("OldCallbackCannotAcknowledgeReplacementMerchant", "[merchant-review-regression]")
 {
   PartOne server;
-  auto storage = std::make_shared<ControlledFileStorage>();
+  auto storage = std::make_shared<MerchantFileStorage>();
   AttachSkyrimFiles(server);
   server.AttachSaveStorage(storage);
-  auto& human = AddHuman(server, 0xff000abc);
+  auto& human = AddCustomer(server, 0xff000abc);
   auto& merchant = AddMerchant(server, 0xff000def);
   auto& transfers = server.worldState.GetMerchantTransfers();
   auto began = BeginTransfer(transfers, human, merchant, 10, 1, 1);
@@ -973,10 +968,10 @@ TEST_CASE("FailedNotificationCannotHideAppliedMerchantDebit", "[merchant-notify-
 TEST_CASE("FreeMerchantOfferStillSavesBothSides", "[merchant-free-regression]")
 {
   PartOne server;
-  auto storage = std::make_shared<ControlledFileStorage>();
+  auto storage = std::make_shared<MerchantFileStorage>();
   AttachSkyrimFiles(server);
   server.AttachSaveStorage(storage);
-  auto& human = AddHuman(server, 0xff000abc);
+  auto& human = AddCustomer(server, 0xff000abc);
   auto& merchant = AddMerchant(server, 0xff000def);
   auto& transfers = server.worldState.GetMerchantTransfers();
   auto began = transfers.Begin(human, merchant, Inventory{}, Goods(1),
@@ -1004,7 +999,7 @@ TEST_CASE("LateMerchantCallbackDoesNotUseDestroyedWorld", "[merchant-lifetime-re
   world->npcEnabled = true;
   world->npcAllowEssential = true;
   world->npcAllowCrimeFaction = true;
-  auto storage = std::make_shared<ControlledFileStorage>();
+  auto storage = std::make_shared<MerchantFileStorage>();
   world->AttachSaveStorage(storage);
   const auto location = LocationalData{{1,1,1},{0,0,0},FormDesc::FromFormId(0x3c,world->espmFiles)};
   world->AddForm(std::make_unique<MpActor>(location, FormCallbacks::DoNothing(), 0x7), 0xff000abc);

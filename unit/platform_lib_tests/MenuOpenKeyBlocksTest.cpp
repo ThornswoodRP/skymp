@@ -1,6 +1,7 @@
 #include <catch2/catch_all.hpp>
 
 #include "MenuOpenKeyBlocks.h"
+#include "TestIds.h"
 
 #include <set>
 #include <string>
@@ -10,7 +11,6 @@
 
 namespace {
 constexpr uint32_t kJ = 36;
-constexpr uint32_t kK = 37;
 constexpr uint32_t kEsc = 1;
 
 MenuOpenKeyBlocks::IsMenuOpen Menus(std::set<std::string> open)

@@ -273,6 +273,30 @@ int main()
     std::printf("checked %.*s\n", int(name.size()), name.data());
   }
 
+  // The face menu keeps its pause and background in a live world: its camera
+  // comes round to the character's front only while the game is paused
+  // (Thornswood #6979). The live menus beside it still lose theirs.
+  CHECK(P::KeepsPause("RaceSex Menu"));
+  for (std::string_view name : names) CHECK(!P::KeepsPause(name));
+  CHECK(!P::KeepsPause("RaceSex"));
+  CHECK(P::Unpauses(true, "InventoryMenu") && !P::Unpauses(false, "InventoryMenu"));
+  CHECK(!P::Unpauses(true, "RaceSex Menu") && !P::Unpauses(false, "RaceSex Menu"));
+  CHECK(!P::KeepsPause(""));
+  {
+    Menu face{ unrelated };
+    int pauses = 0;
+    P::Show(P::Unpauses(true, "RaceSex Menu"), [&] {
+      face.flags |= P::Pauses | P::FrozenBackground;
+      return 1;
+    }, [&] { return face.flags; }, [&](std::uint32_t flags) { face.flags = flags; });
+    pauses += (face.flags & P::Pauses) != 0;
+    CHECK(face.flags == 0xffffffffu);
+    CHECK(pauses == 1);
+    pauses -= (face.flags & P::Pauses) != 0;
+    CHECK(pauses == 0);
+    std::printf("checked RaceSex Menu keeps its pause\n");
+  }
+
   // Offline and unloaded-world paths keep all flags and balanced counts.
   Menu offline{ unrelated };
   int count = 0;

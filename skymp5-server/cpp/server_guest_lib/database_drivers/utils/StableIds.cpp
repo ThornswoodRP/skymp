@@ -326,6 +326,14 @@ void StableIds::Encode(nlohmann::json& changeForm, Notes& notes) const
     }
   }
 
+  if (Has(changeForm, "learnedEnchantments")) {
+    for (auto& effect : changeForm["learnedEnchantments"]) {
+      if (auto id = Number(effect)) {
+        effect = EncodeId(*id, form + " learned enchantment", notes);
+      }
+    }
+  }
+
   if (Has(changeForm, "appearanceDump")) {
     auto& appearance = changeForm["appearanceDump"];
     for (const char* key : { "raceId", "headTextureSetId" }) {
@@ -393,6 +401,16 @@ void StableIds::Decode(nlohmann::json& changeForm, Notes& notes) const
       }
     }
     changeForm["learnedSpells"] = std::move(kept);
+  }
+
+  if (Has(changeForm, "learnedEnchantments")) {
+    auto kept = nlohmann::json::array();
+    for (auto& effect : changeForm["learnedEnchantments"]) {
+      if (auto id = DecodeId(effect, form + " learned enchantment", notes)) {
+        kept.push_back(*id);
+      }
+    }
+    changeForm["learnedEnchantments"] = std::move(kept);
   }
 
   if (Has(changeForm, "appearanceDump")) {

@@ -116,3 +116,24 @@ TEST_CASE("HandlePacketServerside", "[Networking]")
     }
   }
 }
+
+// THORNSWOOD (Thornswood #6568): a goodbye and a lost connection are said
+// apart, on both sides, and nothing else is called either.
+TEST_CASE("DescribeDisconnect says which end of a connection it was",
+          "[Networking]")
+{
+  REQUIRE(std::string(Networking::DescribeDisconnect(
+            ID_DISCONNECTION_NOTIFICATION, true)) ==
+          "their game said goodbye");
+  REQUIRE(
+    std::string(Networking::DescribeDisconnect(ID_CONNECTION_LOST, true)) ==
+    "the connection was lost: their game stopped answering");
+  REQUIRE(std::string(Networking::DescribeDisconnect(
+            ID_DISCONNECTION_NOTIFICATION, false)) ==
+          "the server closed the connection");
+  REQUIRE(
+    std::string(Networking::DescribeDisconnect(ID_CONNECTION_LOST, false)) ==
+    "the connection was lost: the server stopped answering");
+  REQUIRE(std::string(Networking::DescribeDisconnect(
+            ID_NEW_INCOMING_CONNECTION, true)) == "");
+}

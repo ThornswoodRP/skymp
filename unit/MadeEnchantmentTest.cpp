@@ -23,17 +23,12 @@
 #include <limits>
 #include <memory>
 #include <nlohmann/json.hpp>
+#include "TestFormIds.h"
 
 PartOne& GetPartOne();
 
 namespace {
-constexpr uint32_t kForge = 0x1ad6e;
-constexpr uint32_t kIronDagger = 0x1397e;
 constexpr uint32_t kIronHelmet = 0x12e4d;
-constexpr uint32_t kPettySoulGem = 0x2e4e2;
-constexpr uint32_t kWheat = 0x4b0ba;
-constexpr uint32_t kRestoreHealth = 0x3eb15;
-constexpr uint32_t kFortifyHealth = 0x3eaf3;
 
 Inventory::MadeEnchantment OnDagger(float magnitude = 10.f)
 {
@@ -105,13 +100,6 @@ const Inventory::Entry* Enchanted(const Inventory& inv, uint32_t baseId)
 }
 
 // The change form as a save writes it and a load reads it back.
-MpChangeForm ThroughSave(const MpChangeForm& changeForm)
-{
-  static simdjson::dom::parser parser;
-  const std::string dump = MpChangeForm::ToJson(changeForm).dump();
-  simdjson::dom::element element = parser.parse(dump).value();
-  return MpChangeForm::JsonToChangeForm(element);
-}
 }
 
 TEST_CASE("A made enchantment has one id for its contents, never a bottle's "

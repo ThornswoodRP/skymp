@@ -1876,6 +1876,8 @@ EventResult EventHandler::ProcessEvent(
 
   auto menuName = event->menuName;
   bool opening = event->opening;
+  if (menuName == RE::InventoryMenu::MENU_NAME)
+    GameplayMenuUnpaused::InventoryChanged(opening);
 
   // The Cursor Menu and the Loading Menu reach the browser through
   // BrowserApiTilted::WatchMenus, which is on whether or not a plugin
@@ -2089,6 +2091,7 @@ EventResult EventHandler::ProcessEvent(RE::InputEvent* const* event,
     switch (eventItem->eventType.get()) {
       case RE::INPUT_EVENT_TYPE::kButton: {
         auto buttonEvent = static_cast<RE::ButtonEvent*>(eventItem);
+        GameplayMenuUnpaused::InventoryKey(*buttonEvent);
         auto eventData = std::make_shared<ButtonEventData>(*buttonEvent);
         SkyrimPlatform::GetSingleton()->AddUpdateTask(
           [eventData](Napi::Env env) { eventData->Send(env); });

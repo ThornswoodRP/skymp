@@ -1,5 +1,8 @@
 #pragma once
 #include "IPapyrusClass.h"
+#include <functional>
+
+class MpObjectReference;
 
 class PapyrusObjectReference final
   : public IPapyrusClass<PapyrusObjectReference>
@@ -23,6 +26,13 @@ public:
   VarValue GetAnimationVariableBool(VarValue self,
                                     const std::vector<VarValue>& arguments);
   VarValue PlaceAtMe(VarValue self, const std::vector<VarValue>& arguments);
+  // THORNSWOOD PATCH (Thornswood #6718). PlaceAtMe for the server's own
+  // callers: beforeShown runs on the new reference after it is in the world
+  // and before any client is told about it, so what it sets is in the
+  // create messages.
+  VarValue PlaceAtMeBeforeShown(
+    VarValue self, const std::vector<VarValue>& arguments,
+    const std::function<void(MpObjectReference&)>& beforeShown);
   VarValue SetAngle(VarValue self, const std::vector<VarValue>& arguments);
   VarValue Enable(VarValue self, const std::vector<VarValue>& arguments);
   VarValue Disable(VarValue self, const std::vector<VarValue>& arguments);

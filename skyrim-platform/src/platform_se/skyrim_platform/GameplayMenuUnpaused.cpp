@@ -1,7 +1,10 @@
 #include "GameplayMenuUnpaused.h"
+#include "BrowserApi.h"
 #include "FridaHookHandler.h"
 #include "GameplayMenuPatches.h"
 #include "GameplayMenuPolicy.h"
+#include "InventoryShortcut.h"
+#include "PageFocusMenu.h"
 #include "SleepWaitChoice.h"
 #include <array>
 #include <atomic>
@@ -22,6 +25,9 @@ void (*g_commands)(void*) = nullptr;
 void (*g_originalHeapCall)(void*) = nullptr;
 std::atomic_bool g_installed{ false };
 std::atomic<std::uint32_t> g_enabled{ 0 };
+std::atomic<std::uint32_t> g_inventoryLifetime{ 0 };
+std::atomic<std::uint32_t> g_inventoryReady{ 0 };
+std::atomic<std::uint32_t> g_inventoryRequest{ 0 };
 static_assert(decltype(g_enabled)::is_always_lock_free && sizeof(g_enabled) == 4);
 GameplayMenuPolicy::World g_world;
 thread_local bool g_insideOwner = false;
@@ -134,6 +140,87 @@ void UpdateEligibility(RE::UI* ui)
                   std::memory_order_release);
 }
 
+bool InventoryFlag(RE::GFxMovieView& movie, const char* path, bool expected)
+{
+  RE::GFxValue value;
+  return movie.GetVariable(&value, path) && value.IsBool() && value.GetBool() == expected;
+}
+
+bool InventoryOwnsInput(RE::UI& ui, const RE::IMenu& inventory)
+{
+  // Cursor and HUD movies can be above Inventory without owning the input.
+  // A different input context or a modal above it owns this press instead.
+  for (auto i = ui.menuStack.size(); i > 0; --i) {
+    const auto& menu = ui.menuStack[i - 1];
+    if (menu.get() == &inventory)
+      return true;
+    if (menu && (menu->Modal() ||
+                 menu->inputContext.get() != RE::UserEvents::INPUT_CONTEXT_ID::kNone))
+      return false;
+  }
+  return false;
+}
+
+RE::GPtr<RE::InventoryMenu> InventoryTakingInput(RE::UI* ui)
+{
+  if (!ui || BrowserApi::HasInputFocus() || ui->IsMenuOpen(PageFocusMenu::MENU_NAME))
+    return {};
+  auto inventory = ui->GetMenu<RE::InventoryMenu>();
+  if (inventory && inventory->OnStack() && InventoryOwnsInput(*ui, *inventory))
+    return inventory;
+  return {};
+}
+
+bool InventoryCanClose(RE::GFxMovieView& movie)
+{
+  return InventoryFlag(movie, "_root.Menu_mc.bFadedIn", true) &&
+         InventoryFlag(movie, "_root.Menu_mc._bMenuClosing", false) &&
+         InventoryFlag(movie, "_root.Menu_mc.inventoryLists.itemList.disableInput", false) &&
+         InventoryFlag(movie, "_root.Menu_mc.inventoryLists.categoryList.disableInput", false);
+}
+
+std::uint32_t ReadyInventory(RE::UI* ui)
+{
+  const auto lifetime = g_inventoryLifetime.load();
+  if (!(lifetime & 1u) || !g_enabled.load(std::memory_order_acquire))
+    return 0;
+  const auto menu = ui->GetMenu<RE::InventoryMenu>();
+  return menu && menu->OnStack() && menu->uiMovie && InventoryCanClose(*menu->uiMovie)
+    ? lifetime : 0;
+}
+
+void CloseRequestedInventory(RE::UI* ui)
+{
+  const auto request = g_inventoryRequest.exchange(0);
+  if (!InventoryShortcut::Current(request, g_inventoryLifetime.load()) ||
+      !g_enabled.load(std::memory_order_acquire))
+    return;
+
+  const auto* controls = RE::ControlMap::GetSingleton();
+  if (!controls || controls->textEntryCount != 0)
+    return;
+
+  auto menu = InventoryTakingInput(ui);
+  if (!menu || !menu->uiMovie || !menu->fxDelegate)
+    return;
+
+  auto& movie = *menu->uiMovie;
+  // Check the pinned SkyUI movie after its input pass. If Flash already
+  // handled the same press, it is already closing.
+  if (!InventoryCanClose(movie))
+    return;
+  const auto* closeTween = menu->fxDelegate->callbacks.GetAlt("CloseTweenMenu");
+  if (!closeTween || !closeTween->callback || closeTween->handler.get() != menu.get())
+    return;
+
+  // Same sequence as SkyUI's Tab branch, on this movie. The movie saves
+  // selection and delegates CloseMenu itself when the fade completes.
+  if (movie.Invoke("_root.Menu_mc.startMenuFade", nullptr, nullptr, 0)) {
+    RE::FxDelegateArgs args({}, menu.get(), &movie, nullptr, 0);
+    closeTween->callback(args);
+  }
+}
+
 RE::UI_MESSAGE_RESULTS Show(RE::IMenu* menu, RE::UIMessage* message)
 {
   if (message->menu == RE::MainMenu::MENU_NAME) {
@@ -142,7 +229,10 @@ RE::UI_MESSAGE_RESULTS Show(RE::IMenu* menu, RE::UIMessage* message)
     g_world.Title();
     g_enabled.store(0, std::memory_order_release);
   }
-  return GameplayMenuPolicy::Show(g_enabled.load(std::memory_order_acquire) != 0,
+  const char* raw = message->menu.c_str();
+  const std::string_view name{ raw ? raw : "" };
+  return GameplayMenuPolicy::Show(GameplayMenuPolicy::Unpauses(
+      g_enabled.load(std::memory_order_acquire) != 0, name),
     [&] {
       const auto result = menu->ProcessMessage(*message);
       if (result != RE::UI_MESSAGE_RESULTS::kIgnore &&
@@ -170,8 +260,20 @@ void Owner(void* heap)
   const bool handoffBlocked = !g_sleepHandoff.AllowMovies(ui->IsMenuOpen(RE::SleepWaitMenu::MENU_NAME));
   static std::uint64_t refusedMovies = 0;
   if (!handoffBlocked) {
+    // Evaluate embedded SkyUI controls on the UI owner thread only. An
+    // inventory hidden under its own search/quantity UI is not armed.
+    if (g_inventoryReady.load() && !ReadyInventory(ui)) {
+      g_inventoryReady.store(0);
+      g_inventoryRequest.store(0);
+    }
     g_movies(ui);
+    CloseRequestedInventory(ui);
+    // The opening press can arrive during the same input pass as the Show.
+    // Only arm a menu after its first pass and while its lists own input.
+    g_inventoryReady.store(ReadyInventory(ui));
   } else {
+    g_inventoryRequest.store(0);
+    g_inventoryReady.store(0);
     // Never deliver a live input callback to a picker that refused Hide.
     // The passive pass counters also report this unsupported transition.
     if (++refusedMovies <= 3 || refusedMovies % 1200 == 0)
@@ -257,6 +359,30 @@ std::uintptr_t Store(const P::Bytes& bytes)
   std::memcpy(memory, bytes.data(), bytes.size());
   return reinterpret_cast<std::uintptr_t>(memory);
 }
+}
+
+void GameplayMenuUnpaused::InventoryChanged(bool opened)
+{
+  g_inventoryLifetime.store(InventoryShortcut::NewLifetime(g_inventoryLifetime.load(), opened));
+}
+
+void GameplayMenuUnpaused::InventoryKey(const RE::ButtonEvent& button)
+{
+  const auto lifetime = g_inventoryLifetime.load();
+  const auto ready = g_inventoryReady.load();
+  const bool keyboard = button.GetDevice() == RE::INPUT_DEVICE::kKeyboard;
+  if (!InventoryShortcut::Current(ready, lifetime) || !g_enabled.load(std::memory_order_acquire) ||
+      !keyboard || !button.IsDown())
+    return;
+  const auto* controls = RE::ControlMap::GetSingleton();
+  if (!controls || controls->textEntryCount != 0)
+    return;
+  const auto request = InventoryShortcut::Request(lifetime, ready, button.GetIDCode(),
+    controls->GetMappedKey("Quick Inventory", RE::INPUT_DEVICE::kKeyboard));
+  // Check the origin as well as the delivery: a top menu that handles and
+  // closes on this key must not also close the inventory behind it.
+  if (request && InventoryTakingInput(RE::UI::GetSingleton()))
+    g_inventoryRequest.store(request);
 }
 
 void GameplayMenuUnpaused::RequestClient(bool requested)

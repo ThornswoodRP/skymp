@@ -21,6 +21,17 @@ export declare function blockPapyrusEvents(block: boolean): void
 export declare function setMenuOpenKeyBlocked(userEvent: string, code: number, blocked: boolean, exceptMenus?: string[]): void
 // Thornswood #4566: opens the game's own Book Menu on the book record `bookFormId`, showing `text` in place of the record's words. The words are kept until that menu closes. False, opening nothing, when it is not a book or the game is not ready.
 export declare function openBookWithText(bookFormId: number, text: string): boolean
+// Thornswood #4511: runs function `functionName` of the script `scriptName` attached to form `formId`, a script's own Papyrus function and not only a native one, with `args` (strings and booleans only). Resolves true once the function has returned, false when it could not be started (no such form, script or function, or the arguments do not match).
+export declare function runScriptFunction(formId: number, scriptName: string, functionName: string, args?: (string | boolean)[]): Promise<boolean>
+// Thornswood #4511: the property `propertyName` of the script `scriptName` attached to form `formId`, as it is now: a boolean, number, string, form, or an array of one of those, null for a None object or array. Undefined when the script is not attached or has no such property.
+export declare function getScriptProperty(formId: number, scriptName: string, propertyName: string): ScriptValue | undefined
+// Thornswood #4511: the same for one of the script's own variables, the ones it does not show as properties (SkyUI's favourite groups live in SKI_FavoritesManager's).
+export declare function getScriptVariable(formId: number, scriptName: string, variableName: string): ScriptValue | undefined
+// Thornswood #4511: writes the variable `variableName` of the script `scriptName` attached to form `formId`. An array is filled in place at its own size, so `value` is an array of exactly that many. Each value must be the variable's kind (a number, boolean, string, or a form or null for an object); one that is not throws, and nothing is written. False when the script is not attached or has no such variable.
+export declare function setScriptVariable(formId: number, scriptName: string, variableName: string, value: ScriptValue): boolean
+export type ScriptValue = boolean | number | string | Form | null | (boolean | number | string | Form | null)[]
+// Thornswood #4507: the killmoves Skyrim's own condition code judges fit for actor `attackerFormId` on actor `targetFormId`, under the killmove roots of a normal or a power attack, in the order the game takes them, leaving ShouldAttackKill and the KillMove global to the server. Empty when none fit or either actor is not loaded.
+export declare function getFittingKillMoves(attackerFormId: number, targetFormId: number, isPowerAttack: boolean): number[]
 // Thornswood #1385: while ignored, the game does not hold form `formId` to its carry weight (Actor::IsOverEncumbered answers no), so being overloaded never makes it walk.
 export declare function setOverEncumberedIgnored(formId: number, ignored: boolean): void
 export declare function isOverEncumberedIgnored(formId: number): boolean
@@ -70,6 +81,8 @@ export declare function getExteriorCellCoordinates(cellId: number): number[] | u
 export declare function loadGame(pos: number[], angle: number[], worldOrCell: number, changeFormNpc?: ChangeFormNpc, loadOrder?: string[], time?: { seconds: number, minutes: number, hours: number }, inventory?: InitialInventory, lightLoadOrder?: string[]): void
 
 export declare function worldPointToScreenPoint(...args: number[][]): number[][]
+// Thornswood #7200: sets the player camera's field of view in degrees, the angle the world is drawn with and the one the first person arms are drawn with, each above 0 and below 180. Throws on any other value.
+export declare function setCameraFOV(worldFov: number, firstPersonFov: number): void
 
 export type PacketType = 'message' | 'disconnect' | 'connectionAccepted' | 'connectionFailed' | 'connectionDenied'
 
@@ -3306,6 +3319,7 @@ export declare class TESModPlatform extends PapyrusObject {
   static resetContainer(container: Form | null): void
   static resizeHeadpartsArray(npc: ActorBase | null, newSize: number): void
   static resizeTintsArray(newSize: number): void
+  static setCraftingInput(recipe: Form | null, item: Form | null, count: number): void
   static setFormIdUnsafe(Form: Form | null, newId: number): void
   static setNpcHairColor(npc: ActorBase | null, hairColor: number): void
   static setNpcRace(npc: ActorBase | null, race: Race | null): void

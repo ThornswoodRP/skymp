@@ -9,6 +9,7 @@
 #include <prometheus/gauge.h>
 #include <prometheus/histogram.h>
 #include <slikenet/MessageIdentifiers.h>
+#include <slikenet/statistics.h>
 #include <slikenet/types.h>
 #include <spdlog/spdlog.h>
 
@@ -83,7 +84,18 @@ public:
   ~Client() override
   {
     packetGuard.reset(); // Depends on peer, so must be reset first
-    peer->Shutdown(0);
+    // THORNSWOOD (#6724). Shutdown(0) closes the socket without telling the
+    // server: with no time to send it, RakPeer::Shutdown sends no
+    // ID_DISCONNECTION_NOTIFICATION at all. So the server held a game that
+    // had changed character, been ended or closed until its own 60 s
+    // timeout, and the same Discord account picking again inside that minute
+    // was turned away as a second game (24 Nov 2026, main: three refusals,
+    // each 1 to 3 s after the game closed, the old connection gone 48 to
+    // 58 s later). With time given, Shutdown tells the server first and
+    // returns as soon as the server has the goodbye, which is one round
+    // trip; kGoodbyeMs is only the most it waits for a server that does not
+    // answer.
+    peer->Shutdown(kGoodbyeMs);
   }
 
   void Send(Networking::PacketData data, size_t length, bool reliable) override
@@ -123,6 +135,8 @@ public:
   bool IsConnected() const override { return isConnected; }
 
 private:
+  static constexpr unsigned int kGoodbyeMs = 500;
+
   const std::string ip;
   const unsigned short port;
   const std::string password;
@@ -247,6 +261,36 @@ public:
     return ip;
   }
 
+  Networking::ConnectionStats GetConnectionStats(
+    Networking::UserId userId) const override
+  {
+    const auto guid = idManager->find(userId);
+    if (guid == RakNetGUID(-1)) {
+      throw std::runtime_error("User with id " + std::to_string(userId) +
+                               " doesn't exist");
+    }
+
+    Networking::ConnectionStats s;
+    s.lastPingMs = peer->GetLastPing(guid);
+    s.averagePingMs = peer->GetAveragePing(guid);
+    s.lowestPingMs = peer->GetLowestPing(guid);
+
+    RakNetStatistics rns;
+    if (!peer->GetStatistics(peer->GetSystemAddressFromGuid(guid), &rns)) {
+      return s;
+    }
+    s.bytesSent = rns.runningTotal[ACTUAL_BYTES_SENT];
+    s.bytesResent = rns.runningTotal[USER_MESSAGE_BYTES_RESENT];
+    s.bytesReceived = rns.runningTotal[ACTUAL_BYTES_RECEIVED];
+    for (int i = 0; i < NUMBER_OF_PRIORITIES; ++i) {
+      s.messagesWaiting += rns.messageInSendBuffer[i];
+    }
+    s.messagesToResend = rns.messagesInResendBuffer;
+    s.packetLoss = rns.packetlossTotal;
+    s.limitedByCongestion = rns.isLimitedByCongestionControl;
+    return s;
+  }
+
   void CloseConnection(Networking::UserId userId) override
   {
     const auto guid = idManager->find(userId);
@@ -344,8 +388,9 @@ void Networking::HandlePacketClientside(Networking::IClient::OnPacket onPacket,
              packet->length, "");
   } else if (packetId == ID_CONNECTION_LOST ||
              packetId == ID_DISCONNECTION_NOTIFICATION) {
+    // THORNSWOOD (Thornswood #6568): which end it was, for the client's log.
     onPacket(state, Networking::PacketType::ClientSideDisconnect, nullptr, 0,
-             "");
+             DescribeDisconnect(packetId, false));
   } else if (packetId == ID_CONNECTION_ATTEMPT_FAILED) {
     onPacket(state, Networking::PacketType::ClientSideConnectionFailed,
              nullptr, 0, "");
@@ -356,6 +401,21 @@ void Networking::HandlePacketClientside(Networking::IClient::OnPacket onPacket,
     onPacket(state, Networking::PacketType::ClientSideConnectionDenied,
              nullptr, 0, err);
   }
+}
+
+const char* Networking::DescribeDisconnect(unsigned char packetId,
+                                           bool serverside)
+{
+  if (packetId == ID_DISCONNECTION_NOTIFICATION) {
+    return serverside ? "their game said goodbye"
+                      : "the server closed the connection";
+  }
+  if (packetId == ID_CONNECTION_LOST) {
+    return serverside
+      ? "the connection was lost: their game stopped answering"
+      : "the connection was lost: the server stopped answering";
+  }
+  return "";
 }
 
 void Networking::HandlePacketServerside(Networking::IServer::OnPacket onPacket,
@@ -373,6 +433,9 @@ void Networking::HandlePacketServerside(Networking::IServer::OnPacket onPacket,
           "Unexpected disconnection for system without userId (guid={})",
           packet->guid.g));
       }
+      // THORNSWOOD (Thornswood #6568): said apart in the server's log.
+      spdlog::info("user {} left: {}", userId,
+                   DescribeDisconnect(packetId, true));
       onPacket(state, userId, Networking::PacketType::ServerSideUserDisconnect,
                nullptr, 0);
       idManager.freeId(userId);

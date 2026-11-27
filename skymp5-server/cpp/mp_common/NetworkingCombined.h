@@ -79,6 +79,25 @@ public:
     return childs[serverIdx]->GetIp(userId1);
   }
 
+  ConnectionStats GetConnectionStats(UserId userId) const override
+  {
+    if (realIdByCombined.size() <= userId) {
+      throw std::runtime_error("User with id " + std::to_string(userId) +
+                               " doesn't exist");
+    }
+
+    auto& p = realIdByCombined[userId];
+    auto serverIdx = p.first;
+    auto userId1 = p.second;
+
+    if (userId1 == Networking::InvalidUserId) {
+      throw std::runtime_error("User with id " + std::to_string(userId) +
+                               " doesn't exist");
+    }
+
+    return childs[serverIdx]->GetConnectionStats(userId1);
+  }
+
   void CloseConnection(Networking::UserId combinedUserId) override
   {
     if (realIdByCombined.size() <= combinedUserId) {

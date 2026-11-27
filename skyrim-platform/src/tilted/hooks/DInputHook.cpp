@@ -8,6 +8,7 @@
 #include <FunctionHook.hpp>
 #include <HeldKeyRelease.h>
 #include <array>
+#include <atomic>
 #include <cstdio>
 #include <iostream>
 
@@ -53,6 +54,30 @@ static InputMeter g_meter = {};
 // GetDeviceData).
 static HeldKeyRelease g_heldKeys;
 
+/*
+  THORNSWOOD PATCH (Thornswood #6200). Motion made while the game loads.
+
+  The mouse is read with GetDeviceState, and DirectInput gives a relative
+  axis as the motion since the last read. On 26 Nov 2026 (build-1.3.125,
+  3440x1440) the game's menu cursor was at 1720,720 when the page took the
+  focus at the data load, and the page's very first mouse move, under four
+  seconds later, was at 0,0. Before that, 10 of 54 starts between 16 and
+  25 Nov put the cursor at an edge before the person had seen it.
+
+  What carried the cursor there is not proven. The first reading was motion
+  made while the game loaded, waiting in the device for the first read. But
+  only the keyboard is made background here (SetCooperativeLevel below): the
+  game takes the mouse exclusive and foreground, so motion waits in it only
+  while the game window is in front and the mouse is acquired, and in that
+  same start the Windows pointer kept moving after the focus, which an
+  acquired exclusive mouse does not allow. So the first mouse read after the
+  data load (ForgetMouseMotion, from WatchMenus) keeps its buttons, drops its
+  motion and says how much, and the reads after it and the game's acquiring
+  of the mouse are written down as they happen (the trace below), so one
+  start shows which read moved the cursor and what it held.
+*/
+static std::atomic<bool> g_forgetMouseMotion = false;
+
 static FILE* InputLog()
 {
   static FILE* f = nullptr;
@@ -62,6 +87,33 @@ static FILE* InputLog()
     fopen_s(&f, "Data\\Platform\\thornswood-input.log", "w");
   }
   return f;
+}
+
+/*
+  The trace of the mouse (#6200, the note above). The first
+  MouseTraceAcquires times the game acquires the mouse or lets go of it are
+  written from the start, so the load shows whether the mouse was held while
+  it ran, and as many again after the data load. ForgetMouseMotion starts it
+  again and writes the next MouseTraceReads reads of the mouse as well. Each
+  line has the clock the Skyrim Platform log uses, so its cursor lines can be
+  read beside it.
+*/
+constexpr int MouseTraceReads = 40;
+constexpr int MouseTraceAcquires = 20;
+static std::atomic<int> g_mouseReadsLeft = 0;
+static std::atomic<int> g_mouseAcquiresLeft = MouseTraceAcquires;
+
+static void MouseTraceClock(FILE* f)
+{
+  SYSTEMTIME t;
+  GetLocalTime(&t);
+  fprintf(f, "[mouse] [%02u:%02u:%02u:%03u] ", t.wHour, t.wMinute, t.wSecond,
+          t.wMilliseconds);
+}
+
+static const char* InFront(HWND gameWindow)
+{
+  return GetForegroundWindow() == gameWindow ? "the game" : "another window";
 }
 
 /*
@@ -459,6 +511,27 @@ static bool IsKeyboard(IDirectInputDevice8A* apDevice)
   return info.guidInstance == GUID_SysKeyboard;
 }
 
+// The game acquiring or letting go of the mouse (the trace above).
+static void TraceMouseAcquire(IDirectInputDevice8A* device, const char* what,
+                              HRESULT hr)
+{
+  if (g_mouseAcquiresLeft <= 0)
+    return;
+  DIDEVICEINSTANCEA info;
+  info.dwSize = sizeof(info);
+  if (IDirectInputDevice8_GetDeviceInfo(device, &info) != DI_OK ||
+      GET_DIDEVICE_TYPE(info.dwDevType) != DI8DEVTYPE_MOUSE)
+    return;
+  if (g_mouseAcquiresLeft.fetch_sub(1) <= 0)
+    return;
+  if (FILE* f = InputLog()) {
+    MouseTraceClock(f);
+    fprintf(f, "the game %s the mouse: 0x%08lX, %s in front\n", what,
+            static_cast<unsigned long>(hr), InFront(g_gameWindow));
+    fflush(f);
+  }
+}
+
 struct FakeIDirectInputDevice8A
 {
   FakeIDirectInputDevice8A(IDirectInputDevice8A* apDevice)
@@ -499,11 +572,15 @@ struct FakeIDirectInputDevice8A
   }
   virtual HRESULT STDMETHODCALLTYPE Acquire() PURE
   {
-    return IDirectInputDevice8_Acquire(m_pDevice);
+    HRESULT hr = IDirectInputDevice8_Acquire(m_pDevice);
+    TraceMouseAcquire(m_pDevice, "acquired", hr);
+    return hr;
   }
   virtual HRESULT STDMETHODCALLTYPE Unacquire() PURE
   {
-    return IDirectInputDevice8_Unacquire(m_pDevice);
+    HRESULT hr = IDirectInputDevice8_Unacquire(m_pDevice);
+    TraceMouseAcquire(m_pDevice, "let go of", hr);
+    return hr;
   }
   virtual HRESULT STDMETHODCALLTYPE GetDeviceState(DWORD a, LPVOID b) PURE;
   virtual HRESULT STDMETHODCALLTYPE GetDeviceData(DWORD a,
@@ -680,6 +757,25 @@ HRESULT _stdcall FakeIDirectInputDevice8A::GetDeviceState(DWORD outDataLen,
   }
   g_meter.lastState = static_cast<long>(ret);
 
+  if (GET_DIDEVICE_TYPE(instanceInfo.dwDevType) == DI8DEVTYPE_MOUSE &&
+      g_mouseReadsLeft > 0) {
+    int left = g_mouseReadsLeft.fetch_sub(1);
+    FILE* f = left > 0 ? InputLog() : nullptr;
+    if (f && outData && outDataLen >= sizeof(DIMOUSESTATE)) {
+      auto* raw = static_cast<const DIMOUSESTATE*>(outData);
+      MouseTraceClock(f);
+      fprintf(f,
+              "read %d after the data load: 0x%08lX, motion %ld,%ld, wheel "
+              "%ld, left button %s, %s in front\n",
+              MouseTraceReads - left + 1, static_cast<unsigned long>(ret),
+              ret == DI_OK ? raw->lX : 0, ret == DI_OK ? raw->lY : 0,
+              ret == DI_OK ? raw->lZ : 0,
+              ret == DI_OK && (raw->rgbButtons[0] & 0x80) ? "down" : "up",
+              InFront(g_gameWindow));
+      fflush(f);
+    }
+  }
+
   // Zero rather than return early, so the listener below still sees the
   // buttons come up and nothing is left stuck down while minimised.
   if (ret == DI_OK && outData && outDataLen && !ShouldReadInput()) {
@@ -699,6 +795,20 @@ HRESULT _stdcall FakeIDirectInputDevice8A::GetDeviceState(DWORD outDataLen,
 
   if (ret != DI_OK)
     return ret;
+
+  if (outData && outDataLen >= sizeof(DIMOUSESTATE) &&
+      GET_DIDEVICE_TYPE(instanceInfo.dwDevType) == DI8DEVTYPE_MOUSE &&
+      g_forgetMouseMotion.exchange(false)) {
+    auto* motion = static_cast<DIMOUSESTATE*>(outData);
+    if (FILE* f = InputLog()) {
+      fprintf(f,
+              "[mouse] the first read after the game's data loaded held "
+              "%ld,%ld (wheel %ld) of motion; left out\n",
+              motion->lX, motion->lY, motion->lZ);
+      fflush(f);
+    }
+    motion->lX = motion->lY = motion->lZ = 0;
+  }
 
   DIMOUSESTATE2* mouseState = (DIMOUSESTATE2*)outData;
 
@@ -853,6 +963,13 @@ static HRESULT _stdcall HookDirectInput8Create(HINSTANCE instance,
   }
 
   return result;
+}
+
+void DInputHook::ForgetMouseMotion() noexcept
+{
+  g_mouseAcquiresLeft = MouseTraceAcquires;
+  g_mouseReadsLeft = MouseTraceReads;
+  g_forgetMouseMotion = true;
 }
 
 void DInputHook::Install(std::shared_ptr<IInputListener> listener) noexcept

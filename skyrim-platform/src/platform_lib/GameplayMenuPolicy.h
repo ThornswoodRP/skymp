@@ -1,6 +1,7 @@
 #pragma once
 #include <atomic>
 #include <cstdint>
+#include <string_view>
 #include <utility>
 
 // The portable part of the native show hook. Skyrim owns its pause counter;
@@ -65,6 +66,29 @@ private:
 inline std::uint32_t Flags(std::uint32_t flags, bool worldInSession)
 {
   return worldInSession ? flags & ~(Pauses | FrozenBackground) : flags;
+}
+
+// THE FACE MENU KEEPS ITS PAUSE (Thornswood #6979). The RaceSex Menu brings
+// its own camera round to the character's front only while the game is
+// paused under it. With its pause taken off (this policy, 17 Nov) it opened
+// on the camera it found: first person, or behind the character's back.
+// Patrick's Dev start at 5:59 PM on 26 Nov logged "heading 180.0, camera
+// state 0" as it opened and "pauses 0" while it stood open, and his
+// screenshots show the hall's door with the face sliders beside it. The real
+// game run on build-1.3.89 (16 Nov, before this policy) caught the camera
+// already turning off the character's heading one second after the menu
+// opened; every run since shows it still looking straight ahead. Pausing it
+// costs nothing: a character in the face menu is standing in the creation
+// hall and has nothing in the world to keep up with.
+inline bool KeepsPause(std::string_view menu)
+{
+  return menu == "RaceSex Menu";
+}
+
+// Whether Show takes the pause off this menu: a live world, and not the face menu.
+inline bool Unpauses(bool worldInSession, std::string_view menu)
+{
+  return worldInSession && !KeepsPause(menu);
 }
 
 template <class Callback, class ReadFlags, class WriteFlags>

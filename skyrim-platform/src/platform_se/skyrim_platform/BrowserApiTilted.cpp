@@ -29,6 +29,10 @@ void QueueFocusMenu(bool open)
 // at kDataLoaded). Focus asked for before that is queued once it is.
 std::atomic<bool> g_focusMenuRegistered = false;
 
+// Whether ShowAtStart showed the page before any plugin could (Thornswood
+// #3129). WatchMenus focuses that page (Thornswood #6200).
+std::atomic<bool> g_shownAtStart = false;
+
 // Thornswood #6200: where the cursor comes up when the page takes focus. On
 // 16 Nov 2026 the page's first mouse move was at 3429,0 of a 3440x1440
 // window, 0.7 s after the focus was taken, and on 15 Nov at 3399,0: the top
@@ -118,15 +122,16 @@ Napi::Value BrowserApiTilted::SetFocused(const Napi::CallbackInfo& info)
 
 void BrowserApiTilted::ShowAtStart()
 {
-  // Thornswood: shown, not focused. Focus hands the page the game's mouse,
-  // keyboard and Cursor Menu, and nothing here can follow the Cursor Menu
-  // before the game's data has loaded (WatchMenus below). Focused from here,
-  // the page held the input on 31 Oct 2026 with the Cursor Menu closed: no
-  // cursor drawn, no mouse move reaching the page, the game itself deaf,
-  // and a click still landing at the middle of the screen, where it picked
-  // the character drawn there. Nothing on the page can act before a plugin
-  // runs anyway; the plugin that shows the choice focuses it then.
+  // Thornswood: shown, not focused yet. Focus hands the page the game's
+  // mouse, keyboard and Cursor Menu, and nothing here can give the page a
+  // cursor before the game's data has loaded. Focused from here, the page
+  // held the input on 31 Oct 2026 with the Cursor Menu closed: no cursor
+  // drawn, no mouse move reaching the page, the game itself deaf, and a
+  // click still landing at the middle of the screen, where it picked the
+  // character drawn there. WatchMenus gives it the focus at the data load,
+  // the moment the game has a cursor to give (Thornswood #6200).
   CEFUtils::DX11RenderHandler::Visible() = true;
+  g_shownAtStart = true;
 }
 
 namespace {
@@ -151,6 +156,16 @@ public:
     } else if (event->menuName == RE::CursorMenu::MENU_NAME) {
       LogCursor(event->opening ? "Cursor Menu opening"
                                : "Cursor Menu closing");
+    } else if (event->menuName == RE::MainMenu::MENU_NAME ||
+               event->menuName == RE::JournalMenu::MENU_NAME ||
+               event->menuName == RE::FaderMenu::MENU_NAME) {
+      // Thornswood #6885: after Quit to Main Menu from the Esc menu the
+      // plugins' 'update' stops, and with it every line they write, so the
+      // platform says itself which of the menus around a quit came and went.
+      auto ui = RE::UI::GetSingleton();
+      spdlog::info("{} {}, the game's pause count {}", event->menuName.c_str(),
+                   event->opening ? "opened" : "closed",
+                   ui ? static_cast<int>(ui->numPausesGame) : -1);
     }
     return RE::BSEventNotifyControl::kContinue;
   }
@@ -186,6 +201,33 @@ void BrowserApiTilted::WatchMenus()
     QueueFocusMenu(true);
   }
   LogCursor("game data loaded");
+
+  // Thornswood #6200. The mouse's motion made while the data loaded waits in
+  // the device until the game reads it again, and would move the cursor
+  // that comes up next by all of it at once (DInputHook.cpp says how that
+  // was measured). No cursor existed while it was made, so the next read
+  // moves nothing.
+  CEFUtils::DInputHook::ForgetMouseMotion();
+
+  // Thornswood #6200. The game opens its Cursor Menu with the main menu a
+  // few milliseconds after this, under the page shown at start, and the
+  // cursor is drawn over the page only while the page has the focus
+  // (DX11RenderHandler). The plugin that shows the choice focused it when it
+  // first ran, 1.4 to 22 seconds later (3.1 the median), so the game's cursor
+  // moved with the mouse all that while where nobody could see it. Read from
+  // 54 starts between 16 and 25 Nov 2026 (Read-CursorLines): in 17 the
+  // cursor had moved off the middle before the focus, and in 10 it was at an
+  // edge of the window when it was first drawn, Patrick's 3429,0 among them.
+  // A page shown at start is the first screen, so it takes the mouse here,
+  // the moment the game has a cursor to give it. The plugin's own
+  // setFocused(true) then finds it focused, and it lowers or keeps the focus
+  // from there as before. A pick made before the plugin is in is refused by
+  // the page itself (Thornswood #5140).
+  if (g_shownAtStart && IsVisible() && !focus) {
+    spdlog::info("browser: the page shown at start takes the focus as the "
+                 "game's cursor comes up");
+    SetFocusedImpl(true);
+  }
 }
 
 void BrowserApiTilted::OnLoadingMenu(bool opening)
@@ -208,9 +250,14 @@ void BrowserApiTilted::OnLoadingMenu(bool opening)
   app->ExecuteJavaScript(LoadingScreen::Script(opening));
 }
 
+bool BrowserApiTilted::HasInputFocus()
+{
+  return CEFUtils::DInputHook::ChromeFocus();
+}
+
 Napi::Value BrowserApiTilted::IsFocused(const Napi::CallbackInfo& info)
 {
-  return Napi::Boolean::New(info.Env(), CEFUtils::DInputHook::ChromeFocus());
+  return Napi::Boolean::New(info.Env(), HasInputFocus());
 }
 
 Napi::Value BrowserApiTilted::LoadUrl(const Napi::CallbackInfo& info)

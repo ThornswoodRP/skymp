@@ -1,5 +1,6 @@
 #pragma once
 #include "PapyrusTESModPlatform.h"
+#include "PlayerMovementLog.h"
 #include "SkyrimPlatform.h"
 #include "ThreadPoolWrapper.h"
 
@@ -29,6 +30,7 @@ private:
       SkyrimPlatform::GetSingleton()->JsTick(env, false);
     });
     TESModPlatform::Update();
+    LogPlayerMovement();
     TickHandler::GetSingleton()->Update();
   };
 

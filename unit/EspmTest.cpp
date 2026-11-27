@@ -1,7 +1,12 @@
 #include "TestUtils.hpp"
 #include "libespm/GroupUtils.h"
+#include "libespm/IDLE.h"
 #include "libespm/Loader.h"
+#include <algorithm>
 #include <catch2/catch_all.hpp>
+#include <cctype>
+#include <set>
+#include <unordered_map>
 
 extern espm::Loader& GetEspmLoader();
 
@@ -361,6 +366,22 @@ TEST_CASE("Loads Weapon", "[espm]")
   REQUIRE(npc->GetData(cache).weapData->weight == 9.f);
 }
 
+TEST_CASE("A key is an item, with its weight", "[espm]")
+{
+  // Thornswood #7171. KEYM RiftenConfiscatedGoodsChestKey; Skyrim's keys
+  // weigh nothing.
+  auto& br = GetEspmLoader().GetBrowser();
+  espm::CompressedFieldsCache cache;
+
+  auto form = br.LookupById(0x10e7e6);
+  REQUIRE(form.rec);
+  REQUIRE(form.rec->GetType() == espm::KEYM::kType);
+  REQUIRE(espm::utils::IsItem(form.rec->GetType()));
+  auto key = espm::Convert<espm::KEYM>(form.rec);
+  REQUIRE(key);
+  REQUIRE(key->GetData(cache).weight == 0.f);
+}
+
 TEST_CASE("Loads NPC factions", "[espm]")
 {
   enum
@@ -629,4 +650,108 @@ TEST_CASE("isFood flag is set for sweet roll", "[espm]")
   auto data = espm::GetData<espm::ALCH>(0x00064B3D, &provider);
   REQUIRE(data.isFood == true);
   REQUIRE(data.isPoison == false);
+}
+
+// Thornswood #4507: the killmoves are idles in the game's idle tree, and the
+// server picks one from them, so libespm reads IDLE. The numbers are the
+// masters' own: List-KillMoveIdles.py (Thornswood) reads the same 4154 idles,
+// 447 of them killmoves, from these files and from an AE install alike.
+TEST_CASE("IDLE parsing: the idle tree and a killmove's conditions",
+          "[espm][KillMove]")
+{
+  auto& br = GetEspmLoader().GetBrowser();
+  espm::CompressedFieldsCache cache;
+
+  const auto idles = br.GetDistinctRecordsByType("IDLE");
+  REQUIRE(idles.size() == 4154);
+
+  // Every idle by its load order id, to walk the tree up by ANAM.
+  std::unordered_map<uint32_t, std::pair<std::string, uint32_t>> tree;
+  for (const auto& idle : idles) {
+    const auto data =
+      reinterpret_cast<const espm::IDLE*>(idle.rec)->GetData(cache);
+    tree[idle.ToGlobalId(idle.rec->GetId())] = {
+      idle.rec->GetEditorId(cache), idle.ToGlobalId(data.parentId)
+    };
+  }
+
+  auto isKillMove = [&](uint32_t id) {
+    const auto lower = [](std::string s) {
+      std::transform(s.begin(), s.end(), s.begin(),
+                     [](unsigned char c) { return std::tolower(c); });
+      return s;
+    };
+    const auto& self =
+      reinterpret_cast<const espm::IDLE*>(br.LookupById(id).rec);
+    if (lower(self->GetData(cache).animationEvent).find("killmove") !=
+        std::string::npos) {
+      return true;
+    }
+    std::set<uint32_t> seen;
+    while (id && tree.count(id) && seen.insert(id).second) {
+      if (lower(tree[id].first).find("killmove") != std::string::npos) {
+        return true;
+      }
+      id = tree[id].second;
+    }
+    return false;
+  };
+  size_t killMoves = 0;
+  for (const auto& [id, _] : tree) {
+    killMoves += isKillMove(id) ? 1 : 0;
+  }
+  REQUIRE(killMoves == 447);
+
+  // Dragonborn's benthic lurker killmove: its event, its parent, and the
+  // weapon types it is for, which are ORed.
+  auto lurker = br.LookupById(0x04030caa);
+  REQUIRE(lurker.rec);
+  REQUIRE(lurker.rec->GetType() == "IDLE");
+  REQUIRE(lurker.rec->GetEditorId(cache) ==
+          std::string("1HMBenthicLurkerKillMoves"));
+  const auto lurkerData =
+    reinterpret_cast<const espm::IDLE*>(lurker.rec)->GetData(cache);
+  REQUIRE(lurkerData.animationEvent == "pa_KillMove1HMBenthicLurkerSlash");
+  REQUIRE(lurker.ToGlobalId(lurkerData.parentId) == 0x04030ca9);
+  REQUIRE(lurkerData.conditions.size() == 4);
+  for (size_t i = 0; i < 4; ++i) {
+    const auto& ctda = lurkerData.conditions[i].ctda;
+    REQUIRE(ctda.functionIndex == 597); // GetEquippedItemType
+    REQUIRE(ctda.GetOperator() == espm::CTDA::Operator::EqualTo);
+    REQUIRE(ctda.comparisonValue == static_cast<float>(i + 1));
+    REQUIRE(ctda.GetDefaultData().firstParameter == 1);
+    REQUIRE(ctda.runOnType == espm::CTDA::RunOnTypeFlags::Subject);
+    REQUIRE(ctda.GetFlags() ==
+            (i < 3 ? espm::CTDA::Flags::OR : espm::CTDA::Flags::ANDORDEFAULT));
+  }
+
+  // Its chain up the tree ends at the attack action's root.
+  std::vector<std::string> chain;
+  for (uint32_t id = 0x04030caa; id && tree.count(id); id = tree[id].second) {
+    chain.push_back(tree[id].first);
+    REQUIRE(chain.size() < 16);
+  }
+  REQUIRE(chain ==
+          std::vector<std::string>{
+            "1HMBenthicLurkerKillMoves", "KillMoveBenthicLurkerRoot",
+            "KillMoveFrontSideRoot00", "NonMountedCombatRight",
+            "AttackRightRoot" });
+
+  // KillMoveFrontSideRoot: a graph, 20 conditions, and a graph variable's
+  // name in the string parameter after its condition.
+  auto frontSide = br.LookupById(0x24cd4);
+  REQUIRE(frontSide.rec);
+  const auto frontSideData =
+    reinterpret_cast<const espm::IDLE*>(frontSide.rec)->GetData(cache);
+  REQUIRE(frontSideData.behaviorGraph ==
+          "Actors\\Character\\Behaviors\\0_Master.hkx");
+  REQUIRE(frontSideData.animationEvent.empty());
+  REQUIRE(frontSide.ToGlobalId(frontSideData.parentId) == 0x01000991);
+  REQUIRE(frontSideData.conditions.size() == 20);
+  REQUIRE(frontSideData.conditions[0].ctda.functionIndex == 720);
+  REQUIRE(frontSideData.conditions[0].firstStringParameter.empty());
+  REQUIRE(frontSideData.conditions[1].ctda.functionIndex == 675);
+  REQUIRE(frontSideData.conditions[1].firstStringParameter == "IsEquipping");
+  REQUIRE(frontSideData.conditions[1].ctda.GetOperator() ==
+          espm::CTDA::Operator::NotEqualTo);
 }

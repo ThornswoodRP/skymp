@@ -34,9 +34,12 @@
 #include <limits>
 #include <optional>
 #include <random>
+#include <set>
 #include <string>
+#include <unordered_map>
 
 #include "ChangeValuesMessage.h"
+#include "KillMoveMessage.h"
 #include "SetInventoryMessage.h"
 #include "TeleportMessage.h"
 #include "UpdateEquipmentMessage.h"
@@ -88,6 +91,13 @@ struct MpActor::Impl
   float serverMovementSpeed = 0;
   uint32_t serverCombatTarget = 0;
   std::chrono::steady_clock::time_point serverCombatUntil{};
+  // Thornswood #4507. See MpActor::SetPendingKillMove.
+  struct PendingKillMove
+  {
+    uint32_t killerId = 0;
+    uint32_t idleId = 0;
+  };
+  std::optional<PendingKillMove> pendingKillMove;
 
   // this is a hot fix attempt to make permanent restoration potions work
   std::chrono::system_clock::time_point nextRestorationTime{};
@@ -695,9 +705,13 @@ void MpActor::ReplaceEquipment(Equipment newEquipment)
 {
   newEquipment.numChanges = GetEquipment().numChanges + 1;
   SetEquipment(newEquipment);
+  PublishEquipment();
+}
 
+void MpActor::PublishEquipment()
+{
   UpdateEquipmentMessage msg;
-  msg.data = newEquipment;
+  msg.data = GetEquipment();
   msg.idx = GetIdx();
   // Once to each person near it (Thornswood #6252). A plain loop, not
   // SendMessageToActorListeners: this runs from Init (EquipBestWeapon), before
@@ -708,6 +722,34 @@ void MpActor::ReplaceEquipment(Equipment newEquipment)
       listener->SendToUser(msg, true);
     }
   }
+}
+
+bool MpActor::DropWornPiecesThePackLacks(Equipment& equipment,
+                                         const Inventory& pack)
+{
+  std::unordered_map<uint32_t, uint64_t> unitsLeft;
+  for (const auto& entry : pack.entries) {
+    unitsLeft[entry.baseId] += entry.count;
+  }
+  std::vector<Inventory::Entry> kept;
+  kept.reserve(equipment.inv.entries.size());
+  bool dropped = false;
+  for (const auto& entry : equipment.inv.entries) {
+    if (entry.count > 0 && entry.GetWorn() != Inventory::Worn::None) {
+      auto it = unitsLeft.find(entry.baseId);
+      if (it == unitsLeft.end() || it->second == 0) {
+        dropped = true;
+        continue;
+      }
+      --it->second;
+    }
+    kept.push_back(entry);
+  }
+  if (dropped) {
+    equipment.inv.entries = std::move(kept);
+    ++equipment.numChanges;
+  }
+  return dropped;
 }
 
 bool MpActor::RenameEquipment(const Equipment& renamed)
@@ -742,6 +784,18 @@ void MpActor::AddSpell(const uint32_t spellId)
   EditChangeForm([&](MpChangeForm& changeForm) {
     changeForm.learnedSpells.LearnSpell(spellId);
   });
+}
+
+void MpActor::LearnEnchantments(const std::vector<uint32_t>& effectIds)
+{
+  EditChangeForm([&](MpChangeForm& changeForm) {
+    changeForm.learnedEnchantments.insert(effectIds.begin(), effectIds.end());
+  });
+}
+
+std::set<uint32_t> MpActor::GetLearnedEnchantments() const
+{
+  return ChangeForm().learnedEnchantments;
 }
 
 void MpActor::RemoveSpell(const uint32_t spellId)
@@ -1071,6 +1125,13 @@ void MpActor::VisitProperties(CreateActorMessage& message,
   }
 
   message.props.learnedSpells = changeForm.learnedSpells.GetLearnedSpells();
+  // THORNSWOOD PATCH (Thornswood #4579). What disenchanting taught, which the
+  // client's fresh game knows nothing of. Left out when there is none.
+  if (!changeForm.learnedEnchantments.empty()) {
+    message.props.learnedEnchantments =
+      std::vector<uint32_t>(changeForm.learnedEnchantments.begin(),
+                            changeForm.learnedEnchantments.end());
+  }
 
   if (!changeForm.templateChain.empty()) {
     std::vector<uint32_t> templateChain;
@@ -1372,21 +1433,22 @@ void MpActor::ApplyChangeForm(const MpChangeForm& newChangeForm)
         changeForm.isRaceMenuOpen = true;
       }
 
-      // ActorValues does not refelect real base actor values set in esp/esm
-      // game files since new update
-      // this check is added only for test as a workaround. It is to be redone
-      // in the nearest future. TODO
+      // The base values (health, magicka, stamina and the rest) come from
+      // the esp/esm files, so a saved form never keeps a stale base. The
+      // percentages are the actor's own state and are kept as saved, for a
+      // character as for an NPC: replacing them put every character back at
+      // full health, magicka and stamina at each server start and each
+      // restore (Thornswood #7034). A dead character is respawned by
+      // PartOne::SetUserActor, which sets its respawn percentages.
       if (GetParent() && GetParent()->HasEspm()) {
         EnsureTemplateChainEvaluated(GetParent()->GetEspm(),
                                      Mode::NoRequestSave);
         const auto savedValues = changeForm.actorValues;
         changeForm.actorValues = GetBaseActorValues(
           GetParent(), GetBaseId(), GetRaceId(), changeForm.templateChain);
-        if (IsServerControlled()) {
-          changeForm.actorValues.healthPercentage = savedValues.healthPercentage;
-          changeForm.actorValues.magickaPercentage = savedValues.magickaPercentage;
-          changeForm.actorValues.staminaPercentage = savedValues.staminaPercentage;
-        }
+        changeForm.actorValues.healthPercentage = savedValues.healthPercentage;
+        changeForm.actorValues.magickaPercentage = savedValues.magickaPercentage;
+        changeForm.actorValues.staminaPercentage = savedValues.staminaPercentage;
       }
     },
     Mode::NoRequestSave);
@@ -1609,6 +1671,8 @@ void MpActor::NetSetPercentages(
       return;
     if (kept)
       actorValues.healthPercentage = *kept;
+    else if (aggressor)
+      SendPendingKillMove(*aggressor);
   }
   NetSendChangeValues(actorValues, avFilter);
   if (!HasRuntimeIdentity(runtimeIdentity) ||
@@ -1725,7 +1789,13 @@ bool MpActor::IsSpellLearnedFromBase(const uint32_t spellId) const
   const auto npcData = espm::GetData<espm::NPC_>(GetBaseId(), GetParent());
   const auto npc = GetParent()->GetEspm().GetBrowser().LookupById(GetBaseId());
 
-  const uint32_t raceId = npc.ToGlobalId(npcData.race);
+  // THORNSWOOD (#6716). The race is the actor's own (GetRaceId: the
+  // appearance's race, else the base record's through its templates), not
+  // the base record's. Every person is created on the Player record, whose
+  // race is Nord, so every person held the Nord power (Battle Cry) and no
+  // person of another race held their own (a Dunmer's Ancestor's Wrath was
+  // refused at the cast as not held).
+  const uint32_t raceId = GetRaceId();
 
   const auto raceData = espm::GetData<espm::RACE>(raceId, GetParent());
   const auto race = GetParent()->GetEspm().GetBrowser().LookupById(raceId);
@@ -1763,6 +1833,38 @@ bool MpActor::InheritsBaseSpell(uint32_t baseId,
     return true;
   }
   return spellType == espm::SPEL::SpellType::Ability;
+}
+
+bool MpActor::MayPickpocket(const MpActor& thief, const MpActor& mark)
+{
+  if (&thief == &mark || !thief.IsCreatedAsPlayer() ||
+      !mark.IsCreatedAsPlayer()) {
+    return false;
+  }
+  if (thief.IsDead() || mark.IsDead() || thief.IsDisabled() ||
+      mark.IsDisabled()) {
+    return false;
+  }
+  if (!thief.GetAnimationVariableBool("IsSneaking")) {
+    return false;
+  }
+  if (thief.GetCellOrWorld() != mark.GetCellOrWorld()) {
+    return false;
+  }
+  return (thief.GetPos() - mark.GetPos()).SqrLength() <=
+    kPickpocketReach * kPickpocketReach;
+}
+
+uint32_t MpActor::GetUnwornCount(uint32_t baseId) const
+{
+  const uint32_t carried = GetInventory().GetItemCount(baseId);
+  uint32_t worn = 0;
+  for (const auto& entry : GetEquipment().inv.entries) {
+    if (entry.baseId == baseId && entry.GetWorn() != Inventory::Worn::None) {
+      worn += entry.count;
+    }
+  }
+  return worn >= carried ? 0 : carried - worn;
 }
 
 std::vector<uint32_t> MpActor::GetSpellList() const
@@ -2177,8 +2279,6 @@ std::map<uint32_t, uint32_t> MpActor::EvaluateDeathItem()
     return {};
   }
 
-  constexpr int kPlayerCharacterLevel = 1;
-
   auto& loader = worldState->GetEspm();
 
   auto base = loader.GetBrowser().LookupById(GetBaseId());
@@ -2229,7 +2329,7 @@ std::map<uint32_t, uint32_t> MpActor::EvaluateDeathItem()
   const auto kCountMult = 1;
   auto map = LeveledListUtils::EvaluateListRecurse(
     loader.GetBrowser(), deathItemLookupRes, kCountMult,
-    kPlayerCharacterLevel);
+    LeveledListUtils::kPlayerCharacterLevel);
   return map;
 }
 
@@ -2327,6 +2427,11 @@ void MpActor::Kill(MpActor* killer, bool shouldTeleport)
     ? killer->GetParent()->LookupFormById(killer->GetFormId()) : nullptr;
   if (killer && keepKiller.get() != killer) return;
   const auto killerLife = killer ? killer->GetRuntimeLifeIdentity() : 0;
+
+  // Thornswood #4507. A killmove held for this death was sent before the
+  // zero (NetSetPercentages); one held but not used ends here.
+  pImpl->pendingKillMove.reset();
+
   if (!SendAndSetDeathState(true, shouldTeleport)) return;
 
   const auto runtimeIdentity = GetRuntimeIdentity();
@@ -2339,6 +2444,48 @@ void MpActor::Kill(MpActor* killer, bool shouldTeleport)
   deathEvent.Fire(GetParent());
 
   if (HasRuntimeIdentity(runtimeIdentity)) AddDeathItem(runtimeIdentity);
+}
+
+void MpActor::SetPendingKillMove(uint32_t killerId, uint32_t idleId)
+{
+  pImpl->pendingKillMove = Impl::PendingKillMove{ killerId, idleId };
+}
+
+void MpActor::ClearPendingKillMove()
+{
+  pImpl->pendingKillMove.reset();
+}
+
+// Thornswood #4507. The death goes through (mp.onDying let it), so the pair
+// goes to everybody who sees the target, the target's and the killer's own
+// machines included, before the zero and before the death: each machine
+// knows the death comes by the pair when they arrive. Reliable messages to
+// one machine arrive in the order they were sent.
+void MpActor::SendPendingKillMove(MpActor& killer)
+{
+  const auto killMove = pImpl->pendingKillMove;
+  pImpl->pendingKillMove.reset();
+  if (!killMove || killMove->killerId != killer.GetFormId()) {
+    return;
+  }
+  KillMoveMessage message;
+  message.idx = killer.GetIdx();
+  message.targetIdx = GetIdx();
+  message.idle = killMove->idleId;
+  std::set<Networking::UserId> recipients;
+  auto sendTo = [&](MpActor& actor) {
+    const auto user = actor.GetUserId();
+    if (user != Networking::InvalidUserId && recipients.insert(user).second) {
+      actor.SendToUser(message, true);
+    }
+  };
+  VisitCurrentActorListeners(sendTo);
+  sendTo(*this);
+  sendTo(killer);
+  spdlog::trace("MpActor::SendPendingKillMove {:x} - killmove {:x} by {:x} "
+                "sent to {} machines",
+                GetFormId(), killMove->idleId, killer.GetFormId(),
+                recipients.size());
 }
 
 void MpActor::RespawnWithDelay(bool shouldTeleport)
@@ -2752,9 +2899,21 @@ void MpActor::DropItem(const uint32_t baseId, const Inventory::Entry& entry)
   auto aForcePersist = VarValue(false);
   auto aInitiallyDisabled = VarValue(false);
 
-  VarValue placedObjectWrap = papyrusObjectReference.PlaceAtMe(
+  // THORNSWOOD PATCH (Thornswood #6718). Whose drop it is, so the dropper's
+  // own client makes it theirs (PartOne, droppedByMe). The game's own drop
+  // would have, and that is the one dropItemService deletes. Only a
+  // character's: an NPC's id is a load order id and no client is an NPC.
+  // Set before the drop is shown: PlaceAtMe sends the create messages.
+  const bool byCharacter = IsCreatedAsPlayer();
+  const uint32_t dropperId = GetFormId();
+  VarValue placedObjectWrap = papyrusObjectReference.PlaceAtMeBeforeShown(
     this->ToVarValue(),
-    { baseForm, aCount, aForcePersist, aInitiallyDisabled });
+    { baseForm, aCount, aForcePersist, aInitiallyDisabled },
+    [byCharacter, dropperId](MpObjectReference& placed) {
+      if (byCharacter) {
+        placed.SetDroppedBy(dropperId);
+      }
+    });
   MpObjectReference* placedObject =
     GetFormPtr<MpObjectReference>(placedObjectWrap);
 

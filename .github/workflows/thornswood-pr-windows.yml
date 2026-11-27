@@ -194,7 +194,11 @@ env:
 jobs:
   # The client's view harnesses (Thornswood #2328, #2382): the real
   # modelApplyUtils.ts over a stand-in game with latent enable and disable.
-  # Node 22 strips the TypeScript types itself, so nothing is installed.
+  # Every skymp5-client/test-*.js and skymp5-server/tests/*.js runs through
+  # misc/thornswood/run-js-tests.js, and test-every-test-runs.js fails on a
+  # test that nothing runs (Thornswood #7100): until 27 Nov ten of the twelve
+  # client tests and every server test ran nowhere. Some of them load the
+  # TypeScript compiler or the server's packages, so both are installed.
   client-view-tests:
     runs-on: ubuntu-24.04
     permissions:
@@ -206,8 +210,14 @@ jobs:
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: '22'
-      - name: Disabled and harvested references, trees and flora
-        run: node skymp5-client/test-disabled-stays.js
+      - name: Every engine test is run by something, or says why not
+        run: node misc/thornswood/test-every-test-runs.js
+      - name: Install the client's and the server's packages
+        run: |
+          yarn --cwd skymp5-client install --frozen-lockfile --ignore-scripts
+          yarn --cwd skymp5-server install --frozen-lockfile --ignore-scripts
+      - name: Every client test and server test
+        run: node misc/thornswood/run-js-tests.js
       - name: The browser is shown at start, focused only by a plugin
         run: node misc/tests/node/test_browser_start_focus.js
       - name: The page's focus is a menu the game keeps the cursor for
@@ -216,6 +226,12 @@ jobs:
         run: node misc/tests/node/test_journal_menu_unpaused.js
       - name: The update event's Papyrus call opens its way when it ends
         run: node misc/tests/node/test_papyrus_update_way_native.js
+      - name: The character's movement state is logged when it changes
+        run: node misc/tests/node/test_character_state_log_native.js
+      - name: A plugin's call into a script's own function is settled once
+        run: node misc/tests/node/test_run_script_function_native.js
+      - name: A killmove's conditions combine and order as the game takes them
+        run: node misc/tests/node/test_kill_move_fit_native.js
       - name: The Mongo readiness probe leaves its database directory alone
         run: node misc/tests/node/test_mongo_readiness_probe.js
   save-directory-linux:
@@ -240,6 +256,20 @@ jobs:
             -I skyrim-platform/src/platform_lib \
             misc/tests/gameplay_menu_test.cpp -o "$RUNNER_TEMP/gameplay-menu-test"
           "$RUNNER_TEMP/gameplay-menu-test"
+      - name: A mapped inventory key requests a close only for the open menu
+        shell: bash
+        run: |
+          g++ -std=c++17 -Wall -Wextra -Werror \
+            -I skyrim-platform/src/platform_lib \
+            misc/tests/inventory_shortcut_test.cpp -o "$RUNNER_TEMP/inventory-shortcut-test"
+          "$RUNNER_TEMP/inventory-shortcut-test"
+      - name: A delivered interaction set still cancels its queued load (Thornswood #6884)
+        shell: bash
+        run: |
+          g++ -std=c++17 -Wall -Wextra -Werror \
+            -I skyrim-platform/src/platform_lib \
+            misc/tests/interaction_load_patch_test.cpp -o "$RUNNER_TEMP/interaction-load-patch-test"
+          "$RUNNER_TEMP/interaction-load-patch-test"
       - name: Check POSIX directory initialization
         shell: bash
         run: |

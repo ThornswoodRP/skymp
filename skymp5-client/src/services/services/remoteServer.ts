@@ -29,11 +29,13 @@ import { Inventory, acceptPreloadedInventoryBase, applyInventory, getDiff, getIn
 import { inventoryApplyPending, inventoryApplyFence, cancelInventoryApplication, cancelAllInventoryApplications } from '../../sync/inventoryApplyCoordinator';
 import { Movement, Transform } from '../../sync/movement';
 import { learnSpells, removeAllSpells } from '../../sync/spell';
+import { markEnchantmentsKnown } from '../../sync/enchantments';
 import { ModelApplyUtils } from '../../view/modelApplyUtils';
 import { FormModel, WorldModel } from '../../view/model';
 import { LoadGameService } from './loadGameService';
 import { UpdateMovementMessage } from '../messages/updateMovementMessage';
 import { ChangeValuesMessage } from '../messages/changeValuesMessage';
+import { KillMoveMessage } from '../messages/killMoveMessage';
 import { UpdateAnimationMessage } from '../messages/updateAnimationMessage';
 import { UpdateEquipmentMessage } from '../messages/updateEquipmentMessage';
 import { RagdollService } from './ragdollService';
@@ -181,6 +183,7 @@ export class RemoteServer extends ClientListener {
     this.controller.emitter.on("destroyActorMessage", (e) => this.onDestroyActorMessage(e));
     this.controller.emitter.on("setRaceMenuOpenMessage", (e) => this.onSetRaceMenuOpenMessage(e));
     this.controller.emitter.on("updatePropertyMessage", (e) => this.onUpdatePropertyMessage(e));
+    this.controller.emitter.on("killMoveMessage", (e) => this.onKillMoveMessage(e));
     this.controller.emitter.on("deathStateContainerMessage", (e) => this.onDeathStateContainerMessage(e));
 
     this.controller.emitter.on("connectionAccepted", () => this.handleConnectionAccepted());
@@ -250,9 +253,10 @@ export class RemoteServer extends ClientListener {
 
   private onOpenContainerMessage(event: ConnectionMessage<OpenContainerMessage>): void {
     const epoch = this.ownerSpawnEpoch;
+    const request = this.containerOpenRequest = {};
     once('update', async () => {
       await Utility.wait(0.1); // Give a chance to update inventory
-      if (epoch !== this.ownerSpawnEpoch) { return; }
+      if (epoch !== this.ownerSpawnEpoch || this.containerOpenRequest !== request) { return; }
 
       const remoteId = event.message.target;
       const localId = remoteIdToLocalId(remoteId);
@@ -265,25 +269,76 @@ export class RemoteServer extends ClientListener {
 
       const requestedType = refr.getBaseObject()?.getType();
       const requestedBase = refr.getBaseObject()?.getFormID();
-      // A container's transfer baseline must not precede later grant units.
+      const currentTarget = (): ObjectReference | null => {
+        if (epoch !== this.ownerSpawnEpoch || this.containerOpenRequest !== request || remoteIdToLocalId(remoteId) !== localId) return null;
+        const current = ObjectReference.from(Game.getFormEx(localId));
+        if (!current || current.getBaseObject()?.getType() !== requestedType || current.getBaseObject()?.getFormID() !== requestedBase) return null;
+        if (requestedType === FormType.NPC) {
+          const actor = Actor.from(current);
+          if (!actor || actor.isDead() || actor.isDisabled()) return null;
+        }
+        return current;
+      };
+      // A container/person transfer baseline must not precede later grant units.
       // It shares the whole-job gate with furniture before native activation.
-      if (requestedType === FormType.Furniture || requestedType === FormType.Container) {
+      if (requestedType === FormType.Furniture || requestedType === FormType.Container || requestedType === FormType.NPC) {
         if (!await this.packBeforeBench()) { return; }
-        if (epoch !== this.ownerSpawnEpoch) { return; }
         // SP3 wrappers expire on Papyrus updates. Keep the id across the
         // inventory wait, then resolve again in the current update.
-        const currentLocalId = remoteIdToLocalId(remoteId);
-        if (currentLocalId !== localId) return;
-        refr = ObjectReference.from(Game.getFormEx(currentLocalId));
-        if (refr === null || refr.getBaseObject()?.getType() !== requestedType || refr.getBaseObject()?.getFormID() !== requestedBase) {
+        refr = currentTarget();
+        if (refr === null) {
           logError(this, 'onOpenContainerMessage - furniture left while waiting for inventory', 'remoteId', remoteId.toString(16));
           return;
         }
       }
 
+      /*
+        THORNSWOOD (Thornswood #6622). Pickpocketing is between people only.
+        The server opens another person's pack to a sneaking person who
+        pressed them, with the pack sent just before (MpObjectReference,
+        ProcessActivateNormal). This game never puts somebody else's pack on
+        their character (FormView applies a pack only to what is not an
+        actor), so it is put there now, and the press below is the game's
+        own: a sneaking press on a character opens the steal window over
+        that pack, and the game rolls each take. A take comes back as a
+        TakeItem from that person (ContainersService).
+      */
+      const npcMark = refr.getBaseObject()?.getType() === FormType.NPC ? Actor.from(refr) : null;
+      if (npcMark) {
+        const markModel = this.worldModel.forms.find((f) => f?.refrId === remoteId);
+        if (!markModel?.inventory || markModel.isDead === true || markModel.isDisabled === true || npcMark.getFormID() === 0x14) {
+          logError(this, 'onOpenContainerMessage - no pack for the person', 'remoteId', remoteId.toString(16));
+          return;
+        }
+        const markInventory = markModel.inventory;
+        ModelApplyUtils.applyModelInventory(npcMark, markInventory);
+        const targetRan = inventoryApplyFence(localId);
+        const targetStillCurrent = () => {
+          const pc = Game.getPlayer();
+          return !!pc && !pc.isDead() && !pc.isDisabled() && !!currentTarget() &&
+            this.worldModel.forms.find((f) => f?.refrId === remoteId) === markModel &&
+            markModel.inventory === markInventory && markModel.isDead !== true && markModel.isDisabled !== true;
+        };
+        if (!await this.inventoryQueueRan(localId, targetStillCurrent)) {
+          // Do not cancel a replacement request's job at the same local id.
+          if (this.containerOpenRequest === request && targetRan.isCurrent()) {
+            cancelInventoryApplication(localId);
+          }
+          return;
+        }
+        // A grant can arrive while the other person's pack is being filled.
+        // Both complete jobs and the latest real owner baseline must agree.
+        if (!await this.packBeforeBench()) return;
+        refr = currentTarget();
+        const latestModel = this.worldModel.forms.find((f) => f?.refrId === remoteId);
+        if (!refr || !targetRan.isCurrent() || !targetRan() || latestModel !== markModel ||
+            latestModel.inventory !== markInventory || latestModel.isDead === true || latestModel.isDisabled === true ||
+            getDiff(markInventory, getInventory(refr), true).entries.length !== 0) return;
+      }
+
       const currentPlayer = Game.getPlayer();
-      if (!currentPlayer) return;
-      if (requestedType === FormType.Container) {
+      if (!currentPlayer || requestedType === FormType.NPC && (currentPlayer.isDead() || currentPlayer.isDisabled())) return;
+      if (requestedType === FormType.Container || requestedType === FormType.NPC) {
         this.controller.lookupListener(LastInvService).lastInv = getInventory(currentPlayer);
       }
       refr.activate(currentPlayer, true);
@@ -294,7 +349,8 @@ export class RemoteServer extends ClientListener {
       let functionChecker: (() => boolean) | null = null;
       let factName = "";
       let delaySeconds = -1.0;
-      if (baseType === FormType.Container) {
+      if (baseType === FormType.Container || baseType === FormType.NPC) {
+        // A person's pack in the steal window is the same menu (#6622).
         functionChecker = () => Ui.isMenuOpen("ContainerMenu");
         factName = "'ContainerMenu open'";
         delaySeconds = 0.0;
@@ -393,13 +449,13 @@ export class RemoteServer extends ClientListener {
     return !!current && !!latest && latest === inv && getDiff(latest, getInventory(current), true).entries.length === 0;
   }
 
-  private async inventoryQueueRan(): Promise<boolean> {
-    const ran = inventoryApplyFence(0x14);
+  private async inventoryQueueRan(refrId = 0x14, isCurrent: () => boolean = () => true): Promise<boolean> {
+    const ran = inventoryApplyFence(refrId);
     const epoch = this.ownerSpawnEpoch;
-    while (epoch === this.ownerSpawnEpoch && ran.isCurrent() && !ran()) {
+    while (epoch === this.ownerSpawnEpoch && ran.isCurrent() && isCurrent() && !ran()) {
       await Utility.wait(0.05);
     }
-    return epoch === this.ownerSpawnEpoch && ran.isCurrent() && ran();
+    return epoch === this.ownerSpawnEpoch && ran.isCurrent() && isCurrent() && ran();
   }
 
   private onTeleportMessage(event: ConnectionMessage<TeleportMessage> | ConnectionMessage<TeleportMessage2>): void {
@@ -834,6 +890,19 @@ export class RemoteServer extends ClientListener {
             );
           }
         });
+      });
+    }
+
+    // THORNSWOOD PATCH (Thornswood #4579). What disenchanting taught this
+    // character, kept by the server, marked known in this fresh game.
+    if (msg.isMe && msg.props && msg.props.learnedEnchantments) {
+      const learnedEnchantments = msg.props.learnedEnchantments;
+      once('update', () => {
+        if (!ownerIsCurrent()) { return; }
+        const marked = markEnchantmentsKnown(learnedEnchantments);
+        logTrace(this,
+          `player learnedEnchantments:`, JSON.stringify(learnedEnchantments), `marked`, marked,
+        );
       });
     }
 
@@ -1279,6 +1348,33 @@ export class RemoteServer extends ClientListener {
     });
   }
 
+  // Thornswood #4507. The server picked a killmove for a melee hit that
+  // kills. It comes before the death, so DeathService knows the death comes
+  // by the pair when it arrives.
+  private onKillMoveMessage(event: ConnectionMessage<KillMoveMessage>): void {
+    const msg = event.message;
+    const actorOf = (idx: number): Actor | null => {
+      const id = this.getIdManager().getId(idx);
+      if (id === this.getWorldModel().playerCharacterFormIdx) {
+        return Game.getPlayer();
+      }
+      const form = this.worldModel.forms[id];
+      if (form === undefined || !form.refrId) {
+        return null;
+      }
+      return Actor.from(Game.getFormEx(remoteIdToLocalId(form.refrId)));
+    };
+    once('update', () => {
+      const attacker = actorOf(msg.idx);
+      const target = actorOf(msg.targetIdx);
+      if (!attacker || !target) {
+        logTrace(this, `onKillMoveMessage - actors not here`, msg.idx, msg.targetIdx);
+        return;
+      }
+      this.controller.emitter.emit("applyKillMoveEvent", { attacker, target, idle: msg.idle });
+    });
+  }
+
   private handleConnectionAccepted(): void {
     cancelAllInventoryApplications();
     this.cancelOwnerSpawn();
@@ -1549,6 +1645,7 @@ export class RemoteServer extends ClientListener {
   private masterRefFlags = new Map<number, { harvested: boolean, disabled: boolean }>();
   private teleportsOnTheirWay = new Map<number, { msg: TeleportMessage | TeleportMessage2, isMyCharacter: boolean }>();
   private ownerSpawnEpoch = 0;
+  private containerOpenRequest?: object;
   private ownerSpawnReady?: Promise<boolean>;
   private finishOwnerSpawn?: (ready: boolean) => void;
   private ownerInventory?: Inventory;

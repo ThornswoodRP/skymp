@@ -5,6 +5,7 @@ import { SendRawMessageEvent } from "./sendRawMessageEvent";
 import { AnyMessage } from "../messages/anyMessage";
 import { SendMessageWithRefrIdEvent } from "./sendMessageWithRefrIdEvent";
 import { ApplyDeathStateEvent } from "./applyDeathStateEvent";
+import { ApplyKillMoveEvent } from "./applyKillMoveEvent";
 import { ConnectionFailed } from "./connectionFailed";
 import { ConnectionDenied } from "./connectionDenied";
 import { ConnectionAccepted } from "./connectionAccepted";
@@ -17,6 +18,7 @@ import { OpenContainerMessage } from "../messages/openContainerMessage";
 import { ChangeValuesMessage } from "../messages/changeValuesMessage";
 import { CreateActorMessage } from "../messages/createActorMessage";
 import { DestroyActorMessage } from "../messages/destroyActorMessage";
+import { KillMoveMessage } from "../messages/killMoveMessage";
 import { SetRaceMenuOpenMessage } from "../messages/setRaceMenuOpenMessage";
 import { SpSnippetMessage } from "../messages/spSnippetMessage";
 import { TeleportMessage } from "../messages/teleportMessage";
@@ -50,6 +52,7 @@ type EventTypes = {
     'sendMessageWithRefrId': [SendMessageWithRefrIdEvent<AnyMessage>],
 
     'applyDeathStateEvent': [ApplyDeathStateEvent],
+    'applyKillMoveEvent': [ApplyKillMoveEvent],
 
     'connectionFailed': [ConnectionFailed],
     'connectionDenied': [ConnectionDenied],
@@ -76,7 +79,8 @@ type EventTypes = {
     'updatePropertyMessage': [ConnectionMessage<UpdatePropertyMessage>],
     'deathStateContainerMessage': [ConnectionMessage<DeathStateContainerMessage>],
     'teleportMessage2': [ConnectionMessage<TeleportMessage2>],
-    'customPacketMessage': [ConnectionMessage<CustomPacketMessage>]
+    'customPacketMessage': [ConnectionMessage<CustomPacketMessage>],
+    'killMoveMessage': [ConnectionMessage<KillMoveMessage>]
 
     'browserWindowLoaded': [BrowserWindowLoadedEvent],
     'authAttempt': [AuthAttemptEvent],

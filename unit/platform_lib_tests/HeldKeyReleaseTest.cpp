@@ -1,6 +1,7 @@
 #include <catch2/catch_all.hpp>
 
 #include "HeldKeyRelease.h"
+#include "TestIds.h"
 
 #include <array>
 #include <cstdint>
@@ -18,7 +19,6 @@
 namespace {
 constexpr uint32_t kShift = 42;
 constexpr uint32_t kP = 25;
-constexpr uint32_t kK = 37;
 constexpr uint32_t kTab = 15;
 constexpr uint32_t kE = 18;
 

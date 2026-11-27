@@ -3,6 +3,7 @@ if(BUILD_UNIT_TESTS AND NOT EMSCRIPTEN)
 
   include(${CMAKE_SOURCE_DIR}/cmake/add_papyrus_library_ck.cmake)
   include(${CMAKE_SOURCE_DIR}/cmake/apply_default_settings.cmake)
+  include(${CMAKE_SOURCE_DIR}/cmake/thornswood_unity_build.cmake)
 
   #
   # papyrus_test_files
@@ -37,6 +38,8 @@ if(BUILD_UNIT_TESTS AND NOT EMSCRIPTEN)
     target_link_libraries(unit PUBLIC platform_lib)
   endif()
   apply_default_settings(TARGETS unit)
+  # THORNSWOOD: compiled in batches (Thornswood #7247, cmake/thornswood_unity_build.cmake says why)
+  thornswood_unity_build(TARGETS unit)
   list(APPEND VCPKG_DEPENDENT unit)
 
   if(SKYRIM_SE)
@@ -64,6 +67,18 @@ if(BUILD_UNIT_TESTS AND NOT EMSCRIPTEN)
   target_include_directories(gameplay-menu-test PRIVATE "${CMAKE_SOURCE_DIR}/skyrim-platform/src/platform_lib")
   apply_default_settings(TARGETS gameplay-menu-test)
   add_test(NAME gameplay_menu COMMAND gameplay-menu-test)
+
+  # The angles sp.setCameraFOV takes (Thornswood #7200).
+  add_executable(camera-fov-test "${CMAKE_SOURCE_DIR}/misc/tests/camera_fov_test.cpp")
+  target_include_directories(camera-fov-test PRIVATE "${CMAKE_SOURCE_DIR}/skyrim-platform/src/platform_lib")
+  apply_default_settings(TARGETS camera-fov-test)
+  add_test(NAME camera_fov COMMAND camera-fov-test)
+
+  # The furniture load cancel (Thornswood #6884), run on the game's own bytes.
+  add_executable(interaction-load-patch-test "${CMAKE_SOURCE_DIR}/misc/tests/interaction_load_patch_test.cpp")
+  target_include_directories(interaction-load-patch-test PRIVATE "${CMAKE_SOURCE_DIR}/skyrim-platform/src/platform_lib")
+  apply_default_settings(TARGETS interaction-load-patch-test)
+  add_test(NAME interaction_load_patch COMMAND interaction-load-patch-test)
 
   # The private ledger writer has no game-data dependency. Exercise the
   # actual platform file/rename barriers rather than a mocked acknowledgement.

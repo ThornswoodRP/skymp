@@ -72,6 +72,12 @@ public:
   Inventory inv;
   LearnedSpells learnedSpells;
 
+  // THORNSWOOD PATCH (Thornswood #4579). The magic effects a disenchant at an
+  // arcane enchanter taught this character, by global form id. Skyrim keeps
+  // what was learned only in the client's own game, which a session starts
+  // fresh, so it is kept here and handed back on arrival.
+  std::set<uint32_t> learnedEnchantments;
+
   bool isHarvested = false;
   bool isOpen = false;
   bool baseContainerAdded = false;
@@ -137,6 +143,15 @@ public:
   std::optional<Inventory::ExtraData> pickupExtra;
   uint64_t deleteDatetime = 0;
 
+  // THORNSWOOD PATCH (Thornswood #6718). The character who dropped this
+  // reference, by form id, or 0. Only a character's drop is kept (their ids
+  // are the server's own, 0xff000000 and up, so no load order moves them).
+  // The server places a dropped item itself and every client spawns it with
+  // no owner, which in a shop reads as the shop's: the dropper's client makes
+  // it theirs from this (PartOne's droppedByMe). Saved, so it is still theirs
+  // after a restart, for as long as the drop lasts.
+  uint32_t droppedBy = 0;
+
   static nlohmann::json PickupExtraToJson(
     const std::optional<Inventory::ExtraData>& extra);
 
@@ -155,7 +170,8 @@ public:
       magickaRespawnPercentage, staminaRespawnPercentage, spawnPoint,
       dynamicFields, spawnDelay, learnedSpells, templateChain, lastAnimation,
       setNodeTextureSet, setNodeScale, displayName,
-      PickupExtraToJson(pickupExtra), deleteDatetime);
+      PickupExtraToJson(pickupExtra), deleteDatetime, learnedEnchantments,
+      droppedBy);
   }
 
   static nlohmann::json ToJson(const MpChangeFormREFR& changeForm);

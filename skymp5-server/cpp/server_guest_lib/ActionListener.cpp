@@ -6,6 +6,7 @@
 #include "Exceptions.h"
 #include "GetBaseActorValues.h"
 #include "HitData.h"
+#include "KillMoves.h"
 #include "MathUtils.h"
 #include "MovementValidation.h"
 #include "MpObjectReference.h"
@@ -23,6 +24,7 @@
 #include <cmath>
 #include <fmt/format.h>
 #include <fmt/ranges.h>
+#include <limits>
 #include <spdlog/spdlog.h>
 #include <unordered_set>
 
@@ -157,6 +159,25 @@ void ActionListener::OnCustomPacket(const RawMessageData& rawMsgData,
   auto packetType = content["customPacketType"].get_string();
   if (!packetType.error() && packetType.value() == "craftLeave") {
     craftService->StopWork(rawMsgData.userId);
+    return;
+  }
+
+  // THORNSWOOD PATCH (Thornswood #4579). A disenchant at an arcane enchanter,
+  // which no craft ever carries. See CraftService::Disenchant.
+  if (!packetType.error() && packetType.value() == "disenchant") {
+    auto workbench = content["workbench"].get_uint64();
+    auto baseId = content["baseId"].get_uint64();
+    if (workbench.error() || baseId.error() ||
+        workbench.value() > std::numeric_limits<uint32_t>::max() ||
+        baseId.value() > std::numeric_limits<uint32_t>::max()) {
+      spdlog::warn("ActionListener::OnCustomPacket - a disenchant from user "
+                   "{} names no workbench or piece",
+                   rawMsgData.userId);
+      return;
+    }
+    craftService->Disenchant(rawMsgData.userId,
+                             static_cast<uint32_t>(workbench.value()),
+                             static_cast<uint32_t>(baseId.value()));
     return;
   }
 
@@ -1624,13 +1645,22 @@ void ActionListener::OnHit(const RawMessageData& rawMsgData,
     return;
   }
 
-  if (aggressor->GetInventory().HasItem(hitData.source) == false) {
-    spdlog::debug("{:x} actor has no {:x} weapon and can't attack",
-                  hitData.aggressor, hitData.source);
+  // THORNSWOOD (Thornswood #6489). A hit with a weapon the server's
+  // equipment record does not list does no damage. Said at info, with what
+  // the record lists, because "axe blows do no damage" could not be told
+  // apart from anything else while this was a debug line no server writes.
+  std::string worn;
+  for (const auto& entry : equipment.inv.entries) {
+    if (entry.GetWorn() != Inventory::Worn::None) {
+      worn += fmt::format("{}{:x}", worn.empty() ? "" : ",", entry.baseId);
+    }
   }
-
-  spdlog::debug("{:x} weapon is not equipped by {:x} actor and cannot be used",
-                hitData.source, hitData.aggressor);
+  spdlog::info("ActionListener::OnHit {:x} - hit on {:x} with {:x} refused: "
+               "not in the equipment record (worn: {}), in the pack: {}",
+               hitData.aggressor, hitData.target, hitData.source,
+               worn.empty() ? "nothing" : worn,
+               aggressor->GetInventory().HasItem(hitData.source) ? "yes"
+                                                                 : "no");
 }
 
 void ActionListener::OnUpdateAnimVariables(
@@ -1922,6 +1952,26 @@ void ActionListener::OnWeaponHit(MpActor* aggressor,
     currentActorValues.healthPercentage < 0.f
     ? 0.f
     : currentActorValues.healthPercentage;
+
+  // Thornswood #4507. The killmove this swing asks for is held on the target
+  // only while this one write runs; MpActor::Kill plays it if the write's
+  // death goes through. A refused death (mp.onDying: somebody going down)
+  // never plays one.
+  struct KillMoveScope
+  {
+    MpActor& target;
+    ~KillMoveScope() { target.ClearPendingKillMove(); }
+  } killMoveScope{ targetActor };
+  if (hitData.killMoves && !hitData.killMoves->empty() &&
+      !hitData.isBashAttack && !hitData.isHitBlocked &&
+      currentActorValues.healthPercentage <= 0.f) {
+    auto& espm = partOne.worldState.GetEspm();
+    if (const auto idle =
+          KillMoves::Pick(espm.GetBrowser(), partOne.worldState.GetEspmCache(),
+                          *hitData.killMoves, hitData.isPowerAttack)) {
+      targetActor.SetPendingKillMove(aggressor->GetFormId(), *idle);
+    }
+  }
 
   targetActor.NetSetPercentages(
     currentActorValues, aggressor,

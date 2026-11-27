@@ -88,6 +88,11 @@ export class NetworkingService extends ClientListener {
           this.reconnect();
           break;
         case "disconnect":
+          // THORNSWOOD (Thornswood #6568): which end it was, a server that
+          // closed the connection or one that stopped answering, so a lost
+          // connection can be told from a kick in this game's log and matched
+          // to the server's "user N left" line.
+          logTrace(this, "disconnected: " + (error || "no reason given"));
           this.controller.emitter.emit("connectionDisconnect", {});
           this.reconnect();
           break;
@@ -191,6 +196,10 @@ export class NetworkingService extends ClientListener {
           } else if (msgAny.t === MsgType.Teleport2) {
             const event = { message: msgAny };
             this.controller.emitter.emit("teleportMessage2", event);
+            this.controller.emitter.emit("anyMessage", event);
+          } else if (msgAny.t === MsgType.KillMove) {
+            const event = { message: msgAny };
+            this.controller.emitter.emit("killMoveMessage", event);
             this.controller.emitter.emit("anyMessage", event);
           } else {
             // throw new NeverError(msgAny);

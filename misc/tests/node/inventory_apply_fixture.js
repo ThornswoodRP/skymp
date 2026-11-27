@@ -36,17 +36,19 @@ exports.install=function(sp,reference){
   let budget=16;
   for(const scope of scopes){
    while(scope.value==='pending'){
+    const currentReference=sp.ObjectReference.from(sp.Game.getFormEx(scope.id));
+    if(!currentReference){scope.cancel();break;}
     if(scope.id===0x14&&menuPolicy.ownerInventoryMenuBlocked())break;
     const e=scope.descriptors[scope.at];
     if(scope.refresh){
-     if(budget<1)break;budget--;sp.Actor.from(reference)?.queueNiNodeUpdate();scope.refresh=false;
+     if(budget<1)break;budget--;sp.Actor.from(currentReference)?.queueNiNodeUpdate();scope.refresh=false;
      if(++scope.at===scope.descriptors.length){scope.value='drained';break;}
      scope.left=scope.descriptors[scope.at].count;continue;
     }
     const cost=e.worn||e.wornLeft?2:1;if(budget<cost)break;budget-=cost;
     const n=Math.min(scope.left,e.quantityPerUnit);
     if(e.worn||e.wornLeft)sp.TESModPlatform.pushWornState(e.worn,e.wornLeft);
-    try{sp.TESModPlatform.addItemEx(reference,sp.Game.getFormEx(e.baseId),n,e.health,
+    try{sp.TESModPlatform.addItemEx(currentReference,sp.Game.getFormEx(e.baseId),n,e.health,
      e.enchantmentId?sp.Enchantment.from(sp.Game.getFormEx(e.enchantmentId)):null,e.maxCharge,e.removeEnchantmentOnUnequip,e.chargePercent,e.name,e.soul,
      e.poisonId?sp.Potion.from(sp.Game.getFormEx(e.poisonId)):null,e.poisonCount);
     }catch(error){scope.value='uncertain';break;}

@@ -153,7 +153,7 @@ const death = load(DEATH, {
   './ragdollService': { RagdollService: class { } },
 });
 const sp = { hooks: hooks, Game: skyrimPlatform.Game, Debug: Debug, Utility: skyrimPlatform.Utility };
-const controller = { once: function () { }, emitter: { on: function () { } }, lookupListener: function () { return null; } };
+const controller = { once: function () { }, on: function () { }, emitter: { on: function () { } }, lookupListener: function () { return null; } };
 new death.DeathService(sp, controller);
 
 // The order the client sets these up in: DeathService is a service the

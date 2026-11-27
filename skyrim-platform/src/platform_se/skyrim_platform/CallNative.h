@@ -37,6 +37,11 @@ static inline size_t GetIndexFor()
 
 Variable AnySafeToVariable(const AnySafe& v, bool treatNumberAsInt);
 
+// A script value as the plugins get it, the way a native's return value is
+// given back. Thornswood #4511: getScriptProperty and getScriptVariable
+// (ScriptCallApi.cpp) read a script's own values with it.
+AnySafe ScriptValueToAnySafe(const Variable& v);
+
 using LatentCallback = std::function<void(Napi::Env, AnySafe)>;
 
 struct Arguments

@@ -1,0 +1,21 @@
+# Engine tests that no CI job here runs, one a line: "path  reason".
+#
+# misc/thornswood/test-every-test-runs.js fails the build on a test file that
+# no workflow, no ctest glob and no other test runs, unless it has a line
+# here. A test that is in the tree and runs nowhere is the check of a fix
+# that nobody would hear about when it broke: on 26 Nov 2026 ten of the
+# twelve skymp5-client/test-*.js ran nowhere, and test-connection-denied.js
+# had stopped working on 18 Nov without anybody knowing (Thornswood #7100).
+#
+# A line here needs a reason a CI runner cannot meet: the game's own files,
+# a compiler the runner does not have, a built engine it is not given.
+
+misc/tests/test_initial_inventory.ps1  builds against a configured engine build folder with MSVC and runs on the template save; by hand
+misc/tests/test_light_plugins.ps1  needs a game's Data folder and the plugin lists one of its sessions wrote
+misc/tests/test_light_plugins_save.ps1  builds the save tests with MSVC against a configured engine build folder; by hand
+skymp5-server/tests/actorKnowledge.js  needs the built server addon and an installed load order of the game's masters (argv 2 and 3)
+skymp5-server/tests/equipmentRepair.js  needs the built server addon and an installed load order of the game's masters (argv 2 and 3)
+skymp5-server/tests/godMode.js  needs the built server addon and an installed load order of the game's masters (argv 2 and 3)
+skymp5-server/tests/inventoryReceipt.js  needs the built server addon and an installed load order of the game's masters (argv 2 and 3)
+skymp5-server/tests/localizedNames.js  needs the built server addon and the game's localized strings (argv 2)
+skymp5-server/tests/npcPreload.js  needs the built server addon and an installed load order of the game's masters (argv 2 and 3)

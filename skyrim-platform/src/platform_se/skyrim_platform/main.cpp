@@ -12,9 +12,11 @@
 #include "FridaHooks.h"
 #include "GameAudioRoute.h"
 #include "GameplayMenuUnpaused.h"
+#include "InteractionLoadCancel.h"
 #include "Hooks.h"
 #include "IPC.h"
 #include "InputConverter.h"
+#include "LoadTrace.h"
 #include "PageHeldKeys.h"
 #include "PapyrusTESModPlatform.h"
 #include "Settings.h"
@@ -164,6 +166,8 @@ DLLEXPORT bool SKSEAPI SKSEPlugin_Load_Impl(const SKSE::LoadInterface* skse)
   logger::info("Loading plugin.");
 
   SKSE::Init(skse);
+  // Thornswood #6200: measures the start up to the data load (LoadTrace.h).
+  LoadTrace::Start();
   const auto audioRoute = GameAudioRoute::ApplyAtStartup();
   if (audioRoute == GameAudioRoute::Result::Applied) {
     logger::info("Applied the launcher's Skyrim audio output preference.");
@@ -188,6 +192,7 @@ DLLEXPORT bool SKSEAPI SKSEPlugin_Load_Impl(const SKSE::LoadInterface* skse)
 
   SKSE::GetMessagingInterface()->RegisterListener(
     [](SKSE::MessagingInterface::Message* a_msg) {
+      LoadTrace::Mark(a_msg->type);
       EventHandler::HandleSKSEMessage(a_msg);
       BrowserApiNirnLab::GetInstance().HandleSkseMessage(a_msg);
     });
@@ -198,6 +203,9 @@ DLLEXPORT bool SKSEAPI SKSEPlugin_Load_Impl(const SKSE::LoadInterface* skse)
   // MainUpdate or any UI job can execute. Install the whole checked hook set
   // here; DataLoaded is too late to assume those sites are quiescent (#6497).
   GameplayMenuUnpaused::Install();
+  // Before any actor's AI runs, so no furniture load is ever left with a
+  // freed listener (Thornswood #6884).
+  InteractionLoadCancel::Install();
 
   // init custom events first
   // and the rest at DataLoaded, to be safe

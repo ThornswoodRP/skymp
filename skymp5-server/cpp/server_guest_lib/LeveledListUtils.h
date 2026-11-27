@@ -14,6 +14,11 @@ public:
     uint32_t count = 0;
   };
 
+  // The level every character counts as when the server evaluates a leveled
+  // list (Thornswood: MpObjectReference and PapyrusObjectReference both pass
+  // it, so it is said once here)
+  static constexpr uint32_t kPlayerCharacterLevel = 1;
+
   // It seems that pcLevel=0 makes it thinking that pcLevel=maximum possible pc
   // level
   static std::vector<Entry> EvaluateList(

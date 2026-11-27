@@ -47,6 +47,7 @@ TEST_CASE("UpdateEquipment", "[PartOne]")
 #include "PartOneListener.h"
 #include "gamemode_events/GameModeEvent.h"
 #include <set>
+#include "TestFormIds.h"
 
 namespace {
 class RefuseEquipItems : public PartOneListener
@@ -73,7 +74,6 @@ public:
 };
 
 constexpr uint32_t kClub = 0x000a1b2c;
-constexpr uint32_t kSword = 0x00012eb7;
 
 nlohmann::json EquipTwo(bool clubWorn, bool swordWorn)
 {

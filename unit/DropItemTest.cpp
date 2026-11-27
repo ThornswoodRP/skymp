@@ -2,6 +2,7 @@
 #include "TestUtils.hpp"
 #include <algorithm>
 #include <catch2/catch_all.hpp>
+#include <map>
 
 #include "MpObjectReference.h"
 #include "PartOne.h"
@@ -86,8 +87,8 @@ TEST_CASE("A dropped piece keeps its extra through the pickup",
   constexpr uint32_t ironDagger = 0x0001397E;
   constexpr uint32_t ironSword = 0x00012EB7;
   constexpr uint32_t ironHelmet = 0x00012E4D;
-  // MISC dunRagnTorstensKey in Skyrim.esm. Thornswood's keys are MISC
-  // records; KEYM is not in espm::utils::IsItem, so it is not picked up.
+  // MISC dunRagnTorstensKey in Skyrim.esm, a named piece of a plain MISC.
+  // A KEYM key has its own case below (Thornswood #7171).
   constexpr uint32_t houseKey = 0x000AADB7;
   DoConnect(partOne, 0);
 
@@ -150,6 +151,49 @@ TEST_CASE("A dropped piece keeps its extra through the pickup",
     REQUIRE(it->count == 1);
     REQUIRE(it->EqualExceptCount(piece));
   }
+}
+
+TEST_CASE("A key is dropped and picked up like any other thing",
+          "[DropItemTest]")
+{
+  // Thornswood #7171: a KEYM was not an item to the server, so a key could
+  // not be dropped, picked up or carried in a transaction, and Thornswood's
+  // keys were MISC records sorted under Misc. KEYM
+  // RiftenConfiscatedGoodsChestKey in Skyrim.esm.
+  auto& partOne = GetPartOne();
+  constexpr uint32_t ironDagger = 0x0001397E;
+  constexpr uint32_t chestKey = 0x0010E7E6;
+  DoConnect(partOne, 0);
+  partOne.CreateActor(0xff000000, { 1, 2, 3 }, 0, 0x3c);
+  partOne.SetUserActor(0, 0xff000000);
+  MpActor& ac = partOne.worldState.GetFormAt<MpActor>(0xff000000);
+
+  Inventory::ExtraData named;
+  named.name = "Key to Breezehome";
+  ac.RemoveAllItems();
+  ac.AddItem(ironDagger, 1);
+  ac.AddItems({ Inventory::Entry(chestKey, 1, named) });
+
+  DoMessage(partOne, 0,
+            nlohmann::json{ { "t", MsgType::DropItem },
+                            { "baseId", chestKey },
+                            { "count", 1 } });
+  partOne.Tick();
+  REQUIRE(ac.GetInventory().GetItemCount(chestKey) == 0);
+  REQUIRE(ac.GetInventory().GetItemCount(ironDagger) == 1);
+
+  MpObjectReference* refr = FindDrop(partOne, chestKey);
+  REQUIRE(refr != nullptr);
+  REQUIRE(refr->GetPickupExtra().has_value());
+  REQUIRE(refr->GetPickupExtra()->name == named.name);
+
+  refr->Activate(ac);
+  auto& entries = ac.GetInventory().entries;
+  auto it = std::find_if(entries.begin(), entries.end(),
+                         [&](auto& e) { return e.baseId == chestKey; });
+  REQUIRE(it != entries.end());
+  REQUIRE(it->count == 1);
+  REQUIRE(it->name == named.name);
 }
 
 TEST_CASE("A drop takes a plain stack before a named one", "[DropItemTest]")
@@ -292,5 +336,71 @@ TEST_CASE("A drop keeps its extra and its delete time across a restart",
     auto& again = restarted.worldState.GetFormAt<MpObjectReference>(refrId);
     restarted.worldState.Tick();
     REQUIRE(again.IsDeleted());
+  }
+}
+
+TEST_CASE("Only the dropper is told a dropped item is theirs",
+          "[DropItemTest]")
+{
+  // Thornswood #6718: the server places a dropped item and every client
+  // spawned it with no owner, which in a shop reads as the shop's, so picking
+  // your own clothes up in Belethor's was stealing. The dropper's client owns
+  // it when it is told droppedByMe; nobody else's is told.
+  constexpr uint32_t ironHelmet = 0x00012E4D;
+  PartOne server;
+  server.AttachEspm(&GetEspmLoader());
+  DoConnect(server, 0);
+  DoConnect(server, 1);
+  server.CreateActor(0xff000000, { 1, 2, 3 }, 0, 0x3c);
+  server.SetUserActor(0, 0xff000000);
+  server.CreateActor(0xff000200, { 50, 2, 3 }, 0, 0x3c);
+  server.SetUserActor(1, 0xff000200);
+  MpActor& ac = server.worldState.GetFormAt<MpActor>(0xff000000);
+  ac.RemoveAllItems();
+  ac.AddItem(ironHelmet, 1);
+  server.Messages().clear();
+
+  DoMessage(server, 0,
+            nlohmann::json{ { "t", MsgType::DropItem },
+                            { "baseId", ironHelmet },
+                            { "count", 1 } });
+  server.Tick();
+  MpObjectReference* refr = FindDrop(server, ironHelmet);
+  REQUIRE(refr != nullptr);
+  REQUIRE(refr->GetDroppedBy() == 0xff000000);
+  const uint32_t refrId = refr->GetFormId();
+
+  std::map<Networking::UserId, std::vector<nlohmann::json>> creates;
+  for (const auto& message : server.Messages()) {
+    if (message.j["t"] == MsgType::CreateActor &&
+        message.j["refrId"].get<uint64_t>() == refrId) {
+      creates[message.userId].push_back(message.j);
+    }
+  }
+  REQUIRE(creates[0].size() == 1);
+  REQUIRE(creates[1].size() == 1);
+  REQUIRE(creates[0][0]["props"]["droppedByMe"] == true);
+  const auto& other = creates[1][0];
+  REQUIRE_FALSE(
+    (other.contains("props") && other["props"].contains("droppedByMe")));
+
+  SECTION("Whose it is is saved, and a reference nobody dropped saves none")
+  {
+    REQUIRE(ThroughJson(refr->GetChangeForm()).droppedBy == 0xff000000);
+    auto plain = refr->GetChangeForm();
+    plain.droppedBy = 0;
+    REQUIRE_FALSE(MpChangeForm::ToJson(plain).contains("droppedBy"));
+    REQUIRE(ThroughJson(plain).droppedBy == 0);
+  }
+
+  SECTION("After a restart the dropper is still told")
+  {
+    const auto saved = ThroughJson(refr->GetChangeForm());
+    PartOne restarted;
+    restarted.AttachEspm(&GetEspmLoader());
+    restarted.worldState.LoadChangeForm(saved,
+                                        restarted.CreateFormCallbacks());
+    REQUIRE(restarted.worldState.GetFormAt<MpObjectReference>(refrId)
+              .GetDroppedBy() == 0xff000000);
   }
 }

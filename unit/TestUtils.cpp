@@ -5,7 +5,36 @@
 #include "PartOne.h"
 #include <catch2/catch_all.hpp>
 
+#include <simdjson.h>
+
+extern espm::Loader& GetEspmLoader();
+
 // Utilities for testing
+
+void AttachSkyrimFiles(PartOne& server)
+{
+  server.AttachEspm(&GetEspmLoader());
+}
+
+MpChangeForm ThroughSave(const MpChangeForm& changeForm)
+{
+  static simdjson::dom::parser parser;
+  const std::string dump = MpChangeForm::ToJson(changeForm).dump();
+  simdjson::dom::element element = parser.parse(dump).value();
+  return MpChangeForm::JsonToChangeForm(element);
+}
+
+std::string DumpChangeForm(const MpChangeForm& changeForm)
+{
+  return MpChangeForm::ToJson(changeForm).dump();
+}
+
+Inventory::Entry Worn(uint32_t baseId, uint32_t count)
+{
+  Inventory::ExtraData extra;
+  extra.worn_ = true;
+  return Inventory::Entry(baseId, count, extra);
+}
 
 std::underlying_type_t<Constants> ToUnderlying(Constants constant)
 {

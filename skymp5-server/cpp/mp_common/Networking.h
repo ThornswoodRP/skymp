@@ -32,4 +32,12 @@ void HandlePacketClientside(Networking::IClient::OnPacket onPacket,
 
 void HandlePacketServerside(Networking::IServer::OnPacket onPacket,
                             void* state, Packet* packet, IdManager& idManager);
+
+// THORNSWOOD (Thornswood #6568). Which of RakNet's two ends of a connection
+// this was, in words for a log: the other side said goodbye
+// (ID_DISCONNECTION_NOTIFICATION), or it stopped answering and the timeout
+// ran out (ID_CONNECTION_LOST). Both were one "disconnect" on either side,
+// so a lost connection and a game that left on purpose looked the same.
+// Empty for any other packet id.
+const char* DescribeDisconnect(unsigned char packetId, bool serverside);
 }

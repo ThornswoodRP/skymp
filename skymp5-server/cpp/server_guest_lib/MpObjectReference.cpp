@@ -44,8 +44,6 @@
 
 #include "script_classes/PapyrusObjectReference.h" // kOriginalNameExpression
 
-constexpr uint32_t kPlayerCharacterLevel = 1;
-
 UpdatePropertyMessage MpObjectReference::CreatePropertyMessage_(
   MpObjectReference* self, const char* name, const std::string& valueDump)
 {
@@ -709,6 +707,22 @@ void MpObjectReference::TakeItem(MpActor& ac, const Inventory::Entry& e)
     throw std::runtime_error(err.str());
   }
 
+  // THORNSWOOD (#6622). A pickpocket takes only what the mark carries and
+  // does not wear, and only while still able to pickpocket them.
+  if (auto mark = AsActor()) {
+    if (!MpActor::MayPickpocket(ac, *mark)) {
+      throw std::runtime_error(
+        fmt::format("Actor {:#x} can no longer pickpocket {:#x}",
+                    ac.GetFormId(), GetFormId()));
+    }
+    if (mark->GetUnwornCount(e.baseId) < e.count) {
+      throw std::runtime_error(fmt::format(
+        "Actor {:#x} can't take {} of {:#x} from {:#x}: it wears them or "
+        "carries fewer",
+        ac.GetFormId(), e.count, e.baseId, GetFormId()));
+    }
+  }
+
   TakeItemEvent takeItemEvent(&ac, this, e);
   takeItemEvent.Fire(GetParent());
 }
@@ -900,11 +914,23 @@ void MpObjectReference::SetAnimationVariableBool(
 
 void MpObjectReference::SetInventory(const Inventory& inv)
 {
+  // THORNSWOOD (Thornswood #6717). An actor's equipment record loses, in the
+  // same edit, any worn piece the new pack no longer holds. See
+  // MpActor::DropWornPiecesThePackLacks.
+  auto actor = AsActor();
+  bool recordChanged = false;
   EditChangeForm([&](MpChangeFormREFR& changeForm) {
     changeForm.baseContainerAdded = true;
     changeForm.inv = inv;
+    if (actor) {
+      recordChanged = MpActor::DropWornPiecesThePackLacks(changeForm.equipment,
+                                                          changeForm.inv);
+    }
   });
   SendInventoryUpdate();
+  if (recordChanged) {
+    actor->PublishEquipment();
+  }
 }
 
 void MpObjectReference::ValidateTransactionInventory(const Inventory& inventory)
@@ -1002,6 +1028,11 @@ bool MpObjectReference::CompareAndSetInventory(
   // and notification can still throw after this live commit; receipts decide
   // that outcome rather than a caller compensating or repeating the write.
   Inventory nextInventory = replacement;
+  // THORNSWOOD (Thornswood #6717). Staged with the pack, so the record never
+  // names a worn piece the committed pack lacks.
+  Equipment nextEquipment = actor->GetEquipment();
+  const bool recordChanged =
+    MpActor::DropWornPiecesThePackLacks(nextEquipment, nextInventory);
   DynamicFields nextFields = GetDynamicFields();
   if (property) {
     nextFields.SetValueDump(property->name, nextPropertyDump);
@@ -1014,12 +1045,19 @@ bool MpObjectReference::CompareAndSetInventory(
   GetParent()->RememberInventoryReceipt(*this);
   static_assert(std::is_nothrow_move_assignable_v<Inventory>);
   static_assert(std::is_nothrow_move_assignable_v<DynamicFields>);
+  static_assert(std::is_nothrow_move_assignable_v<Equipment>);
   EditChangeForm([&](MpChangeForm& changeForm) {
     changeForm.inv = std::move(nextInventory);
     changeForm.dynamicFields = std::move(nextFields);
+    if (recordChanged) {
+      changeForm.equipment = std::move(nextEquipment);
+    }
     changeForm.baseContainerAdded = true;
   });
   SendInventoryUpdate();
+  if (recordChanged) {
+    actor->PublishEquipment();
+  }
   return true;
 }
 
@@ -1101,14 +1139,25 @@ void MpObjectReference::RemoveItems(
       target->GetFormId(), GetFormId()));
   }
 
+  // THORNSWOOD (Thornswood #6717). The record loses, in the same edit, any
+  // worn piece the pack no longer holds. See
+  // MpActor::DropWornPiecesThePackLacks.
+  bool recordChanged = false;
   EditChangeForm([&](MpChangeFormREFR& changeForm) {
     changeForm.inv.RemoveItems(entries);
+    if (actor) {
+      recordChanged = MpActor::DropWornPiecesThePackLacks(changeForm.equipment,
+                                                          changeForm.inv);
+    }
   });
 
   if (target)
     target->AddItems(entries);
 
   SendInventoryUpdate();
+  if (recordChanged) {
+    actor->PublishEquipment();
+  }
 
   if (GetBaseType() == "CONT") {
     if (GetInventory().IsEmpty()) {
@@ -1676,7 +1725,7 @@ void MpObjectReference::GivePickupItemsToActivationSource(
     const auto kCountMult = 1;
     auto map = LeveledListUtils::EvaluateListRecurse(
       loader.GetBrowser(), resultItemLookupRes, kCountMult,
-      kPlayerCharacterLevel, chanceNoneOverride.get());
+      LeveledListUtils::kPlayerCharacterLevel, chanceNoneOverride.get());
     std::vector<Inventory::Entry> entries;
     for (auto& p : map) {
       entries.push_back({ p.first, p.second });
@@ -1726,6 +1775,18 @@ const std::optional<Inventory::ExtraData>& MpObjectReference::GetPickupExtra()
   const noexcept
 {
   return ChangeForm().pickupExtra;
+}
+
+void MpObjectReference::SetDroppedBy(uint32_t characterFormId)
+{
+  EditChangeForm([&](MpChangeFormREFR& changeForm) {
+    changeForm.droppedBy = characterFormId;
+  });
+}
+
+uint32_t MpObjectReference::GetDroppedBy() const noexcept
+{
+  return ChangeForm().droppedBy;
 }
 
 void MpObjectReference::SetDeleteDatetime(
@@ -1860,6 +1921,40 @@ void MpObjectReference::ProcessActivateNormal(
     } else {
       SetOpen(!IsOpen());
     }
+  } else if (t == espm::NPC_::kType && actorActivator && AsActor()) {
+    // THORNSWOOD (#6622). Pickpocketing is between people only (Patrick,
+    // 26 Nov 2026): a sneaking person's press on another person opens that
+    // person's pack in Skyrim's steal window, the way a container opens.
+    // The client draws the window and rolls the steal; a take comes back as
+    // a TakeItem from this actor, which TakeItem holds to what it does not
+    // wear. A press on an NPC, or by somebody not sneaking, does nothing
+    // here, as before.
+    auto& mark = *AsActor();
+    if (!MpActor::MayPickpocket(*actorActivator, mark)) {
+      return;
+    }
+    if (CheckIfObjectCanStartOccupyThis(activationSource,
+                                        MpActor::kPickpocketReach)) {
+      if (this->occupant) {
+        this->occupant->RemoveEventSink(this->occupantDestroySink);
+        this->occupant->RemoveEventSink(this->occupantDisableSink);
+      }
+      actorActivator->GetActorToSendTo().SendToUser(
+        CreatePropertyMessage_(this, "inventory",
+                               GetInventory().ToJson().dump()),
+        true);
+      activationSource.SendOpenContainer(GetFormId());
+
+      this->occupant = actorActivator;
+
+      this->occupantDestroySink.reset(
+        new OccupantDestroyEventSink(*GetParent(), this));
+      this->occupant->AddEventSink(this->occupantDestroySink);
+
+      this->occupantDisableSink.reset(
+        new OccupantDisableEventSink(*GetParent(), this));
+      this->occupant->AddEventSink(this->occupantDisableSink);
+    }
   } else if (t == espm::CONT::kType && actorActivator) {
     EnsureBaseContainerAdded(loader);
 
@@ -1950,6 +2045,14 @@ bool MpObjectReference::ProcessActivateSecond(
     if (this->occupant == &activationSource) {
       SetOpen(false);
       this->occupant->RemoveEventSink(this->occupantDestroySink);
+      this->occupant = nullptr;
+      return true;
+    }
+  } else if (t == espm::NPC_::kType && actorActivator && AsActor()) {
+    // THORNSWOOD (#6622). The steal window closed.
+    if (this->occupant == &activationSource) {
+      this->occupant->RemoveEventSink(this->occupantDestroySink);
+      this->occupant->RemoveEventSink(this->occupantDisableSink);
       this->occupant = nullptr;
       return true;
     }
@@ -2343,8 +2446,8 @@ void MpObjectReference::AddContainerObject(
   if (leveledItem) {
     constexpr uint32_t kCountMult = 1;
     auto map = LeveledListUtils::EvaluateListRecurse(
-      espm.GetBrowser(), formLookupRes, kCountMult, kPlayerCharacterLevel,
-      chanceNoneOverride.get());
+      espm.GetBrowser(), formLookupRes, kCountMult,
+      LeveledListUtils::kPlayerCharacterLevel, chanceNoneOverride.get());
     for (auto& p : map) {
       (*itemsToAdd)[p.first] += p.second;
     }
@@ -2391,8 +2494,15 @@ void MpObjectReference::EnsureBaseContainerAdded(espm::Loader& espm)
 
   auto outfitObjects = GetOutfitObjects(GetParent(), templateChain, lookupRes);
   for (auto& entry : outfitObjects) {
-    AddContainerObject(entry, &itemsToAdd);
-    AddContainerObject(entry, &itemsToEquip);
+    // THORNSWOOD (Thornswood #6717). A leveled outfit entry is drawn once and
+    // the same pieces go into the pack and onto the equipment record. Two
+    // separate draws gave the record pieces the pack never got.
+    std::map<uint32_t, uint32_t> drawn;
+    AddContainerObject(entry, &drawn);
+    for (auto& p : drawn) {
+      itemsToAdd[p.first] += p.second;
+      itemsToEquip[p.first] += p.second;
+    }
   }
   if (inheritedNpcGear) {
     // Do not create vanilla pockets. Only equipment needed by the NPC's

@@ -103,6 +103,11 @@ void ResetContainer(IVM* vm, StackID stackId, RE::StaticFunctionTag*,
 void CloseMenu(IVM* vm, StackID stackId, RE::StaticFunctionTag*,
                std::string_view name);
 
+// THORNSWOOD PATCH (Thornswood #6726). Sets how many of an item a recipe
+// takes, adding the item when the recipe does not take it yet.
+void SetCraftingInput(IVM* vm, StackID stackId, RE::StaticFunctionTag*,
+                      RE::TESForm* recipe, RE::TESForm* item, int32_t count);
+
 void BlockPapyrusEvents(IVM* vm, StackID stackId, RE::StaticFunctionTag*,
                         bool blocked);
 
