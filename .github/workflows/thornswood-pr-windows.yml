@@ -220,6 +220,8 @@ jobs:
         run: node misc/tests/node/test_papyrus_update_way_native.js
       - name: The character's movement state is logged when it changes
         run: node misc/tests/node/test_character_state_log_native.js
+      - name: A plugin's call into a script's own function is settled once
+        run: node misc/tests/node/test_run_script_function_native.js
       - name: The Mongo readiness probe leaves its database directory alone
         run: node misc/tests/node/test_mongo_readiness_probe.js
   save-directory-linux:

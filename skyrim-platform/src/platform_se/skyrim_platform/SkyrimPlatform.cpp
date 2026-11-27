@@ -15,6 +15,7 @@
 #include "HttpClientApi.h"
 #include "InventoryApi.h"
 #include "BookTextApi.h"
+#include "ScriptCallApi.h"
 #include "LoadGameApi.h"
 #include "MagicApi.h"
 #include "MpClientPluginApi.h"
@@ -307,6 +308,7 @@ private:
       TextApi::Register(env, e);
       InventoryApi::Register(env, e);
       BookTextApi::Register(env, e);
+      ScriptCallApi::Register(env, e);
       MagicApi::Register(env, e);
       ConstEnumApi::Register(env, e);
       CallNativeApi::Register(env, e, getNativeCallRequirements);
@@ -371,6 +373,7 @@ private:
     taskQueue.Clear();
     jsPromiseTaskQueue.Clear();
     nativeCallRequirements.jsThrQ->Clear();
+    ScriptCallApi::Clear();
     settingsByPluginName.clear();
     settingsByPluginNameCache.reset();
   }
