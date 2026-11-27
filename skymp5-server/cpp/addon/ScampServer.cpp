@@ -2166,6 +2166,30 @@ Napi::Value ScampServer::GetNpcAIState(const Napi::CallbackInfo& info)
       if (values.aggression > 3 || values.confidence > 4) {
         throw std::invalid_argument("Invalid NPC aggression or confidence");
       }
+      // The game skips the radius while the actor's current package lacks
+      // the Aggro Radius Behavior interrupt flag (PKDT bytes 8 and 9, bit 6),
+      // and checks no flag when it has no package. The server runs no
+      // packages, so an NPC none of whose packages has the flag keeps the
+      // radius off: a trapped wolf, an ambush, a scripted scene (#6493).
+      const auto packages = EvaluateTemplate<espm::NPC_::UseAIPackages>(
+        &world, actor.GetBaseId(), actor.GetTemplateChain(),
+        [&](const espm::LookupResult& lookup, const espm::NPC_::Data&) {
+          std::pair<size_t, size_t> counts{ 0, 0 }; // packages, with the flag
+          espm::IterateFields_(lookup.rec, [&](const char* type, uint32_t size, const char* data) {
+            if (std::memcmp(type, "PKID", 4) || size < 4) return;
+            uint32_t localId = 0;
+            std::memcpy(&localId, data, 4);
+            const auto pack = partOne->GetEspm().GetBrowser().LookupById(lookup.ToGlobalId(localId));
+            if (!pack.rec || pack.rec->GetType() != "PACK") return;
+            ++counts.first;
+            espm::IterateFields_(pack.rec, [&](const char* packType, uint32_t packSize, const char* packData) {
+              if (!std::memcmp(packType, "PKDT", 4) && packSize >= 10 && (packData[8] & 0x40))
+                ++counts.second;
+            }, world.GetEspmCache());
+          }, world.GetEspmCache());
+          return counts;
+        });
+      if (packages.first > 0 && packages.second == 0) values.aggroRadius = { 0, 0, 0 };
       profile = npcAIProfiles.emplace(id, std::make_pair(profileKey, values)).first;
     }
     auto result = Napi::Object::New(info.Env());
