@@ -7,6 +7,7 @@
 #include "libespm/CompressedFieldsCache.h"
 #include "libespm/Convert.h"
 #include "libespm/INGR.h"
+#include "libespm/KEYM.h"
 #include "libespm/LIGH.h"
 #include "libespm/MISC.h"
 #include "libespm/RecordHeader.h"
@@ -68,6 +69,11 @@ float GetWeightFromRecord(const espm::RecordHeader* record,
   // TODO: add unit test
   if (auto* misc = espm::Convert<espm::MISC>(record)) {
     auto data = misc->GetData(cache);
+    return data.weight;
+  }
+
+  if (auto* keym = espm::Convert<espm::KEYM>(record)) {
+    auto data = keym->GetData(cache);
     return data.weight;
   }
 

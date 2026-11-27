@@ -16,6 +16,7 @@
 #include "GMST.h"
 #include "IDLE.h"
 #include "INGR.h"
+#include "KEYM.h"
 #include "KYWD.h"
 #include "LCTN.h"
 #include "LIGH.h"

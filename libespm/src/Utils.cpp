@@ -43,6 +43,11 @@ bool IsItem(Type type) noexcept
   return type == "AMMO" || type == "ARMO" || type == "BOOK" ||
     type == "INGR" || type == "ALCH" || type == "SCRL" || type == "SLGM" ||
     type == "WEAP" || type == "MISC" ||
+    // Thornswood #7171: a key is carried, given, dropped and lifted like
+    // any other thing. Left out, the server refused every pack that held
+    // one and never picked one up, so Thornswood's keys were MISC records
+    // and sat under Misc instead of Keys.
+    type == "KEYM" ||
     type ==
     "LIGH"; // LIGH is not always an item but here we suppose it is a torch
 }
