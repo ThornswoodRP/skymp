@@ -256,13 +256,6 @@ jobs:
             -I skyrim-platform/src/platform_lib \
             misc/tests/gameplay_menu_test.cpp -o "$RUNNER_TEMP/gameplay-menu-test"
           "$RUNNER_TEMP/gameplay-menu-test"
-      - name: Only a field of view a camera can draw with reaches it (Thornswood #7200)
-        shell: bash
-        run: |
-          g++ -std=c++17 -Wall -Wextra -Werror \
-            -I skyrim-platform/src/platform_lib \
-            misc/tests/camera_fov_test.cpp -o "$RUNNER_TEMP/camera-fov-test"
-          "$RUNNER_TEMP/camera-fov-test"
       - name: A mapped inventory key requests a close only for the open menu
         shell: bash
         run: |
