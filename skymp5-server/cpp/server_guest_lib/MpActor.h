@@ -91,6 +91,16 @@ public:
   static bool InheritsBaseSpell(uint32_t baseId,
                                 espm::SPEL::SpellType spellType);
   std::vector<uint32_t> GetSpellList() const;
+  // THORNSWOOD (#6622). Pickpocketing is between people only (Patrick,
+  // 26 Nov 2026). Whether `thief` may open `mark`'s pack in Skyrim's steal
+  // window: two different people, both alive and in the world, the thief
+  // sneaking and within kPickpocketReach of the mark in the same cell or
+  // world. An NPC is never a mark and never a thief.
+  static constexpr float kPickpocketReach = 256.f;
+  static bool MayPickpocket(const MpActor& thief, const MpActor& mark);
+  // How many of `baseId` this actor carries and does not wear: what a
+  // pickpocket can take. A worn piece stays on its wearer.
+  uint32_t GetUnwornCount(uint32_t baseId) const;
 
   std::unique_ptr<const Appearance> GetAppearance() const;
   const std::string& GetAppearanceAsJson();
