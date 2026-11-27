@@ -417,7 +417,9 @@ void MpObjectReference::VisitProperties(CreateActorMessage& message,
     message.props.isDead = true;
   }
 
-  if (mode == VisitPropertiesMode::All && !GetInventory().IsEmpty()) {
+  // An absent owner pack makes legacy clients use the equipment snapshot,
+  // which can still contain unworn items after the authoritative pack empties.
+  if (mode == VisitPropertiesMode::All) {
     message.props.inventory = GetInventory();
   }
 
