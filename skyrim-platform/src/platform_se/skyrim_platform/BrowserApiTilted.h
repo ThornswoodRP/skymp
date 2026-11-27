@@ -7,6 +7,7 @@ namespace BrowserApiTilted {
 Napi::Value SetVisible(const Napi::CallbackInfo& info);
 Napi::Value IsVisibleJS(const Napi::CallbackInfo& info);
 bool IsVisible();
+bool HasInputFocus();
 Napi::Value SetFocused(const Napi::CallbackInfo& info);
 // Thornswood #3129: shown the way setVisible(true) does it, before any plugin
 // can call it. Not focused yet: WatchMenus focuses it.

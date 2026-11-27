@@ -1,5 +1,9 @@
 #pragma once
 
+namespace RE {
+class ButtonEvent;
+}
+
 namespace GameplayMenuUnpaused {
 // Called synchronously in SKSEPlugin_Load, before WinMain and UI jobs start.
 bool Install();
@@ -10,4 +14,6 @@ void RequestClient(bool requested);
 void WorldLoading();
 void WorldLoaded(bool success);
 void PostLoad(void* outcome);
+void InventoryChanged(bool opened);
+void InventoryKey(const RE::ButtonEvent& button);
 }

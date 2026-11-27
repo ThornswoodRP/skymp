@@ -1645,13 +1645,22 @@ void ActionListener::OnHit(const RawMessageData& rawMsgData,
     return;
   }
 
-  if (aggressor->GetInventory().HasItem(hitData.source) == false) {
-    spdlog::debug("{:x} actor has no {:x} weapon and can't attack",
-                  hitData.aggressor, hitData.source);
+  // THORNSWOOD (Thornswood #6489). A hit with a weapon the server's
+  // equipment record does not list does no damage. Said at info, with what
+  // the record lists, because "axe blows do no damage" could not be told
+  // apart from anything else while this was a debug line no server writes.
+  std::string worn;
+  for (const auto& entry : equipment.inv.entries) {
+    if (entry.GetWorn() != Inventory::Worn::None) {
+      worn += fmt::format("{}{:x}", worn.empty() ? "" : ",", entry.baseId);
+    }
   }
-
-  spdlog::debug("{:x} weapon is not equipped by {:x} actor and cannot be used",
-                hitData.source, hitData.aggressor);
+  spdlog::info("ActionListener::OnHit {:x} - hit on {:x} with {:x} refused: "
+               "not in the equipment record (worn: {}), in the pack: {}",
+               hitData.aggressor, hitData.target, hitData.source,
+               worn.empty() ? "nothing" : worn,
+               aggressor->GetInventory().HasItem(hitData.source) ? "yes"
+                                                                 : "no");
 }
 
 void ActionListener::OnUpdateAnimVariables(
