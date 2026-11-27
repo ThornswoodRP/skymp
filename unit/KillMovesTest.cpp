@@ -3,9 +3,11 @@
 #include <chrono>
 #include <set>
 
+#include "ActionListener.h"
 #include "HitMessage.h"
 #include "KillMoveMessage.h"
 #include "KillMoves.h"
+#include "RawMessageData.h"
 #include "libespm/Loader.h"
 
 PartOne& GetPartOne();
