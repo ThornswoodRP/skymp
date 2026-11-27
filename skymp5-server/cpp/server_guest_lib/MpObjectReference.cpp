@@ -900,11 +900,23 @@ void MpObjectReference::SetAnimationVariableBool(
 
 void MpObjectReference::SetInventory(const Inventory& inv)
 {
+  // THORNSWOOD (Thornswood #6717). An actor's equipment record loses, in the
+  // same edit, any worn piece the new pack no longer holds. See
+  // MpActor::DropWornPiecesThePackLacks.
+  auto actor = AsActor();
+  bool recordChanged = false;
   EditChangeForm([&](MpChangeFormREFR& changeForm) {
     changeForm.baseContainerAdded = true;
     changeForm.inv = inv;
+    if (actor) {
+      recordChanged = MpActor::DropWornPiecesThePackLacks(changeForm.equipment,
+                                                          changeForm.inv);
+    }
   });
   SendInventoryUpdate();
+  if (recordChanged) {
+    actor->PublishEquipment();
+  }
 }
 
 void MpObjectReference::ValidateTransactionInventory(const Inventory& inventory)
@@ -1002,6 +1014,11 @@ bool MpObjectReference::CompareAndSetInventory(
   // and notification can still throw after this live commit; receipts decide
   // that outcome rather than a caller compensating or repeating the write.
   Inventory nextInventory = replacement;
+  // THORNSWOOD (Thornswood #6717). Staged with the pack, so the record never
+  // names a worn piece the committed pack lacks.
+  Equipment nextEquipment = actor->GetEquipment();
+  const bool recordChanged =
+    MpActor::DropWornPiecesThePackLacks(nextEquipment, nextInventory);
   DynamicFields nextFields = GetDynamicFields();
   if (property) {
     nextFields.SetValueDump(property->name, nextPropertyDump);
@@ -1014,12 +1031,19 @@ bool MpObjectReference::CompareAndSetInventory(
   GetParent()->RememberInventoryReceipt(*this);
   static_assert(std::is_nothrow_move_assignable_v<Inventory>);
   static_assert(std::is_nothrow_move_assignable_v<DynamicFields>);
+  static_assert(std::is_nothrow_move_assignable_v<Equipment>);
   EditChangeForm([&](MpChangeForm& changeForm) {
     changeForm.inv = std::move(nextInventory);
     changeForm.dynamicFields = std::move(nextFields);
+    if (recordChanged) {
+      changeForm.equipment = std::move(nextEquipment);
+    }
     changeForm.baseContainerAdded = true;
   });
   SendInventoryUpdate();
+  if (recordChanged) {
+    actor->PublishEquipment();
+  }
   return true;
 }
 
@@ -1101,14 +1125,25 @@ void MpObjectReference::RemoveItems(
       target->GetFormId(), GetFormId()));
   }
 
+  // THORNSWOOD (Thornswood #6717). The record loses, in the same edit, any
+  // worn piece the pack no longer holds. See
+  // MpActor::DropWornPiecesThePackLacks.
+  bool recordChanged = false;
   EditChangeForm([&](MpChangeFormREFR& changeForm) {
     changeForm.inv.RemoveItems(entries);
+    if (actor) {
+      recordChanged = MpActor::DropWornPiecesThePackLacks(changeForm.equipment,
+                                                          changeForm.inv);
+    }
   });
 
   if (target)
     target->AddItems(entries);
 
   SendInventoryUpdate();
+  if (recordChanged) {
+    actor->PublishEquipment();
+  }
 
   if (GetBaseType() == "CONT") {
     if (GetInventory().IsEmpty()) {
