@@ -209,6 +209,21 @@ for (const [id, what] of [[BOOK, 'a book'], [KEY, 'a key'], [STEW, 'a potion (so
   yes('  and plain keys beside it are a row of their own', rows(g, KEY) === 2 && held(g, KEY) === 3);
 }
 
+// Keys and deeds for different properties (#7169): the server names each one,
+// so each is still added with its own name, never as a plain unit.
+{
+  const g = makeGame();
+  const held2 = [
+    { baseId: KEY, count: 1, name: 'Key to Breezehome' }, { baseId: KEY, count: 1, name: 'Key to Honeyside' },
+    { baseId: BOOK, count: 1, name: 'Deed to Breezehome' }, { baseId: BOOK, count: 1, name: 'Deed to Honeyside' },
+  ];
+  g.apply(held2);
+  const names = g.calls.filter((c) => c[0] === 'addItemEx').map((c) => c[3]).sort();
+  yes('two keys and two deeds the server names are each added under their own name',
+    JSON.stringify(names) === JSON.stringify(['Deed to Breezehome', 'Deed to Honeyside', 'Key to Breezehome', 'Key to Honeyside'])
+      && !(g.loose[KEY] > 0) && !(g.loose[BOOK] > 0));
+}
+
 // Gear keeps the form's name, as before: its condition goes on the name.
 {
   const g = makeGame();
