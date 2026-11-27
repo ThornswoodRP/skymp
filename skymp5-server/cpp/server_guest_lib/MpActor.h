@@ -318,6 +318,22 @@ public:
   // a piece in the pack; see EquipmentBinding::Set.
   bool RenameEquipment(const Equipment& renamed);
 
+  // THORNSWOOD (Thornswood #6717). The record may name as worn only pieces
+  // the pack holds, one unit of the pack for each worn entry, the way the
+  // owner's client matches them at login (remoteServer.ts, applyPcInv). Drops
+  // from `equipment` every worn entry whose base id `pack` no longer has a
+  // unit left for, in the record's order, and counts the change. Returns
+  // whether anything was dropped. The writes that take from an actor's pack
+  // (MpObjectReference::SetInventory, CompareAndSetInventory, RemoveItems)
+  // call it in the same edit that writes the pack, so the record never names
+  // a piece the pack has lost. Entries not worn are left alone.
+  static bool DropWornPiecesThePackLacks(Equipment& equipment,
+                                         const Inventory& pack);
+
+  // Sends this actor's equipment record to everybody who can see it, the
+  // owner included, once each (Thornswood #6252).
+  void PublishEquipment();
+
   void AddSpell(uint32_t spellId);
 
   // THORNSWOOD PATCH (Thornswood #4579). The magic effects disenchanting

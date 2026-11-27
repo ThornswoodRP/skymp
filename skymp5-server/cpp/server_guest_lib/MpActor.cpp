@@ -35,6 +35,7 @@
 #include <optional>
 #include <random>
 #include <string>
+#include <unordered_map>
 
 #include "ChangeValuesMessage.h"
 #include "SetInventoryMessage.h"
@@ -695,9 +696,13 @@ void MpActor::ReplaceEquipment(Equipment newEquipment)
 {
   newEquipment.numChanges = GetEquipment().numChanges + 1;
   SetEquipment(newEquipment);
+  PublishEquipment();
+}
 
+void MpActor::PublishEquipment()
+{
   UpdateEquipmentMessage msg;
-  msg.data = newEquipment;
+  msg.data = GetEquipment();
   msg.idx = GetIdx();
   // Once to each person near it (Thornswood #6252). A plain loop, not
   // SendMessageToActorListeners: this runs from Init (EquipBestWeapon), before
@@ -708,6 +713,34 @@ void MpActor::ReplaceEquipment(Equipment newEquipment)
       listener->SendToUser(msg, true);
     }
   }
+}
+
+bool MpActor::DropWornPiecesThePackLacks(Equipment& equipment,
+                                         const Inventory& pack)
+{
+  std::unordered_map<uint32_t, uint64_t> unitsLeft;
+  for (const auto& entry : pack.entries) {
+    unitsLeft[entry.baseId] += entry.count;
+  }
+  std::vector<Inventory::Entry> kept;
+  kept.reserve(equipment.inv.entries.size());
+  bool dropped = false;
+  for (const auto& entry : equipment.inv.entries) {
+    if (entry.count > 0 && entry.GetWorn() != Inventory::Worn::None) {
+      auto it = unitsLeft.find(entry.baseId);
+      if (it == unitsLeft.end() || it->second == 0) {
+        dropped = true;
+        continue;
+      }
+      --it->second;
+    }
+    kept.push_back(entry);
+  }
+  if (dropped) {
+    equipment.inv.entries = std::move(kept);
+    ++equipment.numChanges;
+  }
+  return dropped;
 }
 
 bool MpActor::RenameEquipment(const Equipment& renamed)
