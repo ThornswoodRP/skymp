@@ -171,6 +171,24 @@ RE::GPtr<RE::InventoryMenu> InventoryTakingInput(RE::UI* ui)
   return {};
 }
 
+bool InventoryCanClose(RE::GFxMovieView& movie)
+{
+  return InventoryFlag(movie, "_root.Menu_mc.bFadedIn", true) &&
+         InventoryFlag(movie, "_root.Menu_mc._bMenuClosing", false) &&
+         InventoryFlag(movie, "_root.Menu_mc.inventoryLists.itemList.disableInput", false) &&
+         InventoryFlag(movie, "_root.Menu_mc.inventoryLists.categoryList.disableInput", false);
+}
+
+std::uint32_t ReadyInventory(RE::UI* ui)
+{
+  const auto lifetime = g_inventoryLifetime.load();
+  if (!(lifetime & 1u) || !g_enabled.load(std::memory_order_acquire))
+    return 0;
+  const auto menu = ui->GetMenu<RE::InventoryMenu>();
+  return menu && menu->OnStack() && menu->uiMovie && InventoryCanClose(*menu->uiMovie)
+    ? lifetime : 0;
+}
+
 void CloseRequestedInventory(RE::UI* ui)
 {
   const auto request = g_inventoryRequest.exchange(0);
@@ -189,10 +207,7 @@ void CloseRequestedInventory(RE::UI* ui)
   auto& movie = *menu->uiMovie;
   // Check the pinned SkyUI movie after its input pass. If Flash already
   // handled the same press, it is already closing.
-  if (!InventoryFlag(movie, "_root.Menu_mc.bFadedIn", true) ||
-      !InventoryFlag(movie, "_root.Menu_mc._bMenuClosing", false) ||
-      !InventoryFlag(movie, "_root.Menu_mc.inventoryLists.itemList.disableInput", false) ||
-      !InventoryFlag(movie, "_root.Menu_mc.inventoryLists.categoryList.disableInput", false))
+  if (!InventoryCanClose(movie))
     return;
   const auto* closeTween = menu->fxDelegate->callbacks.GetAlt("CloseTweenMenu");
   if (!closeTween || !closeTween->callback || closeTween->handler.get() != menu.get())
@@ -245,11 +260,17 @@ void Owner(void* heap)
   const bool handoffBlocked = !g_sleepHandoff.AllowMovies(ui->IsMenuOpen(RE::SleepWaitMenu::MENU_NAME));
   static std::uint64_t refusedMovies = 0;
   if (!handoffBlocked) {
+    // Evaluate embedded SkyUI controls on the UI owner thread only. An
+    // inventory hidden under its own search/quantity UI is not armed.
+    if (g_inventoryReady.load() && !ReadyInventory(ui)) {
+      g_inventoryReady.store(0);
+      g_inventoryRequest.store(0);
+    }
     g_movies(ui);
     CloseRequestedInventory(ui);
     // The opening press can arrive during the same input pass as the Show.
-    // Only accept presses once this inventory has had its first movie pass.
-    g_inventoryReady.store(g_inventoryLifetime.load());
+    // Only arm a menu after its first pass and while its lists own input.
+    g_inventoryReady.store(ReadyInventory(ui));
   } else {
     g_inventoryRequest.store(0);
     g_inventoryReady.store(0);
