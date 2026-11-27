@@ -242,6 +242,99 @@ TEST_CASE("Actor should see its inventory in 'createActor' message",
           Inventory().AddItem(0x12eb7, 3).ToJson());
 }
 
+TEST_CASE(
+  "An owner's create packet states its authoritative pack even when empty",
+  "[PartOne][OwnerInventory]")
+{
+  PartOne partOne;
+  constexpr uint32_t actorId = 0xff000abc;
+  partOne.CreateActor(actorId, { 1, 1, 1 }, 3, 0x3c);
+  auto& actor = partOne.worldState.GetFormAt<MpActor>(actorId);
+  Inventory pack;
+  pack.AddItem(0x12eb7, 3);
+  actor.SetInventory(pack);
+  Equipment snapshot;
+  snapshot.inv =
+    pack; // The client's equipment report also contains unworn rows.
+  snapshot.numChanges = 9;
+  actor.SetEquipment(snapshot);
+
+  bool creation = false;
+  SECTION("an emptied pack takes precedence over its retained unworn snapshot")
+  {
+    pack = Inventory();
+    actor.SetInventory(pack);
+    REQUIRE(actor.GetEquipment() == snapshot);
+  }
+  SECTION("a nonempty pack retains its exact contents")
+  {
+  }
+  SECTION("a new empty pack with no old equipment is still explicit")
+  {
+    pack = Inventory();
+    snapshot = Equipment();
+    actor.SetInventory(pack);
+    actor.SetEquipment(snapshot);
+  }
+  SECTION("creation receives an explicit empty pack too")
+  {
+    pack = Inventory();
+    actor.SetInventory(pack);
+    actor.SetRaceMenuOpen(true);
+    creation = true;
+  }
+
+  DoConnect(partOne, 0);
+  partOne.SetUserActor(0, actorId);
+  REQUIRE(partOne.Messages().size() == 1);
+  auto& sent = partOne.Messages().front();
+  auto* created = dynamic_cast<CreateActorMessage*>(sent.message.get());
+  REQUIRE(created);
+  REQUIRE(created->isMe);
+  REQUIRE(created->props.inventory.has_value());
+  REQUIRE(created->props.inventory->ToJson() == pack.ToJson());
+  REQUIRE(created->equipment.has_value());
+  REQUIRE(*created->equipment == snapshot);
+  // PartOne's fake sender decodes the real binary packet before making j.
+  REQUIRE(sent.j.at("props").at("inventory") == pack.ToJson());
+  if (creation)
+    REQUIRE(created->props.isRaceMenuOpen == true);
+}
+
+TEST_CASE("An observer's create packet never publishes the private pack",
+          "[PartOne][OwnerInventory]")
+{
+  PartOne partOne;
+  constexpr uint32_t ownerId = 0xff000abc;
+  constexpr uint32_t viewerId = 0xff000fff;
+  partOne.CreateActor(ownerId, { 1, 1, 1 }, 3, 0x3c);
+  auto& owner = partOne.worldState.GetFormAt<MpActor>(ownerId);
+  GiveStoredAppearance(owner);
+  SECTION("empty private pack")
+  {
+  }
+  SECTION("nonempty private pack")
+  {
+    owner.AddItem(0x12eb7, 3);
+  }
+  DoConnect(partOne, 0);
+  partOne.SetUserActor(0, ownerId);
+  DoConnect(partOne, 1);
+  partOne.CreateActor(viewerId, { 2, 2, 2 }, 3, 0x3c);
+  partOne.Messages().clear();
+  partOne.SetUserActor(1, viewerId);
+
+  auto observed =
+    FindRefrMessageIdx<CreateActorMessage>(partOne, owner.GetIdx());
+  REQUIRE(observed.filteredMessages.size() == 1);
+  REQUIRE(observed.filteredMessagesOriginals.front().userId == 1);
+  const auto& created = observed.filteredMessages.front();
+  REQUIRE_FALSE(created.isMe);
+  REQUIRE_FALSE(created.props.inventory.has_value());
+  const auto& json = observed.filteredMessagesOriginals.front().j;
+  REQUIRE_FALSE(json.at("props").contains("inventory"));
+}
+
 TEST_CASE("'isRaceMenuOpen' property should present in 'createActor'",
           "[PartOne]")
 {
