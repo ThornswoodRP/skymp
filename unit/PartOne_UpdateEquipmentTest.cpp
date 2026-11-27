@@ -266,3 +266,19 @@ TEST_CASE("An authoritative list gates every spell equipment slot",
   }
   p.worldState.equipmentSpellCheckEnabled = oldCheck;
 }
+
+TEST_CASE("Thornswood #6746: the outfit log line names only what is worn",
+          "[Equipment][6746]")
+{
+  Equipment eq;
+  Inventory::Entry cuirass(0x13961, 1);
+  cuirass.SetWorn(Inventory::Worn::Right);
+  Inventory::Entry carried(0x12eb7, 1);
+  Inventory::Entry shield(0x12eb6, 1);
+  shield.SetWorn(Inventory::Worn::Left);
+  eq.inv.entries = { cuirass, carried, shield };
+  eq.rightSpell = 0x12fcd;
+
+  REQUIRE(eq.WornList() == "[13961,12eb6L] right=12fcd");
+  REQUIRE(Equipment().WornList() == "[]");
+}

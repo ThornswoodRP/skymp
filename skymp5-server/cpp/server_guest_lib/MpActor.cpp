@@ -713,6 +713,14 @@ void MpActor::PublishEquipment()
   UpdateEquipmentMessage msg;
   msg.data = GetEquipment();
   msg.idx = GetIdx();
+  // THORNSWOOD #6746 measurement. A change the server makes to a person's
+  // outfit (a worn piece leaving the pack, a gamemode write) is numbered on
+  // the same record as the game's own changes, so it gets the same line as
+  // OnUpdateEquipment. An NPC's outfit is left out: there are thousands.
+  if (IsCreatedAsPlayer()) {
+    spdlog::info("PublishEquipment {:x} - server change {}, worn {}",
+                 GetFormId(), msg.data.numChanges, msg.data.WornList());
+  }
   // Once to each person near it (Thornswood #6252). A plain loop, not
   // SendMessageToActorListeners: this runs from Init (EquipBestWeapon), before
   // the form is in the world, where that one's lookup of the form would load

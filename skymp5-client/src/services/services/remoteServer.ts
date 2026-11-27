@@ -24,7 +24,7 @@ import { IdManager } from '../../lib/idManager';
 import { nameof } from '../../lib/nameof';
 import { setActorValuePercentage } from '../../sync/actorvalues';
 import { applyAppearanceToPlayer } from '../../sync/appearance';
-import { applyEquipment, isBadMenuShown, syncSpellEquipment, SpellType } from '../../sync/equipment';
+import { applyEquipment, isBadMenuShown, syncSpellEquipment, SpellType, wornList } from '../../sync/equipment';
 import { Inventory, acceptPreloadedInventoryBase, applyInventory, getDiff, getInventory, inventoryEntriesEqual, resetInventoryBase } from '../../sync/inventory';
 import { Movement, Transform } from '../../sync/movement';
 import { learnSpells, removeAllSpells } from '../../sync/spell';
@@ -1173,6 +1173,18 @@ export class RemoteServer extends ClientListener {
     if (form === undefined) {
       logError(this, `onUpdateEquipmentMessage - Form with idx`, msg.idx, `not found`);
       return;
+    }
+
+    // THORNSWOOD #6746 measurement: a viewer's first half of one outfit
+    // change, for people only (form.appearance). A view puts on an outfit
+    // only when its number differs from the last one it put on, so the line
+    // says when a new outfit came with the number already held.
+    if (form.appearance) {
+      const had = form.equipment;
+      const sameNumber = !!had && had.numChanges === msg.data.numChanges;
+      const sameOutfit = wornList(had) === wornList(msg.data);
+      logTrace(this, `Equipment received for ${(form.refrId ?? 0).toString(16)} change ${msg.data.numChanges} (had ${had ? had.numChanges : 'none'}), worn ${wornList(msg.data)}`
+        + (sameNumber && !sameOutfit ? `; SAME NUMBER, DIFFERENT OUTFIT (had ${wornList(had)})` : ''));
     }
 
     form.equipment = msg.data;
