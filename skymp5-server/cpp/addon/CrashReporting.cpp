@@ -6,6 +6,12 @@
 #  ifndef NOMINMAX
 #    define NOMINMAX
 #  endif
+// THORNSWOOD (Thornswood #7247): without WIN32_LEAN_AND_MEAN, Windows.h
+// declares Winsock 1, which cannot share a file with the Winsock 2 that
+// SLikeNet includes; the addon compiles in batches, so it would.
+#  ifndef WIN32_LEAN_AND_MEAN
+#    define WIN32_LEAN_AND_MEAN
+#  endif
 #  include <Windows.h>
 #  include <werapi.h>
 #endif
