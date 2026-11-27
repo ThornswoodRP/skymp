@@ -1121,6 +1121,39 @@ void TESModPlatform::CloseMenu(IVM* vm, StackID stackId,
     name, RE::UI_MESSAGE_TYPE::kHide, nullptr);
 }
 
+/*
+  THORNSWOOD PATCH (Thornswood #6726). A forge's list is the game's own
+  menu, and it shows and takes what a recipe's record names. Thornswood's
+  charcoal and handle are written into the recipes it can copy, but some
+  plugins' records are never copied (Immersive Armors), so each game adds
+  the input to its own copy. SKSE's ConstructibleObject can change the
+  count of an input the record already has, never add one.
+
+  The count is set, not added to, so asking again with the same count
+  changes nothing. Nothing is done for a count under 1, a form that is not
+  a recipe or an item that cannot be carried.
+*/
+void TESModPlatform::SetCraftingInput(IVM* vm, StackID stackId,
+                                      RE::StaticFunctionTag*,
+                                      RE::TESForm* recipe, RE::TESForm* item,
+                                      int32_t count)
+{
+  auto cobj = recipe ? recipe->As<RE::BGSConstructibleObject>() : nullptr;
+  auto object = item ? item->As<RE::TESBoundObject>() : nullptr;
+  if (!cobj || !object || count < 1) {
+    return;
+  }
+  auto& items = cobj->requiredItems;
+  for (uint32_t i = 0; i < items.numContainerObjects; ++i) {
+    auto entry = items.containerObjects[i];
+    if (entry && entry->obj == object) {
+      entry->count = count;
+      return;
+    }
+  }
+  items.AddObjectToContainer(object, count, nullptr);
+}
+
 bool TESModPlatform::Register(IVM* vm)
 {
   TESModPlatform::onPapyrusUpdate = onPapyrusUpdate;
@@ -1262,6 +1295,12 @@ bool TESModPlatform::Register(IVM* vm)
     new RE::BSScript::NativeFunction<true, decltype(CloseMenu), void,
                                      RE::StaticFunctionTag*, std::string_view>(
       "CloseMenu", "TESModPlatform", CloseMenu));
+
+  vm->BindNativeMethod(
+    new RE::BSScript::NativeFunction<true, decltype(SetCraftingInput), void,
+                                     RE::StaticFunctionTag*, RE::TESForm*,
+                                     RE::TESForm*, int32_t>(
+      "SetCraftingInput", "TESModPlatform", SetCraftingInput));
 
   return true;
 }
