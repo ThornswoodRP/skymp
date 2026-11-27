@@ -1,8 +1,10 @@
 #include "TestUtils.hpp"
 #include "libespm/IterateFields.h"
+#include "libespm/RACE.h"
 #include <cstdio>
 #include <cstring>
 #include <string>
+#include <vector>
 
 PartOne& GetPartOne();
 
@@ -15,8 +17,20 @@ TEST_CASE("Measure: each race's attack events (Thornswood #6720)",
 {
   auto& p = GetPartOne();
   auto& cache = p.worldState.GetEspmCache();
-  for (const auto& lookup :
-       p.GetEspm().GetBrowser().GetDistinctRecordsByType("RACE")) {
+  // GetDistinctRecordsByType does not index RACE, so every form id of the
+  // five masters is looked up and the races are kept.
+  std::vector<espm::LookupResult> races;
+  for (uint32_t file = 0; file < 5; ++file) {
+    const uint32_t last = file == 0 ? 0x120000 : 0x80000;
+    for (uint32_t local = 0; local < last; ++local) {
+      auto lookup = p.GetEspm().GetBrowser().LookupById((file << 24) | local);
+      if (lookup.rec && lookup.rec->GetType() == espm::RACE::kType) {
+        races.push_back(lookup);
+      }
+    }
+  }
+  std::printf("6720-races %zu\n", races.size());
+  for (const auto& lookup : races) {
     std::string line;
     uint32_t pendingFlags = 0;
     bool pending = false;
