@@ -181,3 +181,23 @@ TEST_CASE("ResolveRemoval counts one item named twice against the same "
   REQUIRE(taken[0] == Named(0xf, 2, "Bread (12 days left)"));
   REQUIRE(taken[1] == Inventory::Entry(0xf, 1));
 }
+
+TEST_CASE("ResolveRemoval takes a wanted entry that carries a name off that "
+          "stack alone (Thornswood #4608)",
+          "[Inventory]")
+{
+  Inventory inv;
+  inv.entries.push_back(Inventory::Entry(0xf, 1));
+  inv.entries.push_back(Named(0xf, 1, "Iron Sword (90%)"));
+  inv.entries.push_back(Named(0xf, 1, "Iron Sword (85%)"));
+
+  auto taken = inv.ResolveRemoval({ Named(0xf, 1, "Iron Sword (85%)") });
+  REQUIRE(taken.size() == 1);
+  REQUIRE(taken[0] == Named(0xf, 1, "Iron Sword (85%)"));
+
+  // Neither the plain sword nor another name stands in for it.
+  REQUIRE_THROWS_AS(inv.ResolveRemoval({ Named(0xf, 2, "Iron Sword (85%)") }),
+                    std::runtime_error);
+  REQUIRE_THROWS_AS(inv.ResolveRemoval({ Named(0xf, 1, "Iron Sword (50%)") }),
+                    std::runtime_error);
+}

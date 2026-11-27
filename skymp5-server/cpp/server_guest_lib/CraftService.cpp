@@ -63,6 +63,38 @@ namespace {
   told which named stack an input comes off (CraftEvent's seventh and eighth
   arguments) and OnFireSuccess takes exactly those.
 */
+/*
+  THORNSWOOD PATCH (Thornswood #4608). AN INPUT THE CLIENT NAMES BY ITS STACK.
+
+  A piece put on an arcane enchanter is one stack of the pack, and a worn,
+  crude or masterwork piece is a stack of its own, told apart by its name
+  ("Iron Sword (85%)", durability.md in Thornswood). The client used to name
+  every input by its record alone, so with a plain sword and a worn one in
+  the pack the plain one was taken whichever went on the enchanter. Now the
+  client names the stack that left its pack there (craftService.ts), and an
+  input carrying a name is that stack and nothing else: it is counted here
+  off that stack alone, taken off it alone (Inventory::ResolveRemoval), and
+  only from the pack, since the game's menu lists the pack and never the
+  bench's stock. What it takes is held back from the named stacks a plain
+  input of the same record may fall back on, so the two never count the same
+  piece. A craft whose named stack the pack does not hold is refused, as any
+  craft is whose inputs the server does not hold.
+
+  The other extra of an input is never the client's to say (WhatClientMaySay
+  in OnCraftItem): an input is its record, its count and, when it names one,
+  its stack's name.
+*/
+uint64_t StackCount(const Inventory& inventory, const Inventory::Entry& stack)
+{
+  uint64_t sum = 0;
+  for (const auto& entry : inventory.entries) {
+    if (entry.EqualExceptCount(stack)) {
+      sum += entry.count;
+    }
+  }
+  return sum;
+}
+
 uint64_t TakeableCount(const Inventory& inventory, uint32_t baseId, bool named)
 {
   const Inventory::Entry plain(baseId, 1);
@@ -88,23 +120,75 @@ std::optional<std::vector<CraftEvent::StockDraw>> PlanInputs(
   // crafts still being worked will take, so a new order counts only what is
   // left over after them.
   std::map<uint32_t, uint64_t> needed;
+  // Thornswood #4608: the stacks this craft names, and the ones the crafts
+  // still being worked name, each with its count.
+  std::vector<Inventory::Entry> stacks;
+  std::vector<Inventory::Entry> heldStacks;
+  auto addStack = [](std::vector<Inventory::Entry>& to,
+                     const Inventory::Entry& entry) {
+    for (auto& stack : to) {
+      if (stack.EqualExceptCount(entry)) {
+        stack.count += entry.count;
+        return;
+      }
+    }
+    to.push_back(entry);
+  };
   for (const auto& entry : entries) {
-    needed[entry.baseId] += entry.count;
+    if (entry.name) {
+      addStack(stacks, entry);
+    } else {
+      needed[entry.baseId] += entry.count;
+    }
   }
   for (const auto& entry : heldBack) {
+    if (entry.name) {
+      addStack(heldStacks, entry);
+      continue;
+    }
     auto it = needed.find(entry.baseId);
     if (it != needed.end()) {
       it->second += entry.count;
     }
   }
+
+  // Each named stack is the pack's, after what the crafts being worked take
+  // off it, and what both take is held back from a plain input's named pass.
+  std::map<uint32_t, uint64_t> namedTaken;
+  for (const auto& stack : heldStacks) {
+    namedTaken[stack.baseId] +=
+      std::min<uint64_t>(stack.count, StackCount(me.GetInventory(), stack));
+  }
+  for (const auto& stack : stacks) {
+    const uint64_t has = StackCount(me.GetInventory(), stack);
+    uint64_t held = 0;
+    for (const auto& other : heldStacks) {
+      if (other.EqualExceptCount(stack)) {
+        held += other.count;
+      }
+    }
+    if (has < held + stack.count) {
+      spdlog::warn("CraftService - actor {:#x} holds {} of {:#x} named \"{}\" "
+                   "with {} held back for crafts being worked, but the craft "
+                   "names {}, so it is refused without asking the gamemode",
+                   me.GetFormId(), has, stack.baseId, *stack.name, held,
+                   stack.count);
+      return std::nullopt;
+    }
+    namedTaken[stack.baseId] += stack.count;
+  }
+
   const auto containers = me.GetOpenBenchStock(workbenchId);
   std::vector<CraftEvent::StockDraw> draws;
   for (const auto& [baseId, count] : needed) {
     uint64_t lacking = count;
     std::vector<uint64_t> parts(containers.size(), 0);
     for (bool named : { false, true }) {
-      lacking -=
-        std::min(lacking, TakeableCount(me.GetInventory(), baseId, named));
+      uint64_t inPack = TakeableCount(me.GetInventory(), baseId, named);
+      if (named) {
+        inPack -= std::min(inPack, namedTaken[baseId]);
+      }
+      lacking -= std::min(lacking, inPack);
       for (size_t i = 0; i < containers.size() && lacking; ++i) {
         const uint64_t part = std::min(
           lacking,
@@ -150,8 +234,19 @@ std::optional<std::vector<Inventory::Entry>> InputsTaken(
   for (const auto& draw : draws) {
     fromStock[draw.entry.baseId] += draw.entry.count;
   }
+  // Thornswood #4608: a named stack is the pack's alone, and goes first, so
+  // a plain input of the same record falls back on what is left of the
+  // named stacks after it.
   std::vector<Inventory::Entry> fromPack;
   for (const auto& entry : entries) {
+    if (entry.name) {
+      fromPack.push_back(entry);
+    }
+  }
+  for (const auto& entry : entries) {
+    if (entry.name) {
+      continue;
+    }
     auto& stock = fromStock[entry.baseId];
     const uint64_t part = std::min<uint64_t>(entry.count, stock);
     stock -= part;
@@ -181,13 +276,31 @@ CraftService::CraftService(PartOne& partOne_)
 {
 }
 
+namespace {
+// Thornswood #4608: an input is its record, its count and, when it names
+// one, its stack's name. Nothing else the client sends about it is kept.
+Inventory WhatClientMaySay(const Inventory& sent)
+{
+  Inventory res;
+  for (const auto& entry : sent.entries) {
+    Inventory::Entry input(entry.baseId, entry.count);
+    if (entry.name && !entry.name->empty()) {
+      input.name = entry.name;
+    }
+    res.entries.push_back(input);
+  }
+  return res;
+}
+}
+
 void CraftService::OnCraftItem(
-  const RawMessageData& rawMsgData, const Inventory& inputObjects,
+  const RawMessageData& rawMsgData, const Inventory& inputObjectsSent,
   uint32_t workbenchId, uint32_t resultObjectId,
   const std::optional<Inventory::Made>& resultPotion,
   const std::optional<Inventory::MadeEnchantment>& resultEnchantment,
   std::optional<float> resultMaxCharge)
 {
+  const Inventory inputObjects = WhatClientMaySay(inputObjectsSent);
   const Claimed claimed{ resultPotion, resultEnchantment, resultMaxCharge };
   spdlog::info("User {} tries to craft {:#x} on workbench {:#x}",
                rawMsgData.userId, resultObjectId, workbenchId);
@@ -610,6 +723,12 @@ void CraftService::SendMade(Networking::UserId userId, const Made& made)
       content["maxCharge"] = *made.maxCharge;
     }
   }
+  if (made.name) {
+    // Thornswood #4608: the name the craft gave it (craftOutput), such as
+    // the enchanted piece keeping "Iron Sword (85%)", so the piece put back
+    // in the open menu is named as the server holds it.
+    content["name"] = *made.name;
+  }
   partOne.SendCustomPacket(userId, content.dump());
 }
 
@@ -673,6 +792,7 @@ bool CraftService::CraftItem(
     made->enchantment = craftEvent.GetOutputEnchantment();
     made->maxCharge =
       made->enchantment ? craftEvent.GetOutputMaxCharge() : std::nullopt;
+    made->name = craftEvent.GetOutputName();
   }
   return true;
 }

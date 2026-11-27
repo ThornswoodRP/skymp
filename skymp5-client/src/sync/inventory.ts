@@ -155,7 +155,7 @@ const hasLevelAdded = (named: string, plain: string): boolean =>
   /^ \([^()]+\)$/.test(named.substring(plain.length));
 
 // 'aaaaaaaaaaaaaaaa' => 'aaa...'
-const cropName = (s?: string): string => {
+export const cropName = (s?: string): string => {
   if (!s) {
     return s as string;
   }

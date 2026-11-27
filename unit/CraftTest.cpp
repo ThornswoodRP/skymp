@@ -2337,3 +2337,201 @@ TEST_CASE("A brew with a work time and no believable bottle is refused "
   REQUIRE(packets[0].at("baseId").get<uint32_t>() == kSteelWarhammer);
   REQUIRE(!packets[0].contains("made"));
 }
+
+/*
+  THORNSWOOD PATCH (Thornswood #4608). An input the client names by its
+  stack is taken off that stack alone, from the pack, and nothing else the
+  client says about an input is kept. A craft with no recipe takes the
+  entries the client names (an enchantment is one), so the forge's steel
+  ingot, a craft of the warhammer the recipe does not match, stands in for
+  the piece on an arcane enchanter.
+*/
+namespace {
+CraftItemMessage OneIngot(const Inventory::Entry& input)
+{
+  CraftItemMessage msg;
+  msg.data.craftInputObjects.entries.push_back(input);
+  msg.data.workbench = kForge;
+  msg.data.resultObjectId = kSteelWarhammer;
+  return msg;
+}
+
+Inventory::Entry NamedIngot(uint32_t count, const std::string& name)
+{
+  Inventory::ExtraData extra;
+  extra.name = name;
+  return Inventory::Entry(kSteelIngot, count, extra);
+}
+}
+
+TEST_CASE("A craft takes the stack the client names and leaves the plain one "
+          "(Thornswood #4608)",
+          "[Craft][espm]")
+{
+  PartOne& p = GetPartOne();
+  auto gamemode = RecordCrafts(p);
+  auto& ac = MakeCrafter(p, kForge);
+  const std::string worn = "Steel Ingot (Masterwork) (85%)";
+  ac.AddItem(kSteelIngot, 1);
+  ac.AddItems({ NamedIngot(1, worn) });
+
+  RawMessageData msgData;
+  msgData.userId = 0;
+  gamemode->armed = true;
+  p.GetActionListener().OnCraftItem(msgData, OneIngot(NamedIngot(1, worn)));
+  gamemode->armed = false;
+
+  REQUIRE(gamemode->asked == 1);
+  auto& inputs = gamemode->args.at(6);
+  REQUIRE(inputs.size() == 1);
+  REQUIRE(inputs[0].at("baseId").get<uint32_t>() == kSteelIngot);
+  REQUIRE(inputs[0].at("count").get<uint32_t>() == 1);
+  REQUIRE(inputs[0].at("name").get<std::string>() == worn);
+
+  REQUIRE(ac.GetInventory().GetItemCount(kSteelWarhammer) == 1);
+  REQUIRE(ac.GetInventory().GetItemCount(kSteelIngot) == 1);
+  REQUIRE(NamedCount(ac.GetInventory(), kSteelIngot, std::nullopt) == 1);
+
+  p.DestroyActor(0xff000000);
+  DoDisconnect(p, 0);
+}
+
+TEST_CASE("A craft that names a stack the pack does not hold is refused "
+          "without asking the gamemode, plain ones or not (Thornswood #4608)",
+          "[Craft][espm]")
+{
+  PartOne& p = GetPartOne();
+  auto gamemode = RecordCrafts(p);
+  auto& ac = MakeCrafter(p, kForge);
+  ac.AddItem(kSteelIngot, 2);
+  ac.AddItems({ NamedIngot(1, "Steel Ingot (90%)") });
+  const Inventory before = ac.GetInventory();
+
+  RawMessageData msgData;
+  msgData.userId = 0;
+  gamemode->armed = true;
+  p.GetActionListener().OnCraftItem(
+    msgData, OneIngot(NamedIngot(1, "Steel Ingot (85%)")));
+  gamemode->armed = false;
+
+  REQUIRE(gamemode->asked == 0);
+  REQUIRE(ac.GetInventory() == before);
+
+  p.DestroyActor(0xff000000);
+  DoDisconnect(p, 0);
+}
+
+TEST_CASE("A plain input never takes the named stack another input names "
+          "(Thornswood #4608)",
+          "[Craft][espm]")
+{
+  PartOne& p = GetPartOne();
+  auto gamemode = RecordCrafts(p);
+  auto& ac = MakeCrafter(p, kForge);
+  ac.AddItems({ NamedIngot(1, "Steel Ingot (85%)") });
+  const Inventory before = ac.GetInventory();
+
+  CraftItemMessage msg = OneIngot(NamedIngot(1, "Steel Ingot (85%)"));
+  msg.data.craftInputObjects.entries.push_back(
+    Inventory::Entry(kSteelIngot, 1));
+  RawMessageData msgData;
+  msgData.userId = 0;
+
+  // One named ingot cannot be both inputs.
+  gamemode->armed = true;
+  p.GetActionListener().OnCraftItem(msgData, msg);
+  gamemode->armed = false;
+  REQUIRE(gamemode->asked == 0);
+  REQUIRE(ac.GetInventory() == before);
+
+  // With another named one, the plain input falls back on that one.
+  ac.AddItems({ NamedIngot(1, "Steel Ingot (90%)") });
+  gamemode->armed = true;
+  p.GetActionListener().OnCraftItem(msgData, msg);
+  gamemode->armed = false;
+  REQUIRE(gamemode->asked == 1);
+  REQUIRE(ac.GetInventory().GetItemCount(kSteelIngot) == 0);
+  REQUIRE(ac.GetInventory().GetItemCount(kSteelWarhammer) == 1);
+
+  p.DestroyActor(0xff000000);
+  DoDisconnect(p, 0);
+}
+
+TEST_CASE("An input is its record, its count and its stack's name, and "
+          "nothing else the client says about it is kept (Thornswood #4608)",
+          "[Craft][espm]")
+{
+  PartOne& p = GetPartOne();
+  auto gamemode = RecordCrafts(p);
+  auto& ac = MakeCrafter(p, kForge);
+  Inventory::ExtraData tempered;
+  tempered.health = 1.1f;
+  ac.AddItem(kSteelIngot, 1);
+  ac.AddItems({ Inventory::Entry(kSteelIngot, 1, tempered) });
+
+  RawMessageData msgData;
+  msgData.userId = 0;
+  gamemode->armed = true;
+  p.GetActionListener().OnCraftItem(
+    msgData, OneIngot(Inventory::Entry(kSteelIngot, 1, tempered)));
+  gamemode->armed = false;
+
+  // Read as a plain ingot: the plain one is taken, the tempered one stays.
+  REQUIRE(gamemode->asked == 1);
+  REQUIRE(!gamemode->args.at(6)[0].contains("name"));
+  REQUIRE(ac.GetInventory().GetItemCount(kSteelIngot) == 1);
+  for (auto& entry : ac.GetInventory().entries) {
+    if (entry.baseId == kSteelIngot) {
+      REQUIRE(entry.health == tempered.health);
+    }
+  }
+
+  p.DestroyActor(0xff000000);
+  DoDisconnect(p, 0);
+}
+
+TEST_CASE("craftMade carries the name the craft gave its output (Thornswood "
+          "#4608)",
+          "[Craft][espm]")
+{
+  PartOne& p = GetPartOne();
+  auto gamemode = std::make_shared<NameCraftOutput>(p.worldState);
+  p.AddListener(gamemode);
+  auto& ac = MakeCrafter(p, kForge);
+  const std::string worn = "Steel Ingot (85%)";
+  ac.AddItems({ NamedIngot(1, worn) });
+  p.Tick();
+  p.Messages().clear();
+
+  // The bench block's keepPieceName in Thornswood: the output keeps the
+  // name of the piece that went in.
+  gamemode->baseId = kSteelWarhammer;
+  gamemode->count = 1;
+  gamemode->name = "Steel Warhammer (85%)";
+  gamemode->armed = true;
+  RawMessageData msgData;
+  msgData.userId = 0;
+  p.GetActionListener().OnCraftItem(msgData, OneIngot(NamedIngot(1, worn)));
+  gamemode->armed = false;
+  gamemode->name.reset();
+
+  std::vector<nlohmann::json> made;
+  for (auto& m : p.Messages()) {
+    auto packet = dynamic_cast<CustomPacketMessage*>(m.message.get());
+    if (!packet || m.userId != 0) {
+      continue;
+    }
+    auto content = nlohmann::json::parse(packet->contentJsonDump);
+    if (content.value("customPacketType", "") == "craftMade") {
+      made.push_back(std::move(content));
+    }
+  }
+  REQUIRE(made.size() == 1);
+  REQUIRE(made[0].at("baseId").get<uint32_t>() == kSteelWarhammer);
+  REQUIRE(made[0].at("name").get<std::string>() == "Steel Warhammer (85%)");
+  REQUIRE(NamedCount(ac.GetInventory(), kSteelWarhammer,
+                     std::string("Steel Warhammer (85%)")) == 1);
+
+  p.DestroyActor(0xff000000);
+  DoDisconnect(p, 0);
+}

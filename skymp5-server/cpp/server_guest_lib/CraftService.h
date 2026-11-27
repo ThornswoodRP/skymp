@@ -131,6 +131,7 @@ public:
     std::optional<Inventory::Made> potion;
     std::optional<Inventory::MadeEnchantment> enchantment;
     std::optional<float> maxCharge;
+    std::optional<std::string> name; // Thornswood #4608
   };
 
   // THORNSWOOD PATCH (Thornswood #4513). What the server keeps of an
@@ -176,6 +177,7 @@ private:
     // (MadeEnchantment), and the charge the piece holds at most.
     std::optional<Inventory::MadeEnchantment> enchantment;
     std::optional<float> maxCharge;
+    std::optional<std::string> name; // Thornswood #4608
   };
 
   // What a craft that went through gave, which the client is told so it can
@@ -190,6 +192,7 @@ private:
     std::optional<Inventory::Made> contents;
     std::optional<Inventory::MadeEnchantment> enchantment;
     std::optional<float> maxCharge;
+    std::optional<std::string> name; // Thornswood #4608
   };
 
   // A craft that is being worked or waits its turn, oldest first.
