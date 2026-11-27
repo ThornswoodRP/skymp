@@ -127,6 +127,10 @@ nlohmann::json MpChangeForm::ToJson(const MpChangeForm& changeForm)
     res["deleteDatetime"] = changeForm.deleteDatetime;
   }
 
+  if (changeForm.droppedBy) {
+    res["droppedBy"] = changeForm.droppedBy;
+  }
+
   if (changeForm.factions.has_value()) {
     auto factionsJson = nlohmann::json::array();
     for (int i = 0; i < static_cast<int>(changeForm.factions.value().size());
@@ -190,6 +194,7 @@ MpChangeForm MpChangeForm::JsonToChangeForm(simdjson::dom::element& element)
     "staminaRespawnPercentage");
   static const JsonPointer pickupExtra("pickupExtra");
   static const JsonPointer deleteDatetime("deleteDatetime");
+  static const JsonPointer droppedBy("droppedBy");
 
   MpChangeForm res;
   ReadEx(element, recType, &res.recType);
@@ -435,6 +440,11 @@ MpChangeForm MpChangeForm::JsonToChangeForm(simdjson::dom::element& element)
   if (element.at_pointer(deleteDatetime.GetData()).error() ==
       simdjson::error_code::SUCCESS) {
     ReadEx(element, deleteDatetime, &res.deleteDatetime);
+  }
+
+  if (element.at_pointer(droppedBy.GetData()).error() ==
+      simdjson::error_code::SUCCESS) {
+    ReadEx(element, droppedBy, &res.droppedBy);
   }
 
   return res;

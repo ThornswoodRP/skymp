@@ -2,6 +2,7 @@
 #include "TestUtils.hpp"
 #include <algorithm>
 #include <catch2/catch_all.hpp>
+#include <map>
 
 #include "MpObjectReference.h"
 #include "PartOne.h"
@@ -292,5 +293,71 @@ TEST_CASE("A drop keeps its extra and its delete time across a restart",
     auto& again = restarted.worldState.GetFormAt<MpObjectReference>(refrId);
     restarted.worldState.Tick();
     REQUIRE(again.IsDeleted());
+  }
+}
+
+TEST_CASE("Only the dropper is told a dropped item is theirs",
+          "[DropItemTest]")
+{
+  // Thornswood #6718: the server places a dropped item and every client
+  // spawned it with no owner, which in a shop reads as the shop's, so picking
+  // your own clothes up in Belethor's was stealing. The dropper's client owns
+  // it when it is told droppedByMe; nobody else's is told.
+  constexpr uint32_t ironHelmet = 0x00012E4D;
+  PartOne server;
+  server.AttachEspm(&GetEspmLoader());
+  DoConnect(server, 0);
+  DoConnect(server, 1);
+  server.CreateActor(0xff000000, { 1, 2, 3 }, 0, 0x3c);
+  server.SetUserActor(0, 0xff000000);
+  server.CreateActor(0xff000200, { 50, 2, 3 }, 0, 0x3c);
+  server.SetUserActor(1, 0xff000200);
+  MpActor& ac = server.worldState.GetFormAt<MpActor>(0xff000000);
+  ac.RemoveAllItems();
+  ac.AddItem(ironHelmet, 1);
+  server.Messages().clear();
+
+  DoMessage(server, 0,
+            nlohmann::json{ { "t", MsgType::DropItem },
+                            { "baseId", ironHelmet },
+                            { "count", 1 } });
+  server.Tick();
+  MpObjectReference* refr = FindDrop(server, ironHelmet);
+  REQUIRE(refr != nullptr);
+  REQUIRE(refr->GetDroppedBy() == 0xff000000);
+  const uint32_t refrId = refr->GetFormId();
+
+  std::map<Networking::UserId, std::vector<nlohmann::json>> creates;
+  for (const auto& message : server.Messages()) {
+    if (message.j["t"] == MsgType::CreateActor &&
+        message.j["refrId"].get<uint64_t>() == refrId) {
+      creates[message.userId].push_back(message.j);
+    }
+  }
+  REQUIRE(creates[0].size() == 1);
+  REQUIRE(creates[1].size() == 1);
+  REQUIRE(creates[0][0]["props"]["droppedByMe"] == true);
+  const auto& other = creates[1][0];
+  REQUIRE_FALSE(
+    (other.contains("props") && other["props"].contains("droppedByMe")));
+
+  SECTION("Whose it is is saved, and a reference nobody dropped saves none")
+  {
+    REQUIRE(ThroughJson(refr->GetChangeForm()).droppedBy == 0xff000000);
+    auto plain = refr->GetChangeForm();
+    plain.droppedBy = 0;
+    REQUIRE_FALSE(MpChangeForm::ToJson(plain).contains("droppedBy"));
+    REQUIRE(ThroughJson(plain).droppedBy == 0);
+  }
+
+  SECTION("After a restart the dropper is still told")
+  {
+    const auto saved = ThroughJson(refr->GetChangeForm());
+    PartOne restarted;
+    restarted.AttachEspm(&GetEspmLoader());
+    restarted.worldState.LoadChangeForm(saved,
+                                        restarted.CreateFormCallbacks());
+    REQUIRE(restarted.worldState.GetFormAt<MpObjectReference>(refrId)
+              .GetDroppedBy() == 0xff000000);
   }
 }

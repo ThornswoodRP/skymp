@@ -858,6 +858,14 @@ void PartOne::Init()
 
     emitter->VisitProperties(message, mode);
 
+    // THORNSWOOD PATCH (Thornswood #6718). Only the dropper hears that a
+    // dropped item is theirs: everybody else's game keeps it as the place
+    // has it, so somebody else's drop is still not yours to take.
+    if (!emitterAsActor && emitter->GetDroppedBy() != 0 &&
+        emitter->GetDroppedBy() == listener->GetFormId()) {
+      message.props.droppedByMe = true;
+    }
+
     auto isFilteredOut = [&](const CustomPropsEntry& customPropsEntry) {
       if (customPropsEntry.propName == "_skympServerControlled") {
         return true;

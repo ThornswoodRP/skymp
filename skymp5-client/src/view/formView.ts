@@ -238,6 +238,19 @@ export class FormView {
             model.movement?.rot[1] || 0,
             model.movement?.rot[2] || 0
           );
+          // THORNSWOOD PATCH (Thornswood #6718). A dropped item is placed by
+          // the server, and placeAtMe here gives it no owner, so it takes its
+          // cell's: in Belethor's shop your own clothes were Belethor's, and
+          // picking them up was stealing. The game's own drop, which
+          // dropItemService deletes, would have been yours. The server says
+          // droppedByMe only to the one who dropped it, so only their game
+          // owns it; everybody else's keeps it as the place has it.
+          if (model.droppedByMe && refr) {
+            const playerBase = ActorBase.from((Game.getPlayer() as Actor).getBaseObject());
+            if (playerBase) {
+              refr.setActorOwner(playerBase);
+            }
+          }
         } else {
           const race = Actor.from(refr)?.getRace()?.getFormID();
           const draugrRace = 0xd53;

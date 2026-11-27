@@ -2901,9 +2901,21 @@ void MpActor::DropItem(const uint32_t baseId, const Inventory::Entry& entry)
   auto aForcePersist = VarValue(false);
   auto aInitiallyDisabled = VarValue(false);
 
-  VarValue placedObjectWrap = papyrusObjectReference.PlaceAtMe(
+  // THORNSWOOD PATCH (Thornswood #6718). Whose drop it is, so the dropper's
+  // own client makes it theirs (PartOne, droppedByMe). The game's own drop
+  // would have, and that is the one dropItemService deletes. Only a
+  // character's: an NPC's id is a load order id and no client is an NPC.
+  // Set before the drop is shown: PlaceAtMe sends the create messages.
+  const bool byCharacter = IsCreatedAsPlayer();
+  const uint32_t dropperId = GetFormId();
+  VarValue placedObjectWrap = papyrusObjectReference.PlaceAtMeBeforeShown(
     this->ToVarValue(),
-    { baseForm, aCount, aForcePersist, aInitiallyDisabled });
+    { baseForm, aCount, aForcePersist, aInitiallyDisabled },
+    [byCharacter, dropperId](MpObjectReference& placed) {
+      if (byCharacter) {
+        placed.SetDroppedBy(dropperId);
+      }
+    });
   MpObjectReference* placedObject =
     GetFormPtr<MpObjectReference>(placedObjectWrap);
 
