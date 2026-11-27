@@ -84,6 +84,9 @@ struct KillMoveScene
     DoConnect(p, 1);
     p.SetUserActor(0, kAttacker);
     p.SetUserActor(1, kBystander);
+    // An actor nobody plays joins the grid only when it moves or is
+    // enabled; the target stands among the others like a placed NPC does.
+    p.worldState.GetFormAt<MpActor>(kTarget).ForceSubscriptionsUpdate();
 
     auto& attacker = p.worldState.GetFormAt<MpActor>(kAttacker);
     attacker.AddItem(kIronDagger, 1);
