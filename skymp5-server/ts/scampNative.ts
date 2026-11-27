@@ -144,6 +144,8 @@ export interface ScampServer {
     meleeReach: number; meleeAllowance: number;
     canSwim: boolean; canFly: boolean; immobile: boolean;
     aggression: number; confidence: number; combatTarget: number;
+    /** Authored aggro radius: warn, warn or attack, attack; all 0 when off (#6493). */
+    aggroRadius: [number, number, number];
     factions: { id: number; rank: number }[];
   };
   getFactionReactions(factionIds: number[]): {

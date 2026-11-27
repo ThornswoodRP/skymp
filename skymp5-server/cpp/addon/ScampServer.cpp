@@ -2146,17 +2146,50 @@ Napi::Value ScampServer::GetNpcAIState(const Napi::CallbackInfo& info)
       auto values = EvaluateTemplate<espm::NPC_::UseAIData>(
         &world, actor.GetBaseId(), actor.GetTemplateChain(),
         [&](const espm::LookupResult& lookup, const espm::NPC_::Data&) {
-          std::array<uint8_t, 2> ai{ 0, 4 };
+          NpcAIProfile ai;
           espm::IterateFields_(lookup.rec, [&](const char* type, uint32_t size, const char* data) {
-            if (!std::memcmp(type, "AIDT", 4) && size >= 2) {
-              ai = { static_cast<uint8_t>(data[0]), static_cast<uint8_t>(data[1]) };
+            if (std::memcmp(type, "AIDT", 4) || size < 2) return;
+            ai.aggression = static_cast<uint8_t>(data[0]);
+            ai.confidence = static_cast<uint8_t>(data[1]);
+            // THORNSWOOD (#6493). Byte 6 turns the aggro radius on, and the
+            // three distances follow at 8, 12 and 16. The game counts a
+            // Neutral person inside it as one to fight whatever the
+            // aggression, which is why an Aggressive skeever attacks people
+            // that none of its factions names as an enemy.
+            if (size >= 20 && data[6] != 0) {
+              for (size_t i = 0; i < 3; ++i)
+                std::memcpy(&ai.aggroRadius[i], data + 8 + 4 * i, 4);
             }
           }, world.GetEspmCache());
           return ai;
         });
-      if (values[0] > 3 || values[1] > 4) {
+      if (values.aggression > 3 || values.confidence > 4) {
         throw std::invalid_argument("Invalid NPC aggression or confidence");
       }
+      // The game skips the radius while the actor's current package lacks
+      // the Aggro Radius Behavior interrupt flag (PKDT bytes 8 and 9, bit 6),
+      // and checks no flag when it has no package. The server runs no
+      // packages, so an NPC none of whose packages has the flag keeps the
+      // radius off: a trapped wolf, an ambush, a scripted scene (#6493).
+      const auto packages = EvaluateTemplate<espm::NPC_::UseAIPackages>(
+        &world, actor.GetBaseId(), actor.GetTemplateChain(),
+        [&](const espm::LookupResult& lookup, const espm::NPC_::Data&) {
+          std::pair<size_t, size_t> counts{ 0, 0 }; // packages, with the flag
+          espm::IterateFields_(lookup.rec, [&](const char* type, uint32_t size, const char* data) {
+            if (std::memcmp(type, "PKID", 4) || size < 4) return;
+            uint32_t localId = 0;
+            std::memcpy(&localId, data, 4);
+            const auto pack = partOne->GetEspm().GetBrowser().LookupById(lookup.ToGlobalId(localId));
+            if (!pack.rec || pack.rec->GetType() != "PACK") return;
+            ++counts.first;
+            espm::IterateFields_(pack.rec, [&](const char* packType, uint32_t packSize, const char* packData) {
+              if (!std::memcmp(packType, "PKDT", 4) && packSize >= 10 && (packData[8] & 0x40))
+                ++counts.second;
+            }, world.GetEspmCache());
+          }, world.GetEspmCache());
+          return counts;
+        });
+      if (packages.first > 0 && packages.second == 0) values.aggroRadius = { 0, 0, 0 };
       profile = npcAIProfiles.emplace(id, std::make_pair(profileKey, values)).first;
     }
     auto result = Napi::Object::New(info.Env());
@@ -2202,8 +2235,12 @@ Napi::Value ScampServer::GetNpcAIState(const Napi::CallbackInfo& info)
     if (!runtimeLife) throw std::runtime_error("Actor runtime identity exhausted");
     result.Set("runtimeLifeIdentity", std::to_string(runtimeLife));
     result.Set("difficultyTier", actor.GetNpcDifficultyTier());
-    result.Set("aggression", profile->second.second[0]);
-    result.Set("confidence", profile->second.second[1]);
+    result.Set("aggression", profile->second.second.aggression);
+    result.Set("confidence", profile->second.second.confidence);
+    auto aggroRadius = Napi::Array::New(info.Env(), 3);
+    for (size_t i = 0; i < 3; ++i)
+      aggroRadius.Set(i, static_cast<double>(profile->second.second.aggroRadius[i]));
+    result.Set("aggroRadius", aggroRadius);
     const auto raceLookup = partOne->GetEspm().GetBrowser().LookupById(actor.GetRaceId());
     const auto race = espm::Convert<espm::RACE>(raceLookup.rec);
     const auto raceFlags = race ? race->GetData(world.GetEspmCache()).flags : 0;

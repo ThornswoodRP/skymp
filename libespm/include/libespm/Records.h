@@ -14,6 +14,7 @@
 #include "FLOR.h"
 #include "FLST.h"
 #include "GMST.h"
+#include "IDLE.h"
 #include "INGR.h"
 #include "KYWD.h"
 #include "LCTN.h"

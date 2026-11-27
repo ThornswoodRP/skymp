@@ -91,6 +91,16 @@ public:
   static bool InheritsBaseSpell(uint32_t baseId,
                                 espm::SPEL::SpellType spellType);
   std::vector<uint32_t> GetSpellList() const;
+  // THORNSWOOD (#6622). Pickpocketing is between people only (Patrick,
+  // 26 Nov 2026). Whether `thief` may open `mark`'s pack in Skyrim's steal
+  // window: two different people, both alive and in the world, the thief
+  // sneaking and within kPickpocketReach of the mark in the same cell or
+  // world. An NPC is never a mark and never a thief.
+  static constexpr float kPickpocketReach = 256.f;
+  static bool MayPickpocket(const MpActor& thief, const MpActor& mark);
+  // How many of `baseId` this actor carries and does not wear: what a
+  // pickpocket can take. A worn piece stays on its wearer.
+  uint32_t GetUnwornCount(uint32_t baseId) const;
 
   std::unique_ptr<const Appearance> GetAppearance() const;
   const std::string& GetAppearanceAsJson();
@@ -216,6 +226,13 @@ public:
     std::chrono::steady_clock::time_point now);
 
   void Kill(MpActor* killer = nullptr, bool shouldTeleport = false);
+
+  // Thornswood #4507. The killmove one melee hit asks for, held only while
+  // that hit's write runs (ActionListener::OnWeaponHit, KillMoveScope), so
+  // only the death that write causes, by that killer, plays it
+  // (NetSetPercentages, SendPendingKillMove).
+  void SetPendingKillMove(uint32_t killerId, uint32_t idleId);
+  void ClearPendingKillMove();
   void Respawn(bool shouldTeleport = true);
   void RespawnWithDelay(bool shouldTeleport = true);
   void Teleport(const LocationalData& position);
@@ -318,6 +335,22 @@ public:
   // a piece in the pack; see EquipmentBinding::Set.
   bool RenameEquipment(const Equipment& renamed);
 
+  // THORNSWOOD (Thornswood #6717). The record may name as worn only pieces
+  // the pack holds, one unit of the pack for each worn entry, the way the
+  // owner's client matches them at login (remoteServer.ts, applyPcInv). Drops
+  // from `equipment` every worn entry whose base id `pack` no longer has a
+  // unit left for, in the record's order, and counts the change. Returns
+  // whether anything was dropped. The writes that take from an actor's pack
+  // (MpObjectReference::SetInventory, CompareAndSetInventory, RemoveItems)
+  // call it in the same edit that writes the pack, so the record never names
+  // a piece the pack has lost. Entries not worn are left alone.
+  static bool DropWornPiecesThePackLacks(Equipment& equipment,
+                                         const Inventory& pack);
+
+  // Sends this actor's equipment record to everybody who can see it, the
+  // owner included, once each (Thornswood #6252).
+  void PublishEquipment();
+
   void AddSpell(uint32_t spellId);
 
   // THORNSWOOD PATCH (Thornswood #4579). The magic effects disenchanting
@@ -394,6 +427,7 @@ private:
   // a listener's refusal keeps the actor alive at. The caller checks the
   // actor (and the killer) are still the same lives afterwards.
   std::optional<float> AskBeforeDeath(MpActor* killer);
+  void SendPendingKillMove(MpActor& killer);
   void SendServerStateToObservers(const IMessageBase& message,
                                   bool reliable) const;
 
